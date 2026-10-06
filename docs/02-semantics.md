@@ -1,0 +1,658 @@
+# Semantics of the lifetime extension
+
+This page is the specification of what `lua-lifetime` adds to Lua. It is
+derived from the `xd` specification (`xd/docs/02-lifetimes.md`,
+`03-destruction.md`, `04-syntax.md`, `06-hooks.md`) with the decisions of
+`xd/docs/10-lua-lifetime-decisions.md` ("file 10" below) applied. Each
+section names the `xd` section it comes from and the decision that changed
+it. Where file 10 leaves something open, this page says "open" and points
+at [06-open-questions.md](06-open-questions.md). Anything this page does
+not mention behaves as in Lua 5.1, with the Lua 5.1 reference manual as the
+citation (`xd/docs/07-decisions.md`, "When the spec is silent, replicate
+Lua"; here Lua 5.1 rather than 5.4 by decision 1).
+
+## Host
+
+*From file 10, decision 1.*
+
+The generated code and the runtime run on Lua 5.1 and LuaJIT. Later Lua
+versions may work but are not targets. Everything below is shaped by what
+these hosts offer: no `<close>`, `goto` only on LuaJIT, `__gc` on userdata
+only, no ephemerons, no yield across `pcall` on plain 5.1, finalizers in
+reverse creation order, and an object with a pending finalizer staying in
+weak tables for one more cycle.
+
+## Vocabulary
+
+*From `xd/docs/02-lifetimes.md`, "Vocabulary"; terms changed by decisions
+2, 5, 6, 7, 8 and 11.*
+
+- **Value**: numbers, booleans, strings, `nil`. No lifetime.
+- **Object**: tables, functions, coroutines, userdata. Only objects have
+  lifetimes. Only tables and tokens can be **anchors** (below), since an
+  anchor keeps its dependents inside itself (decision 3) and Lua 5.1 gives
+  only tables a place to keep them; see
+  [06-open-questions.md](06-open-questions.md), "Non-table anchors".
+- **Anchor**: what an object's lifetime refers to. One of: a live table or
+  token, the current block (`scope`), the calling function's block
+  (`caller`), the term `reachable` (`lifetime.reachable`), or a **lifetime
+  value** obtained from `lifetime.of(x)` or `lifetime.pin(…)`.
+- **Scope**: the activation of a lexical block (`do … end`, a function
+  body, a loop body, a `then`/`else` arm). It begins when control enters
+  the block and ends when control leaves it by any route: fall-through,
+  `break`, `return`, `goto` (LuaJIT) or an error. `scope` and `caller` are
+  syntax, not values (decision 5): they appear only after `@`, and they
+  cannot be stored or passed on.
+- **Lifetime formula**: a conjunction of anchors. An object is alive
+  while every anchor in its formula is alive and, if the formula has the
+  `reachable` term, while something refers to the object. There is no
+  disjunction (decision 7). Every object has a
+  formula; the default is `reachable`; a formula is **replaced** by
+  writing `@` again.
+- **`reachable`**: the term that stands for "something still refers to
+  this object". Its truth is decided by the host collector (decision 2),
+  not at a statement boundary.
+- **Token**: an opaque object created by a `token` declaration (decision
+  6): identity, a dependents list, a hook list, no fields.
+- **Dependent**: an object whose formula mentions a given anchor.
+- **Hook**: an object created with `defer` whose destructor is a user
+  function.
+- **Dying**: an object whose death has been decided in the cascade now
+  running and whose destructor has not yet run, or has run but whose
+  dependents are still being destroyed. Fully usable; cannot be moved or
+  anchored to.
+- **Dead**: an object whose cascade has finished. A dead table is a
+  **tombstone** (decision 8): emptied, with a metatable that raises. A
+  dead object is not `nil`; references to it stay where they are.
+
+## The one rule
+
+*From `xd/docs/02-lifetimes.md`, "The one rule"; reachability timing by
+decision 2, conjunction only by decision 7.*
+
+> An object is alive if and only if every anchor in its formula is alive,
+> where an anchor counts as false once it is dead or dying, and, if the
+> formula has the `reachable` term, nothing has yet found the object
+> unreachable. The default formula is `reachable`. A formula is
+> re-evaluated whenever one of its anchors dies.
+
+Anchors keep their dependents alive only if the formula has no
+`reachable` term (a *pinned* object, "The implicit `reachable` term"
+below); otherwise the collector may take an unreferenced dependent first.
+Anchors kill their dependents: the instant `conn` dies, `buf @ conn` dies,
+whoever still refers to `buf`.
+
+Formulas are monotone: anchors only go from alive to dead, and `reachable`
+only from true to false, so an object dies at most once and never comes
+back (`xd/docs/02-lifetimes.md`, "Why only `all` and `any`"; with only
+conjunction left the argument is simpler).
+
+## Acquiring a lifetime: the `@` operator
+
+*From `xd/docs/02-lifetimes.md`, "Acquiring a lifetime"; `xd/docs/04-syntax.md`,
+"The anchor operator `@`"; list form by decision 11; implicit term by
+decision 4.*
+
+```lua
+local conn   = Connection.open(sock) @ scope             -- the block
+local buf    = Buffer.new(4096)      @ conn              -- an object
+local header = Slice.new(buf, 0, 64) @ (buf, conn)       -- a conjunction
+local entry  = { v = 1 }             @ session           -- dies with the session, or earlier if dropped
+local shown  = Screen.new()          @ lifetime.pin(owner)  -- dies with owner, referenced or not
+local f      = function() return buf:read() end @ conn
+local plain  = {}                                        -- same as `{} @ lifetime.reachable`
+```
+
+Grammar (`xd/docs/04-syntax.md` as changed by decision 11):
+
+```ebnf
+exp    ::= … | exp '@' anchor
+stat   ::= … | prefixexp '@' anchor
+anchor ::= prefixexp | 'scope' | 'caller' | '(' anchorlist ')'
+anchorlist ::= anchoritem { ',' anchoritem }
+anchoritem ::= exp | 'scope' | 'caller'
+```
+
+`@` is a postfix operator with the lowest precedence of any operator:
+`a + b @ s` is `(a + b) @ s`. Its right operand is a `prefixexp`, `scope`,
+`caller`, or a parenthesised list. A one-element list is the plain form:
+`x @ (a)` is `x @ a`, so Lua's own parenthesised expression after `@`,
+`x @ (cond and a or b)`, keeps working. An empty list `@()` is a syntax
+error. Lists do not nest. In an expression list the commas of a conjunction
+are inside its parentheses, so `local x, y = {} @ (a, b), {} @ c` is
+unambiguous.
+
+Semantics of `e @ a1, …, an`:
+
+1. Evaluate `e`. The result must be an object (`attempt to anchor a number
+   value`).
+2. Evaluate each element left to right. Each must be a live table or
+   token, `scope`, `caller`, `lifetime.reachable`, or a lifetime value. A
+   dead or dying object, `nil`, a value, or a function, coroutine or
+   userdata (not an anchor, see "Vocabulary") is an error: `attempt to
+   anchor to a nil value`, `attempt to anchor to a dying table`, `attempt
+   to anchor to a dead table`.
+3. If `e` is dying, error: `attempt to move a dying table`. If `e` is dead,
+   the dead metatable raises first (see "Tombstones").
+4. The conjunction of the elements, with the implicit `reachable` term
+   added by the rule below, **replaces** the object's formula. The
+   expression yields the object. The object leaves the dependent lists of
+   its old anchors and joins those of its new ones, at the end of each
+   list. Its own dependents are untouched: they move with it.
+
+The statement form `obj @ anchor` is a **move** (`xd/docs/02-lifetimes.md`,
+"Changing a lifetime: moves"): only the formula changes; identity,
+contents, metatable and references stay; dependents travel with the
+object; every new anchor must be alive; `obj @ lifetime.reachable`
+releases the object to the collector; last writer wins, and there is no
+way to freeze a lifetime. The left side must be a `prefixexp`, so
+`{} @ scope` on its own is a syntax error.
+
+**No moves during destruction** (`xd/docs/03-destruction.md`, rule 4;
+`xd/docs/07-decisions.md`, "Objects created during a destroy phase may be
+moved"): while a cascade's destroy phase is running, `@` may be applied
+only to objects on the default formula and to objects created during that
+same destroy phase. Moving an older, explicitly anchored object, the dying
+object included, is `attempt to move an anchored table during destruction`.
+"That same destroy phase" is the innermost one running where the `@`
+executes; one phase is one `destroy()` or `discard()` call, one scope exit
+with dependents, one finalizer run, or the program-end sweep.
+
+Constructors return objects on the default lifetime and leave anchoring to
+the caller, which is where it belongs.
+
+## The implicit `reachable` term and `lifetime.pin`
+
+*From file 10, decision 4; the combination with the list form is this
+repository's decision ([05-decisions.md](05-decisions.md), "`lifetime.pin`
+takes the list").*
+
+`x @ a` means `x @ (a, lifetime.reachable)`: `x` dies with `a` at the
+latest, or earlier when nothing refers to it. The same holds for `@ scope`,
+`@ caller`, `@ tok` and for a list: `x @ (a, b)` is `x @ (a, b,
+lifetime.reachable)`. Two exceptions:
+
+- `defer f @ a` keeps replace semantics: a hook is pinned by its anchor,
+  because nothing else refers to a hook and a collectable hook would never
+  run.
+- `lifetime.pin(a1, …, an)` returns a lifetime value over the listed
+  anchors **without** the term: `x @ lifetime.pin(a)` is "alive while `a`
+  is, referenced or not". It exists for the rare case of an object that
+  must survive while unreferenced, such as a hidden screen reused later
+  (lesson 6 of `xd/docs/09-lessons-from-treflove.md`).
+
+Precisely: the formula of a list carries the `reachable` term if any
+element is a table, token, `scope`, `caller`, `lifetime.reachable`, or a
+lifetime value that carries it. `lifetime.pin` strips the term from its
+arguments. `lifetime.pin()` with no arguments, and `lifetime.pin` of
+nothing but `lifetime.reachable`, are errors (`bad argument #1 to
+'lifetime.pin' (anchor expected, got no value)` and `attempt to pin an empty
+lifetime`): an empty conjunction would be `forever`, which
+`xd/docs/07-decisions.md`, "No `forever`" rejected.
+
+One consequence (decision 4): `local tmp = {} @ scope` followed by
+`tmp = nil` mid-block no longer destroys `tmp` at scope exit; the collector
+takes it whenever it runs. Every other scope use is unchanged, since the
+local keeps the object referenced until the block ends.
+
+## Scopes: `scope` and `caller`
+
+*From `xd/docs/02-lifetimes.md`, "Scopes as anchors" and "The caller's
+scope"; the scope functions of `xd` replaced by syntax through decision
+5.*
+
+`scope` after `@` is the innermost block enclosing the `@`. `caller` is
+the innermost block of the calling function that was executing when the
+current function was called, what `xd` calls the scope at level 2.
+
+- An object anchored to `scope` dies when the block exits by any route.
+  The transpiler emits an epilogue on every exit path and, for the error
+  path, a `pcall` wrapper on blocks that need one
+  ([04-transpiler.md](04-transpiler.md)).
+- Each entry into a block is a new scope. A loop body gets a fresh scope
+  every iteration, so `{} @ scope` in a loop body dies at the end of that
+  iteration. A function body is a scope; its parameters live in it. The
+  main chunk's scope ends when the chunk finishes ("Program end").
+- `caller` inside a function called from the main chunk, or from a
+  function the transpiler did not generate, is the main scope or the
+  nearest generated caller's block respectively: functions the transpiler
+  did not generate (`pcall`, `table.sort`, plain Lua libraries) are
+  transparent, as host frames are in `xd`.
+- `caller` is resolved at run time through a depth counter in the runtime
+  ([03-runtime.md](03-runtime.md), "Scope records and `caller`"). The
+  granularity of that counter, and `caller` inside a coroutine body, are
+  open: [06-open-questions.md](06-open-questions.md).
+- `scope` and `caller` cannot be stored, returned, compared or passed as
+  arguments; using them anywhere but after `@` (including inside the list
+  form) is a syntax error. There is therefore no dead scope token and no
+  loop-iteration trap: a scope is named only from inside itself.
+- `destroy` of a scope is impossible; scopes end when their block exits.
+
+Returning an object anchored to `scope` alone hands the caller a tombstone
+(`xd/docs/02-lifetimes.md`, "Returning a scope-anchored object", with the
+tombstone of decision 8 in place of `nil`). Anchor to `caller`, to what the
+caller passed in, or to nothing.
+
+## Named tokens
+
+*From file 10, decision 6. The declaration syntax is this repository's
+decision ([05-decisions.md](05-decisions.md), "Tokens are declared with
+`token NAME`").*
+
+A token names a span of time: "logged in", "this view's generation", "the
+current script". It is created by a declaration:
+
+```ebnf
+stat ::= … | 'token' Name [ '@' anchor ]
+```
+
+`token period @ self` declares a local `period` holding a fresh token
+anchored to `self`; `token generation` declares one on the default
+lifetime. A token is an object for every rule on this page: it is an
+anchor (`menu @ period`), a dependent (`token period @ self`), it can be
+moved, destroyed and discarded, and `lifetime.dependents(period)` lists
+what it owns. It has no fields: indexing or assigning a field raises
+`attempt to index a token value`. `getmetatable(tok)` is the string
+`"token"` and `tostring(tok)` is `token NAME`. A token has no `__destroy`;
+attach a hook for cleanup that belongs to the span itself.
+
+```lua
+function Session:login(user)
+  token period @ self              -- ends at logout, or with the session
+  self.period = period
+  self.menu = Screen.new("menu") @ period
+  backstack:push(function() self:logout() end) @ period
+end
+
+function Session:logout()
+  destroy(self.period)             -- the entry, then the menu, in reverse order of attachment
+end
+```
+
+## `defer` and hooks
+
+*From `xd/docs/06-hooks.md` and `xd/docs/04-syntax.md`, "`defer`"; the
+order relative to `__destroy` by decision 10; pinning by decision 4.*
+
+```ebnf
+exp  ::= … | 'defer' exp
+stat ::= … | 'defer' exp [ '@' anchor ]
+```
+
+`defer` turns a function into a **hook**: an object whose death calls the
+function. `defer` takes the whole expression up to a `@`, a comma or a
+closing token, so `defer a or b` is `defer (a or b)` and `defer f @ s` is
+`(defer f) @ s`; to anchor the function itself, parenthesise (`defer (f @
+obj)`). The operand must be a function: `attempt to defer a number value`.
+
+- A hook's **default lifetime** is the enclosing block's scope, not
+  `reachable`: a bare `defer f` runs `f` when the block exits, which is the
+  `defer` of Zig and the `scope(exit)` of D. `defer f @ lifetime.reachable`
+  keeps no reference, so the collector may run `f` at any later time; legal
+  and almost never meant.
+- A hook is a dependent of its anchors, so it runs exactly where an object
+  anchored to the same formula would be destroyed, and it is always pinned
+  ("The implicit `reachable` term").
+- The function is called as `fn(reason)` with the reason of
+  "`__destroy` and reasons". Whether it also learns which anchor died is
+  open (proposal D of `xd/docs/09-lessons-from-treflove.md`;
+  [06-open-questions.md](06-open-questions.md)).
+- A hook on an object runs **after** that object's `__destroy`, interleaved
+  with the object's other dependents by attachment order, most recently
+  attached first (decision 10, reversing the sentence in
+  `xd/docs/06-hooks.md`). Among hooks on one scope this is still
+  last-deferred-first-run.
+- After it runs the hook is dead. A hook runs at most once. `discard(h)`
+  cancels it; `destroy(h)` runs it now; `h @ other` re-targets it.
+- A hook is a table with the private metatable `"hook"`: `getmetatable(h)
+  == "hook"`, `tostring(h)` is `hook: 0x…`, calling or indexing it raises
+  `attempt to call a hook value` / `attempt to index a hook value`.
+
+```lua
+do
+  local f = io.open(path) @ scope
+  defer function() print("after f is still open") end
+  local g = io.open(other) @ scope
+  defer function() print("runs first") end
+end
+-- order: "runs first", g destroyed, "after f is still open", f destroyed
+```
+
+Errors raised by the function follow the destructor error rule below.
+
+## Explicit destruction: `destroy` and `discard`
+
+*From `xd/docs/02-lifetimes.md`, "Explicit destruction"; `xd/docs/04-syntax.md`,
+"Built-in functions"; no-op rules by decision 10.*
+
+- `destroy(obj)` ends `obj`'s lifetime now, whatever its formula, with
+  the full cascade. It works on any object the runtime can see, including
+  one on the default lifetime. `destroy(nil)` is a no-op. `destroy` on a
+  dead or dying object is a no-op, so a destructor body may destroy its own
+  dependents by hand, early, and the runtime's later pass skips them (C++
+  makes the double delete undefined; the no-op is the safe reading).
+  `destroy(5)` is `bad argument #1 to 'destroy' (object expected, got
+  number)`.
+- `discard(obj)` does the same but skips `obj`'s own destructor (its
+  `__destroy`, or for a hook its function). Dependents are still destroyed
+  normally. On a hook this is "cancel".
+- Destroying an object does not affect its anchors.
+
+How these two reach user code: see [04-transpiler.md](04-transpiler.md),
+"The generated chunk header".
+
+## Cascading death: the order of decision 10
+
+*From `xd/docs/02-lifetimes.md`, "Cascading death"; step 2 reversed by
+decision 10.*
+
+Death cascades along anchor edges in two phases: **decide**, then
+**destroy**. No destructor runs until every death in the cascade has been
+decided. When an anchor `A` dies:
+
+1. **Decide.** Mark `A` dying. Every dependent of `A` whose formula is now
+   false (every dying object counts as false) is marked dying, and the step
+   repeats for its dependents until nothing changes. The dying set is then
+   closed: nothing a destructor does can add to it or remove from it. With
+   conjunction only, every dependent of a dying anchor dies.
+2. **Destroy.** For each dying object, in C++ order:
+   1. its own destructor body runs (`__destroy`, or a hook's function),
+      with every dependent still alive and usable;
+   2. its dependents and hooks are destroyed, **most recently attached
+      first**, each recursively by this same rule; a dependent already
+      destroyed through another anchor is skipped, so every object is
+      destroyed once, in the position given by the first anchor that
+      reached it;
+   3. it is emptied and tombstoned.
+
+A scope has no body: scope exit destroys the objects anchored to it in
+reverse attachment order, like locals in C++. `destroy(A)` is the same
+walk with `A` as the root and reason `"destroy"` for `A`.
+
+```lua
+do
+  local a = {} @ scope
+  local b = {} @ a
+  local c = {} @ scope
+  local d = {} @ (a, c)
+  defer function() print("hook on a") end @ a
+end
+```
+
+At the block exit the scope's dependents are `a` then `c`, so reverse
+attachment order destroys `c` first: `c`'s body, then `c`'s dependents
+(`d`: body, no dependents, tombstone), then `c`'s tombstone. Then `a`: body,
+then its dependents newest first: the hook (runs `"hook on a"`), `d`
+(already dead, skipped), `b` (body, tombstone), then `a`'s tombstone. The
+destructor bodies run in the order `c, d, a, hook, b`.
+
+Why decide first (`xd/docs/02-lifetimes.md`): lifetimes are mutable, and
+if destructors ran while deaths were still being decided, a destructor
+could move a sibling onto a longer anchor and rescue it. With
+decide-then-destroy a dying object is frozen: `@` on it is an error, and
+the only question left is order.
+
+**What a destructor may assume** (decision 10, replacing "What a
+destructor may assume" in `xd/docs/02-lifetimes.md`): my dependents are
+still here and die right after me. A body that logs through the connection
+it owns, flushes the buffer it owns, or tells its children to detach can do
+so. It may also see dependents it destroyed by hand already torn down;
+that is the author's choice, as in C++.
+
+## `__destroy` and reasons
+
+*From `xd/docs/03-destruction.md`, "The `__destroy` metamethod", rules 1
+to 4 and 6; signature by decision 10.*
+
+```lua
+function Connection.__destroy(self, reason)
+  self.socket:shutdown()
+  log("closed connection to " .. self.peer .. " (" .. reason .. ")")
+end
+```
+
+1. `__destroy` is looked up on the object's metatable at the moment of
+   death. For functions, coroutines and userdata that means the shared
+   per-type metatable read by `debug.getmetatable`, as in Lua.
+2. During the call `self` is fully functional: fields, metatable and
+   methods work, every dependent is alive, everything it merely references
+   is alive unless it is dying in the same cascade.
+3. When the cascade reaches step 2.3 the object is dead no matter what the
+   method did. There is no resurrection.
+4. `__destroy` may create new objects and anchor them to anything alive. It
+   may not anchor to `self`, to any other dying object, or move anything
+   that predates the destroy phase ("No moves during destruction").
+5. `reason` is `"anchor"` when an anchor's death made the formula false
+   (a scope exit included), `"destroy"` for `destroy(obj)`,
+   `"unreachable"` when the collector found the object, and `"exit"` for
+   the program-end sweep. There is no third argument: `remaining` is gone
+   with the `any` combinator (decision 10). What, if anything, takes its
+   place
+   is open ([06-open-questions.md](06-open-questions.md)).
+6. Base-class destructors: open. File 10 leans towards walking the
+   `__index` chain of metatables and calling every distinct `__destroy`
+   most-derived first; a merged-index class library must chain its own.
+7. Which objects the runtime can notify: those it has seen. An object is
+   seen once it has been anchored with `@` (`@ lifetime.reachable`
+   included), given a hook, declared as a token, or passed to `destroy`,
+   `discard` or `lifetime.of`. A plain Lua table with a `__destroy` that
+   the runtime never saw is collected silently, as Lua collects it; `x @
+   lifetime.reachable` is the way to register an object on the default
+   lifetime so that its destructor runs when the collector finds it. This
+   follows from decision 2 (the host owns the heap) and is listed under
+   [06-open-questions.md](06-open-questions.md), "Registering plain
+   objects", for confirmation.
+
+## Tombstones and `lifetime.alive`
+
+*From file 10, decision 8, replacing "Death and references" in
+`xd/docs/03-destruction.md`. Raising rather than reading `nil` is this
+repository's decision ([05-decisions.md](05-decisions.md), "The dead
+metatable raises").*
+
+When a table dies by cascade, scope exit or `destroy`, the runtime empties
+it (every field, including the array part) and gives it the **dead
+metatable**. References to it stay where they are: in locals, upvalues,
+fields, keys of weak and strong tables. Identity is kept: two different
+dead objects are still different, and `t[dead]` still finds the entry.
+
+- Indexing, assigning a field, calling, and every other metamethod-driven
+  operation on a tombstone raises
+  `attempt to index a dead table (<name>, died at <where>, <reason>)`,
+  with `index`, `assign to` or `call` as the verb. `<name>` is
+  `tostring(obj)` as it read just before the object died, so a
+  `__tostring` gives it a name; `<where>` is the source position of the
+  statement that caused the cascade (the `destroy` call, the block exit,
+  or `collector` for a death the collector found); `<reason>` is the reason
+  of "`__destroy` and reasons".
+- `rawget`, `rawset`, `next`, `pairs`, `#` and `==` do not raise: they see
+  an empty table. `tostring(dead)` is `dead <name>`. `getmetatable(dead)`
+  is the string `"dead"`; `setmetatable` on it raises Lua's "cannot change
+  a protected metatable".
+- `lifetime.alive(x)` is the liveness check that replaces `if x then`:
+  `true` for an object that is alive or dying, `false` for a tombstone and
+  for `nil` or `false`; a value that is not an object is `bad argument #1
+  to 'lifetime.alive' (object expected, got number)`.
+- A dead function, coroutine or userdata cannot be emptied or given a
+  per-instance metatable. The runtime remembers that it died so that
+  `lifetime.alive` reads `false` and `@` refuses it; using it otherwise is
+  not caught. Open: [06-open-questions.md](06-open-questions.md),
+  "Non-table dependents after death".
+- Objects that die by `reachable` need no tombstone: by definition nothing
+  refers to them.
+
+A **dying** object is not dead: fields, methods and metamethods behave as
+for a live object, which is what lets a hook on `conn` still talk to
+`conn` and a dependent's destructor still read its anchor. Only `@` on it
+and anchoring to it are refused.
+
+Weak tables keep their Lua meaning: a weak entry is cleared when its key or
+value is collected, which for a tombstone is once nothing else refers to it
+(5.1 clears weak entries one cycle after the finalizer, "Host"). An object
+still held in an array stays as a tombstone until something removes it by
+identity, usually a hook that runs while the object is dying and still
+findable.
+
+## Errors in destructors and `destroyerror`
+
+*From `xd/docs/03-destruction.md`, rule 5 and "`destroyerror`"; kept by
+decision 10.*
+
+Errors raised inside `__destroy` and inside hook functions follow the C++
+rule, whatever caused the death:
+
+- If no error is already propagating, the **first** error of the cascade is
+  held until the rest of the cascade has finished and then propagates to
+  the statement that caused the death: the `destroy` call, or the block
+  exit (`return`, `break`, `goto`, or a loop iteration included). From
+  then on it counts as propagating for the rest of its cascade.
+- Every error raised while an error is already propagating (a later
+  destructor of the same cascade, or any destructor running because a
+  scope is unwinding) goes to `destroyerror` and the original error
+  continues.
+- One cascade is one `destroy()` or `discard()` call, one scope exit, one
+  finalizer run, or the whole program-end sweep; a `destroy()` inside a
+  destructor is a cascade of its own and raises to that call.
+- A destructor run by the collector (reason `"unreachable"`) has no
+  statement to raise at; what happens to its error is open
+  ([06-open-questions.md](06-open-questions.md), "Errors in finalizer-run
+  destructors").
+
+`destroyerror(obj, err)` is a global function, looked up raw in `_G` at the
+moment an error is routed, called with the dying object (still usable) and
+the error value. The default writes `destroyerror: <message>` and a
+traceback to `stderr`. Programs may replace it. If the handler itself
+raises, or the global is not callable, the runtime writes both errors to
+`stderr` (the second as `destroyerror: error in destroyerror (<message>)`)
+and continues.
+
+## Reachability is the collector's
+
+*From file 10, decision 2, replacing "`reachable` is exact" in
+`xd/docs/02-lifetimes.md` and "The collector" in `xd/docs/03-destruction.md`.*
+
+An object whose formula has the `reachable` term, and that nothing refers
+to any more, dies when Lua's collector finds it. Nothing is promised about
+when that is, except:
+
+- **`collectgarbage("collect")` is the deterministic point.** When it
+  returns, every object that was unreachable before the call has had its
+  cascade run, with reason `"unreachable"`. Weak entries that held such an
+  object clear one collection later ("Host"), so a test that checks a
+  weak table collects twice.
+- Within one collection, objects are finalized **newest first** by
+  creation ("Host"), each taking its whole subtree in cascade order; an
+  object already destroyed in an earlier walk is skipped. This is the
+  order `xd/docs/03-destruction.md`, "A cycle", step 4 gives.
+- A destructor run by the collector runs at an arbitrary allocation point,
+  in the middle of whatever the program was doing. Deterministic ownership
+  does not remove reentrancy; code that dispatches events keeps its
+  lock-and-defer machinery (lesson 5 of `xd/docs/09-lessons-from-treflove.md`).
+- Reachability follows ordinary references only. The runtime's own edges
+  from an anchor to its dependents are weak and do not count
+  ([03-runtime.md](03-runtime.md)); a dependent's reference to its anchor
+  is strong, as any field would be. A subtree nobody outside holds is
+  therefore an ordinary cycle and dies as a whole when the collector finds
+  its root (decision 3).
+- `collectgarbage` keeps all of its Lua 5.1 options; nothing is removed.
+
+Everything else stays exact and synchronous: anchored lifetimes, scope
+exit, `destroy`, the cascade order, hooks and destructors run by them.
+
+## Coroutines
+
+*From `xd/docs/03-destruction.md`, "Coroutines", as far as decisions 1 and
+2 allow.*
+
+A coroutine's stack is a chain of scopes; while it is suspended they are
+alive and so is everything anchored to them. A coroutine the collector
+finds unreachable cannot run its pending epilogues (5.1 has no
+`coroutine.close`): the runtime destroys its scope records from the
+finalizer, innermost first, and the Lua frames are dropped. On plain Lua
+5.1 a block that needs the error-path wrapper cannot yield (`attempt to
+yield across metamethod/C-call boundary`); LuaJIT allows it. `caller`
+across a coroutine boundary is open ([06-open-questions.md](06-open-questions.md)).
+
+## Program end
+
+*From `xd/docs/02-lifetimes.md`, "Program end", as far as the host allows.*
+
+1. **The main scope exits** like any block: its dependents die in reverse
+   attachment order, each with its cascade, reason `"anchor"`.
+2. **The host closes the state.** Lua finalizes every object that still has
+   a pending finalizer, newest first ("Host"); the runtime runs each one's
+   cascade with reason `"exit"` when it has been told the program is ending
+   (`lifetime run` tells it; how an embedding host tells it is open,
+   [06-open-questions.md](06-open-questions.md)), else `"unreachable"`.
+
+Newest first means an instance dies before the metatable it was created
+with, so `__destroy` can still be found. `os.exit` on plain Lua 5.1 does
+not close the state, so step 2 does not run after it; LuaJIT's
+`os.exit(code, true)` does. There is no `os.exit` of our own.
+
+## The `lifetime` table
+
+*From `xd/docs/04-syntax.md`, "The `lifetime` table", reduced by decisions
+5, 7 and 11 to the six names decision 11 lists.*
+
+| Name | Meaning |
+| --- | --- |
+| `lifetime.reachable` | The `reachable` term as a lifetime value: `x @ lifetime.reachable` releases `x` to the collector; `lifetime.of(x)` of a default-lifetime object returns it. |
+| `lifetime.pin(a1, …, an)` | A lifetime value over the anchors without the implicit `reachable` term ("The implicit `reachable` term"). |
+| `lifetime.of(obj)` | `obj`'s current formula as a lifetime value, a snapshot: a later move of `obj` does not change it. Error on `nil`, a value, a dead object. |
+| `lifetime.alive(x)` | The liveness check ("Tombstones"). |
+| `lifetime.dependents(obj)` | A fresh array of the live objects and hooks whose formula mentions `obj`, in attachment order. |
+| `lifetime.format(v)` | A string rendering of a lifetime value, an object's formula, a token or a hook: `(conn, reachable)`, `conn` (pinned), `reachable`, `token period`, `scope`, `hook`, `none` for a value whose anchors all died. Object anchors render through `tostring`. |
+
+A **lifetime value** is a table with the private metatable `"lifetime"`:
+no fields, no lifetime of its own. It holds its anchors strongly, so
+holding a value keeps its anchors reachable. It is a one-way gate: an
+anchor that dies drops out of every value that mentioned it, and a value
+left with no anchor is the empty lifetime, which cannot be used after `@`
+(`attempt to anchor to an empty lifetime`). `==` on two values compares
+structure. `lifetime.of(x)` on the default lifetime returns
+`lifetime.reachable`, which when spliced refers to the reachability of the
+object being anchored, not of `x`.
+
+**Error texts** follow `xd/docs/04-syntax.md`, "Error texts": a runtime
+error in the lifetime vocabulary reads `attempt to <verb> … <type> value`;
+an argument error reads Lua's `bad argument #N to 'name' (<what> expected,
+got <type>)`, with `name` qualified by the table for `lifetime.*` and bare
+for `destroy` and `discard`. "object" means a table, function, coroutine,
+hook, token or userdata. Everything the standalone interpreter adds to a
+message (a position prefix, a traceback) is Lua's own.
+
+## Removals and changes relative to Lua 5.1
+
+*From `xd/docs/04-syntax.md`, "Removals and changes relative to Lua",
+reduced to what a transpiler can honour.*
+
+- `lifetime.all`, `lifetime.any` and `lifetime.scope()` are gone: a
+  conjunction is the list form after `@`, there is no disjunction, and
+  scopes are syntax (decisions 5, 7 and 11).
+- `@` is reserved and cannot appear in identifiers or elsewhere.
+- `defer` is a reserved word. Whether `scope`, `caller` and `token` are
+  reserved everywhere or only where the grammar names them is open
+  ([06-open-questions.md](06-open-questions.md), "Reserved words"); Treflove
+  uses `token` as an identifier in 41 places and `defer` in 8.
+- `__gc` is not removed; the runtime uses it. A `__gc` of your own on a
+  userdata still runs, as in Lua. Tables get `__destroy` through the
+  runtime, not `__gc`.
+- Nothing is removed from `collectgarbage`, `os.exit` or `coroutine`.
+
+## Summary
+
+| Object is… | Kept alive by | Killed by |
+| --- | --- | --- |
+| `@ lifetime.reachable` (the default) | being referenced | the collector, `destroy()` |
+| `@ a` | `a`, while something refers to the object | `a`'s death, the collector, `destroy()` |
+| `@ scope` | the block, while referenced | block exit by any route, the collector, `destroy()` |
+| `@ caller` | the caller's block, while referenced | that block's exit, the collector, `destroy()` |
+| `@ (a, b)` | both, while referenced | whichever dies first, the collector, `destroy()` |
+| `@ lifetime.pin(a)` | `a` | `a`'s death, `destroy()` |
+| `@ lifetime.pin(a, b)` | both | whichever dies first, `destroy()` |
+| `defer f @ a` | `a` | `a`'s death, `destroy()`, cancelled by `discard()` |
+| `@ lifetime.of(x)` | what `x` had at that moment | any part failing, `destroy()` |
+
+Any row can be swapped for any other at run time by writing `@` again on
+the live object.
