@@ -1,0 +1,25 @@
+-- plain.lt: a program that uses no lifetime syntax at all. It transpiles
+-- to itself (task 001, the pass-through) and exercises the whole pipeline
+-- once: build, run under every interpreter found, compare the output.
+-- Nothing here depends on the interpreter: no addresses, no floats.
+
+local items = {"gamma", "alpha", "beta"}
+table.sort(items)
+print(table.concat(items, ", "))
+--> alpha, beta, gamma
+
+local function greet(name)
+    return "hello, " .. name
+end
+print(greet("lifetime"))
+--> hello, lifetime
+
+local count = 0
+for _ in pairs(items) do
+    count = count + 1
+end
+print(("%d items"):format(count))
+--> 3 items
+
+print(pcall(error, "caught"))
+--> false	caught

@@ -1,0 +1,14 @@
+#!/usr/bin/env lua
+-- bin/lifetime: the command. `lifetime build FILE -o OUT`, `lifetime run
+-- FILE [ARGS]`. See docs/04-transpiler.md, "The command". Task 007.
+--
+-- When run from a checkout, make `require("lifetime")` find the modules
+-- next to this script; the rockspec installs them on the normal path.
+local script = arg and arg[0] or "bin/lifetime"
+local root = script:match("^(.*)[/\\]bin[/\\][^/\\]*$")
+if root then
+    package.path = root .. "/?.lua;" .. root .. "/?/init.lua;" .. package.path
+end
+
+local cli = require("lifetime.cli")
+os.exit(cli.main(arg))
