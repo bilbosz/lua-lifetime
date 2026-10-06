@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make test)",
+      "Bash(make test:*)",
+      "Bash(make lint)",
+      "Bash(make lint:*)",
+      "Bash(lua5.1:*)",
+      "Bash(luajit:*)",
+      "Bash(lua:*)",
+      "Bash(luacheck:*)",
+      "Bash(luarocks:*)",
+      "Bash(bin/lifetime:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git merge:*)",
+      "Bash(git fetch:*)",
+      "Bash(git push:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)"
+    ]
+  }
+}
