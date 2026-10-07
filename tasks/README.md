@@ -33,22 +33,24 @@ by hand.
 
 Every section in the template is mandatory. *Acceptance criteria* must cite
 the spec; *Test cases* must give exact expected output including destruction
-order, with reachable deaths pinned by `collectgarbage("collect")`. *Spec
-issues found* and *Review log* start empty and are appended to during
-implementation and review.
+order, with reachable deaths pinned by `collectgarbage("collect")`;
+*Performance* must name the hot path, its benchmark, and what stays free.
+*Spec issues found* and *Review log* start empty and are appended to
+during implementation and review.
 
 ## Current backlog
 
 | Id | Title | Depends |
 | --- | --- | --- |
 | 001 | Skeleton, `make test`, conformance runner, pass-through transpiler for plain Lua | |
-| 002 | Runtime: anchors, dependents inside the anchor, `destroy`, cascade order, tombstones, `destroyerror` | 001 |
+| 002 | Runtime: anchors, dependents inside the anchor, `destroy`, cascade order, tombstones, `destroyerror` | 001, 010 |
 | 003 | Runtime: scope records, `caller` depth counter, hooks | 002 |
 | 004 | Runtime: named tokens, `lifetime.pin`, `lifetime.alive`, reachable-only destructors via `newproxy`, `collectgarbage` | 002 |
-| 005 | Lexer and parser: Lua 5.1 plus `@`, the list form, `defer`, `scope`, `caller`, the token declaration | 001 |
+| 005 | Lexer and parser: Lua 5.1 plus `@`, the list form, `defer`, `scope`, `caller`, the token declaration | 001, 010 |
 | 006 | Emitter: `@` and lists, `defer`, block epilogues on every exit path, the `pcall` error path, `caller` prologue and epilogue | 003, 005 |
 | 007 | CLI `lifetime build` and `lifetime run`; the rockspec installs and runs | 006 |
 | 008 | Port the conformance examples from `xd/examples/`; document each deviation in `docs/07-conformance.md` | 004, 007 |
 | 009 | Treflove trial: transpile the sessions-and-listeners slice described in `xd/docs/notes/xd-in-treflove.md` and run it under LuaJIT | 008 |
+| 010 | Benchmark harness: `make bench`, comparison with plain Lua and with `master` | 001 |
 
 Keep this table in sync when adding tasks.

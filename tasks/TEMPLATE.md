@@ -29,6 +29,12 @@ and the statement at which each death occurs; reachable deaths pinned with
 `collectgarbage("collect")`. Name the spec sentence most likely to be
 misread and include a case for it.>
 
+## Performance
+
+<The hot path the task adds or changes, the benchmark under `bench/` that
+measures it, and what must stay free (code that does not use the
+feature). "None" only for a task with no runtime or generated-code path.>
+
 ## Out of scope
 
 <Adjacent work the implementer must not do in this task.>

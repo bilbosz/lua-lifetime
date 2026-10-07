@@ -19,7 +19,8 @@ The task file, the branch name, the implementer's handoff, and the diff
    criterion *before* reading the implementation. Then compare.
 2. **Run the suite yourself.** `make test` and `make lint` on the branch
    head. Record the summary lines and which interpreters ran. A green suite
-   is necessary, not sufficient.
+   is necessary, not sufficient. Then `make bench` on the branch head and
+   on `master`, same machine, both interpreters.
 3. **Trace by hand.** Choose the acceptance criterion whose spec sentence is
    easiest to misread (the task file names one; disagree if you like) and
    trace a concrete program through the code. Then do the same for one
@@ -73,9 +74,21 @@ The task file, the branch name, the implementer's handoff, and the diff
   says why.
 - `make test` and `make lint` are green on the branch head (you ran them).
 
+**Performance** (`CLAUDE.md`, rule 5)
+- The task's *Performance* section is honoured: the named benchmarks exist
+  and ran.
+- No benchmark the task touches is slower than `master` beyond the
+  threshold in `bench/README.md`.
+- Code that does not use the extension pays nothing: the plain-Lua
+  benchmarks did not move, a block without `@ scope` or a bare hook is
+  emitted verbatim, an object never anchored has no state.
+- No optimisation changes observable behaviour (order, reasons, error
+  texts, the statement of death).
+
 **Scope**
-- The diff does what the task says and nothing else. Optimisations, caching,
-  extra builtins, or semantic drift are findings even when well-intentioned.
+- The diff does what the task says and nothing else. Optimisations of paths
+  the task does not name, extra builtins, or semantic drift are findings
+  even when well-intentioned.
 - Nothing under *Out of scope* in the task file was touched.
 
 **Quality** (does not change the verdict on its own)
@@ -88,7 +101,7 @@ The task file, the branch name, the implementer's handoff, and the diff
 ## Verdict: APPROVE | REQUEST_CHANGES | BLOCKED
 
 ## Suite
-<summary line of make test per interpreter, make lint, and whether you ran them on the branch head>
+<summary line of make test per interpreter, make lint, make bench on branch and master per interpreter, and whether you ran them on the branch head>
 
 ## Trace
 <the hand trace from step 3: program, expected per spec, observed in code, match or not>
@@ -119,7 +132,9 @@ Fix: <precise description, no code edits by you>
 - **REQUEST_CHANGES**: at least one blocking finding. A finding is blocking if
   it is a spec violation, an ordering error, a strong reference or side
   table the runtime may not keep, something that works on one interpreter
-  only, a missing or inadequate test for an acceptance criterion, or an
+  only, a missing or inadequate test for an acceptance criterion, a
+  measured slowdown beyond the threshold or a cost added to code that does
+  not use the extension, a missing benchmark the task asked for, or an
   out-of-scope change that alters behaviour.
 - **BLOCKED**: the task cannot be judged because the spec is silent or
   contradictory on something the task requires, or it touches an open

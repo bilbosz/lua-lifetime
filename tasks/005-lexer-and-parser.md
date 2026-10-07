@@ -2,7 +2,7 @@
 id: 005
 title: Lexer and parser: Lua 5.1 plus `@`, the list form, `defer`, `scope`, `caller`, the token declaration
 status: todo
-depends: [001]
+depends: [001, 010]
 branch:
 pr:
 commits:
@@ -77,6 +77,12 @@ The sentence most likely to be misread: "`defer` takes everything up to a
 `@`, a comma or a closing token", under which `defer a or b` is one hook
 on the value of `a or b`, not `(defer a) or b`. The `defer a or b` case
 pins it.
+
+## Performance
+
+Hot path: the transpiler, not the program. Benchmark: lex and parse time
+of the largest file in the corpus, recorded in `bench/` so later parser
+changes can be compared. Must stay free: nothing at run time.
 
 ## Out of scope
 

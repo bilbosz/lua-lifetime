@@ -56,7 +56,11 @@ this repository.
 ```
 make test     # unit suite under every interpreter found (lua5.1, luajit), then the conformance suite
 make lint     # luacheck
+make bench    # benchmarks against plain Lua and against master (task 010)
 ```
+
+Performance is a priority second only to correctness: code that does not
+use the extension pays nothing, and what does is measured.
 
 Both `lua5.1` and `luajit` are supported; at least one must be on `PATH`.
 `luacheck` is needed for `make lint`. See [CLAUDE.md](CLAUDE.md) for how

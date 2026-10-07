@@ -73,6 +73,13 @@ The sentence most likely to be misread: lesson 1 of
 reference"), which under decisions 3 and 4 no longer holds: a `child @
 parent` with a back-reference is collectable as a cycle. Case 3 pins it.
 
+## Performance
+
+Measure the Treflove slice: time for one connect-login-disconnect cycle
+transpiled against Treflove's hand-written version under LuaJIT, and the
+per-frame cost of the event dispatch with the `caller` prologue in place.
+Report both; they are the first numbers from a real program.
+
 ## Out of scope
 
 - Modifying the Treflove repository or pushing to it.

@@ -88,6 +88,14 @@ whitespace". Whitespace *and* line structure: the output must keep each
 statement on its source line, not merely be semantically equal. The emit
 test with `error("boom")` on line 7 pins it.
 
+## Performance
+
+Hot path: none at run time; the transpiler itself. Free: plain Lua must
+come out byte-identical in structure, so a program that does not use the
+extension runs exactly as fast as before. No benchmark is required in this
+task (task 010 adds the harness); record the time `cli.build` takes on the
+largest file of the test corpus in the handoff, as a first baseline.
+
 ## Out of scope
 
 - Any extension syntax (`@`, `defer`, `scope`, `caller`, `token`): task 005.

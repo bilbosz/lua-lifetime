@@ -80,9 +80,17 @@ Skills, invoked with `/name`:
    makes you want to change the semantics, stop, write down why in the task
    file under "Spec issues found", and finish the parts that do not depend
    on it. The reviewer and the human decide.
-5. **Performance is not a goal.** Do not optimise. Sort the sequence
-   numbers, walk the lists, allocate the proxy. The first implementation
-   is the reference; it must be obviously correct.
+5. **Performance is a priority, second only to correctness.** The order
+   is: the spec, then ownership order, then speed, then brevity. Code that
+   does not use the extension pays nothing: a plain Lua chunk transpiles
+   to itself, a block with no `@ scope` and no bare hook gets no scope
+   record, an object never anchored gets no state, a pinned object gets no
+   proxy. Code that does use it pays as little as the design allows, and
+   the cost is measured, not guessed: a task that touches a hot path adds
+   or updates a benchmark under `bench/`, and `make bench` (task 010
+   provides it) compares the branch with `master` on the same machine. An
+   optimisation never changes what a program observes (order, reasons,
+   error texts, the statement of death); one that would is a spec change.
 6. **The runtime owns nothing the collector does not.** It never keeps a
    strong reference to a dependent that the language says may be
    collected: dependents lists are weak-valued, hook lists are strong
@@ -110,7 +118,7 @@ Skills, invoked with `/name`:
    interpreter found. If it is not green, the task is not done. `make
    lint` must be clean too.
 
-## Technical decisions (binding for the first implementation)
+## Technical decisions (binding)
 
 - Lua 5.1 and LuaJIT are the targets. The runtime and the generated code
   use nothing outside Lua 5.1 plus `newproxy`; LuaJIT's `goto` is honoured
@@ -121,7 +129,17 @@ Skills, invoked with `/name`:
 - The parser is recursive descent over a plain table AST with a line on
   every node. The emitter preserves source lines.
 - State lives inside the object (`docs/03-runtime.md`). Dependents are
-  iterated by sorted sequence number with `pairs`, never `ipairs`.
+  iterated by a numeric loop over the anchor's sequence-number range,
+  newest first, skipping holes: never `ipairs`, which stops at the first
+  hole, and never a sort per cascade.
+- Hot paths stay cheap and compilable by LuaJIT: the generated chunk
+  binds the runtime functions it uses to locals; the `caller` prologue and
+  epilogue are inline field updates, not calls; the runtime uses numeric
+  `for` loops on its own hot paths; nothing that runs per call or per
+  block entry uses `debug.*`, `coroutine.running`, `select("#", …)` on
+  the common path, or creates a closure where an alternative exists.
+  Where the spec forces a cost (the `pcall` wrapper, the sentinel), the
+  benchmark says how much (`docs/03-runtime.md`, "Performance").
 - The tombstone is an emptied table with the dead metatable. There is no
   dead-object type; `lifetime.alive` is the check.
 - Reachability is Lua's. The runtime never traces, counts references, or

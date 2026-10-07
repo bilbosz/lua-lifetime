@@ -2,7 +2,7 @@
 id: 002
 title: Runtime: anchors, dependents inside the anchor, `destroy`, cascade order, tombstones, `destroyerror`
 status: todo
-depends: [001]
+depends: [001, 010]
 branch:
 pr:
 commits:
@@ -107,6 +107,17 @@ Log every destructor call into a table and compare whole sequences.
 The sentence most likely to be misread: "its own destructor body runs …
 with every dependent still alive and usable" against the `xd` order that
 dependents die first. Case 2 pins it, and case 1's `c` before `d`.
+
+## Performance
+
+Hot paths: `attach` (first anchor and move), the cascade, the tombstone,
+`lifetime.dependents`. Benchmarks (`bench/`, task 010's harness): attach
+and destroy of `n` dependents on one anchor against a hand-written table
+with an explicit `close` loop; a move between two anchors; a cascade over
+a three-level tree. Must stay free: a table never anchored gets no state
+record (assert it in a test). The dependents walk is a numeric loop over
+the sequence range with compaction, no sort (`docs/03-runtime.md`, "The
+state of an object").
 
 ## Out of scope
 

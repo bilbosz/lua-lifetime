@@ -37,6 +37,10 @@ write acceptance criteria that cite `docs/`, the task is not ready; file a
      happens; a reachable death is pinned with `collectgarbage("collect")`.
      At least one case must exercise the spec sentence most likely to be
      misread; say which one and why.
+   - *Performance* names the hot path the task adds or changes, the
+     benchmark under `bench/` that measures it (new or existing), and what
+     must stay free: the code that does not use the feature. "None" is an
+     answer only for a task with no runtime or generated-code path.
    - *Out of scope* names the adjacent things the implementer must not do.
 6. **Set `status: todo`** and leave `branch`, `commits` and `review` empty.
 7. **Update the backlog table** in `tasks/README.md`.

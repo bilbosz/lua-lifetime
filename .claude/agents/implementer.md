@@ -28,8 +28,12 @@ Non-negotiable rules, repeated here because they matter most:
   timing.
 - The runtime owns nothing the collector does not: no strong reference to
   a collectable dependent, no side table keyed by an anchor.
-- The first implementation is a reference: obviously correct beats fast.
-  No optimisation, no caching.
+- Correct first, then fast. Performance is a priority second only to the
+  spec and ownership order (`CLAUDE.md`, rule 5): write the version the
+  tests prove, then measure with `make bench` and make the task's hot path
+  cheap. Code that does not use the extension must pay nothing. An
+  optimisation that changes observable behaviour is a spec change, not an
+  optimisation.
 - Everything must run under both `lua5.1` and `luajit`. No dependencies.
 - Never edit an `.expected` file to make a test pass unless the task says
   the expectation was wrong.
@@ -38,4 +42,5 @@ Non-negotiable rules, repeated here because they matter most:
 Your final message is a handoff to a reviewer who has not seen your work:
 what you implemented, which spec sentences you relied on, what you tested,
 what is left out and why, and the branch name and commit range. Report test
-results honestly, including failures and which interpreters ran.
+results honestly, including failures and which interpreters ran, and the
+`make bench` comparison with `master` for the benchmarks the task names.
