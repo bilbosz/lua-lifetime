@@ -27,7 +27,7 @@ returns the source unchanged, is replaced by the real round trip.
   pass-through)"; "The emitter keeps every statement on its source line".
 - `docs/04-transpiler.md`, "Grammar": Lua 5.1 as in `lparser.c` and the
   manual's §8. The additions are task 005; this task parses Lua 5.1 only
-  and reports `@`, `defer`, `token` as syntax errors in Lua's own words
+  and reports `@` and `!` as syntax errors in Lua's own words
   (`unexpected symbol near '@'`).
 - `CLAUDE.md`, "Rules that apply to everyone", rule 2 (every example has
   an `.expected`; the runner passes under every interpreter found) and
@@ -98,7 +98,7 @@ largest file of the test corpus in the handoff, as a first baseline.
 
 ## Out of scope
 
-- Any extension syntax (`@`, `defer`, `scope`, `caller`, `token`): task 005.
+- Any extension syntax (`@`, `!`, `scope`, `caller`, `token`): task 005.
 - The runtime: tasks 002 to 004.
 - `lifetime run`, `lifetime build` as a command, the rockspec: task 007.
 - Lua 5.2+ syntax (`goto`, `::label::`) in the input: task 005 covers

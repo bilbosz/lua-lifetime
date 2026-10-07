@@ -81,7 +81,7 @@ holding anchors and the term flag.
 
 Hooks go into `hooks` instead of `dependents` under the same sequence
 counter, so `lifetime.dependents` and the cascade can merge the two lists
-by sequence number into one attachment order (02, "`defer` and hooks").
+by sequence number into one attachment order (02, "Hooks: the `!` operator").
 
 ## The cascade
 
@@ -200,6 +200,16 @@ its depth or by the catching function's epilogue.
 record, the metatable `"token"`, and the name for `tostring` and
 `lifetime.format`. It is attached like any object, with the implicit term
 unless pinned, and gets a sentinel under the same rule as a table.
+
+## Hooks
+
+`lifetime.hook(f, name, a1, …)` creates a hook: a table with a state
+record, the metatable `"hook"`, the function, and the name (a constant
+string the emitter passes for a named hook, `nil` otherwise). It is
+attached pinned to its anchors and linked into each anchor's `hooks`
+list, never into `dependents`, so the anchor holds it strongly; it never
+carries a sentinel. Its body calls `f(reason)`. Naming costs one string
+constant per creation site and nothing per call.
 
 ## Program end
 

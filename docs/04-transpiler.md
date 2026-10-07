@@ -30,9 +30,9 @@ modulo whitespace (task 001, the pass-through).
 Lua 5.1 (`lparser.c`, the manual's §8) plus:
 
 ```ebnf
-exp        ::= … | exp '@' anchor | 'defer' exp
+exp        ::= … | exp '@' anchor | '!' exp
 stat       ::= … | prefixexp '@' anchor
-             | 'defer' exp [ '@' anchor ]
+             | '!' exp [ '@' anchor ]
              | 'token' Name [ '@' anchor ]
 anchor     ::= prefixexp | 'scope' | 'caller' | '(' anchorlist ')'
 anchorlist ::= anchoritem { ',' anchoritem }
@@ -40,10 +40,16 @@ anchoritem ::= exp | 'scope' | 'caller'
 ```
 
 - `@` has the lowest precedence of any operator and is postfix.
-- `defer` takes everything up to a `@`, a comma or a closing token.
+- `!` takes everything up to a `@`, a comma or a closing token. The lexer
+  produces `!` as a token of its own; `!=` is two tokens and the parser
+  reports it as `unexpected symbol near '!' (use '~=' for inequality)`.
+- A `!` where an operand or a statement is expected is the hook operator;
+  anywhere else it is a syntax error. Lua has no binary or postfix `!`,
+  so there is no ambiguity at a line start.
 - `scope` and `caller` are valid only where `anchor` and `anchoritem` name
   them. `@()` is a syntax error. Lists do not nest.
-- Reserved words: `defer`. Whether `scope`, `caller` and `token` are
+- Reserved words: none added; `defer` is an ordinary name. Whether
+  `scope`, `caller` and `token` are
   reserved everywhere is open ([06-open-questions.md](06-open-questions.md),
   "Reserved words"); until settled, the parser treats them as keywords only
   where the grammar names them.
@@ -76,8 +82,9 @@ these names gets what it wrote.
 | `e @ caller` | `__lt_attach(e, false, lifetime.caller())` |
 | `e @ lifetime.pin(a, b)` | `__lt_attach(e, false, lifetime.pin(a, b))` (the value carries no term) |
 | `x @ a` as a statement | the same call as a statement |
-| `defer f` | `lifetime.hook(f, <scope local>)` |
-| `defer f @ a` | `lifetime.hook(f, a)` |
+| `!f` | `lifetime.hook(f, nil, <scope local>)` |
+| `!f @ a` | `lifetime.hook(f, nil, a)` |
+| `local h = !f @ a`, `h = !f @ a`, `t.h = !f @ a` | `… = lifetime.hook(f, "h", a)`: the name of the binding target ([02-semantics.md](02-semantics.md), "Named hooks") |
 | `token t @ a` | `local t = lifetime.token("t", a)` |
 | `token t` | `local t = lifetime.token("t")` |
 
@@ -92,7 +99,7 @@ tasks; this table fixes the shape.
 ## Blocks: prologue and epilogue on every exit path
 
 A block **needs a scope record** if it contains, directly (not in a nested
-function), an anchor `scope`, a bare `defer` (whose default is the
+function), an anchor `scope`, a hook with no `@` (whose default is the
 block's scope), or a `token … @ scope`. Only such blocks get code; every
 other block is emitted verbatim. For a block that needs one:
 
@@ -149,7 +156,7 @@ end
 - Message handlers of an enclosing `xpcall` run at the raise point, before
   the epilogue, as they would in Lua.
 - The wrapper is emitted only for blocks that need a scope record; a block
-  with no `scope` anchor and no bare `defer` costs nothing. Where it is
+  with no `scope` anchor and no hook without `@` costs nothing. Where it is
   emitted it allocates a closure per entry into the block, the most
   expensive thing the transpiler generates; the benchmarks of task 010
   measure it, and "Catch-site unwinding" in

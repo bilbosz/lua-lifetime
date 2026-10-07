@@ -124,16 +124,25 @@ ways.
 
 ### Reserved words
 
-`defer` is reserved, as in `xd`. Treflove's `events/defer-manager.lua`
-names a local `defer` (known, `xd/docs/notes/xd-in-treflove.md`). Treflove
-also uses `token` as an identifier in 41 places (its game pieces are
-tokens) and `scope` and `caller` nowhere. *Leaning:* `scope` and `caller`
-are keywords only after `@` and inside the list form, where a variable of
-that name could not be anchored to anyway; `token` is a keyword only at
-statement start followed by a `Name`, which is never valid Lua, so every
-existing use of `token` as a variable keeps working. Decision 5 calls them
-keywords without saying reserved; settled by the parser task with the
-human.
+The extension adds no reserved word: hooks are made with the `!`
+operator ([05-decisions.md](05-decisions.md)), so `defer` is an ordinary
+name and Treflove's `events/defer-manager.lua` keeps its local `defer`.
+Treflove uses `token` as an identifier in 41 places (its game pieces are
+tokens) and `scope` and `caller` nowhere. *Leaning:* `scope` and
+`caller` are keywords only after `@` and inside the list form, where a
+variable of that name could not be anchored to anyway; `token` is a
+keyword only at statement start followed by a `Name`, which is never
+valid Lua, so every existing use of `token` as a variable keeps working.
+Decision 5 calls them keywords without saying reserved; settled by the
+parser task with the human.
+
+### Teal and `!`
+
+The hook operator `!` was chosen partly because Teal is believed not to
+use it. The bootstrap session could not reach Teal's sources to confirm.
+Before `teal-lifetime` starts, check Teal's lexer for `!` and record the
+answer here; if Teal uses it, the Teal front end needs another spelling or
+Teal needs to give it up.
 
 ### How an embedding host announces program end
 

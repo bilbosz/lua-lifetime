@@ -7,7 +7,7 @@ and a runtime module, `lifetime`, does the bookkeeping the generated code
 calls into.
 
 - **Transpiler.** Lua 5.1 syntax plus the postfix operator `@`, the
-  keyword `defer`, the anchors `scope` and `caller`, and the `token`
+  prefix hook operator `!`, the anchors `scope` and `caller`, and the `token`
   declaration goes in; plain Lua 5.1 that runs on Lua 5.1 and LuaJIT comes
   out. See [04-transpiler.md](04-transpiler.md).
 - **Runtime.** `require("lifetime")` is the `lifetime` table of the
@@ -27,7 +27,7 @@ local function serve(socket)
   local conn = Connection.open(socket) @ scope      -- dies at block exit
   local buf = Buffer.new(64 * 1024) @ conn          -- dies with conn, or earlier if unreferenced
   local header = Slice.new(buf, 0, 512) @ (buf, conn)
-  defer function() metrics.connections = metrics.connections - 1 end @ conn
+  !function() metrics.connections = metrics.connections - 1 end @ conn
   handle(header)
 end
 -- at the end of serve: conn.__destroy runs first, then its dependents,
