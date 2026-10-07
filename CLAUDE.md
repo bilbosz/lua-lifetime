@@ -14,7 +14,7 @@ documents are derived from `xd/docs/10-lua-lifetime-decisions.md` in the
 | Path | What |
 | --- | --- |
 | `docs/01-overview.md` | What lua-lifetime is, the one-screen taste, where the semantics come from, the relation to `xd` and `teal-lifetime`. Read once. |
-| `docs/02-semantics.md` | **The spec** of the language extension: `@` and the list form, the implicit `reachable` term and `lifetime.pin`, `scope` and `caller`, `defer`, tokens, `destroy`, the cascade order, `__destroy`, tombstones, errors, reachability, program end. |
+| `docs/02-semantics.md` | **The spec** of the language extension: `@` and the list form, the implicit `reachable` term and `lifetime.pin`, `scope` and `caller`, hooks and the `!@` operator, tokens, `destroy`, the cascade order, `__destroy`, tombstones, errors, reachability, program end. |
 | `docs/03-runtime.md` | The design of the `lifetime` module: state records inside the anchor, the sentinel, the cascade, scope records and the `caller` counter, tokens. |
 | `docs/04-transpiler.md` | The grammar and the code generation: what `@` expands to, block epilogues on every exit path, the `pcall` wrapper, the function prologue for `caller`, the command. |
 | `docs/05-decisions.md` | Decision log of this repository. Check here before proposing a change. |
@@ -170,7 +170,14 @@ Skills, invoked with `/name`:
   the collector runs, not at the block exit.
 - `destroy` on a dead or dying object is a no-op, so a destructor may
   destroy its own dependents by hand.
-- `defer f @ x` is pinned by `x` even though every other `@ x` is not.
+- `f !@ x` is pinned by `x` even though every other `@ x` is not, and
+  stays pinned when moved with `@`.
+- A hook has no default lifetime: block-exit cleanup is written
+  `f !@ scope`.
+- `defer` and `token` are ordinary names; hooks are made with `!@`, tokens
+  with `lifetime.token([name])`.
+- `lifetime.token("p") @ self` dies early if nothing holds it, like any
+  `@ self`; keep it in a field or anchor it with `lifetime.pin(self)`.
 - `scope` and `caller` cannot be stored or passed; there is no scope
   value and no loop-iteration trap.
 - A plain table the runtime never saw is collected silently, `__destroy`

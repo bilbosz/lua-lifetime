@@ -14,7 +14,7 @@ lifetimes". Output files are `.lua`. `.lifetime` was rejected as long,
 `.llt` as unpronounceable.
 → [04-transpiler.md](04-transpiler.md), `examples/README.md`
 
-## Tokens are declared with `token NAME [@ anchor]`
+## Tokens are declared with `token NAME [@ anchor]` (superseded)
 
 Decision 6 of file 10 calls for a declaration form and leans towards a
 `token` keyword. Deriving [02-semantics.md](02-semantics.md) and the
@@ -32,8 +32,8 @@ reads like a variable; a library function (`lifetime.token("period")`) was
 rejected because decision 6 asked for a declaration and because the name
 would be written twice. Whether `token` is reserved everywhere is a
 separate open question ("Reserved words" in
-[06-open-questions.md](06-open-questions.md)).
-→ [02-semantics.md](02-semantics.md), "Named tokens"
+[06-open-questions.md](06-open-questions.md)). Superseded below by
+"Tokens are created by `lifetime.token`".
 
 ## The dead metatable raises
 
@@ -97,3 +97,107 @@ the benchmark harness, and every task's *Performance* section names what
 it measures.
 → `CLAUDE.md`, rule 5; [03-runtime.md](03-runtime.md), "Performance";
 [04-transpiler.md](04-transpiler.md)
+
+## Hooks are made with the operator `!@`, not the keyword `defer`
+
+Decided by the human on 2026-10-07 ("no keyword for that, but some kind
+of operator", then "`local hook = function() print("exited") end !@
+scope`"). `f !@ a` is `xd`'s `defer f @ a` written as one infix operator
+with the precedence and right operand of `@`: `@` attaches an object to a
+lifetime, `!@` attaches an action. The rest of `defer` carries over: the
+hook is pinned by its anchors, runs after its anchor's `__destroy`, is
+called with the reason, and is moved, destroyed and discarded like any
+object. The extension adds no reserved word, so `defer` is an ordinary
+name again (Treflove's `events/defer-manager.lua` names a local `defer`).
+
+Two things change with the spelling:
+
+- **The anchor is always written.** There is no bare form, so there is
+  no default lifetime: cleanup at block exit is `f !@ scope`. The
+  argument `xd/docs/07-decisions.md`, "`defer` stays as syntactic sugar",
+  made for a keyword (a bare form needs a default no function could
+  supply) does not arise. The cost is two more words for the most common
+  hook; the gain is that every hook says when it runs.
+- **No precedence rule of its own.** `defer` took the whole expression up
+  to `@` so that `defer a or b` could not mean `(defer a) or b`
+  (`xd/docs/07-decisions.md`, "`defer` takes the whole expression up to
+  `@`"). A postfix operator at the lowest precedence applies to the whole
+  expression on its left anyway: `a or b !@ s` hooks `a or b`.
+
+Why `!@`: `!` is unused by Lua 5.1 to 5.4 and LuaJIT and is believed
+unused by Teal ([06-open-questions.md](06-open-questions.md), "Teal and
+`!@`"), so the two-character token collides with nothing; the `@` keeps
+the lifetime vocabulary on one character; and the `!` marks the
+difference from `@`, so a hook does not read as anchoring the function.
+A C programmer's `a != b` gets a targeted error that suggests `~=`.
+
+Considered and rejected, in this order:
+
+- **A prefix `!f [@ a]`**, proposed first in the same pull request: it
+  needed a default lifetime for the bare form and a precedence looser
+  than every Lua operator, unlike any unary operator, to keep `!a or b`
+  from meaning `(!a) or b`. The human preferred the infix form.
+- **`~f`**: Lua 5.3+ and Teal use unary `~` for bitwise not.
+- **A prefix `@f`**: a line starting with `@` after a line ending in an
+  expression parses as a postfix `@` on that expression.
+- **`f @@ a`**: the same shape as `!@`, but one mistyped character away
+  from `@`, which would silently anchor the function instead of hooking
+  it.
+- **`a -> f`, `a => f`**: `-->` is a comment, so one missing space comments
+  the hook out, and `=>` reads as a lambda.
+- **`$f`, `&f`**: `$` reads as interpolation; binary `&` is bitwise and in
+  Lua 5.3+ and Teal.
+
+This departs from the spelling of `xd/docs/04-syntax.md` and
+`xd/docs/06-hooks.md`, from the default lifetime of `defer` in
+`xd/docs/06-hooks.md`, and from the wording of decisions 4, 5 and 11 of
+`xd/docs/10-lua-lifetime-decisions.md`, which write `defer`. The human
+carries it back to `xd`.
+→ [02-semantics.md](02-semantics.md), "Hooks: the `!@` operator";
+[04-transpiler.md](04-transpiler.md), "Grammar"
+
+## A hook bound to a name carries the name
+
+Decided at the human's request on 2026-10-07 ("I want the defers to be
+named or to be able to be named … we should be able to destroy them").
+`local hook = fn !@ self` followed by `destroy(hook)`, `discard(hook)` or
+`hook @ other` is the documented way to hold a hook, and the hook gets a
+name: a hook created as the value of `local NAME =`, `NAME =` or
+`t.NAME =` carries `NAME`, rendered by `tostring` as `hook NAME`, by
+`lifetime.format`, and in a tombstone's message. The name comes from the
+binding, so dumps of what an object owns read as code; the transpiler
+can do this because `!@` is syntax and it sees the binding. (A token's
+name is passed explicitly to `lifetime.token`, which is a plain call.) A separate naming
+syntax (a name inside the operator, a `hook NAME = …` declaration) was rejected: binding
+to a local is what a handle needs anyway, and a second spelling would add
+syntax for a debugging aid. The name is a constant string passed at the
+creation site and costs nothing per call.
+→ [02-semantics.md](02-semantics.md), "Named hooks"
+
+## Tokens are created by `lifetime.token`
+
+Decided by the human on 2026-10-07 ("Token should be in the module
+lifetime.token"), superseding "Tokens are declared with `token NAME`"
+above. `lifetime.token([name])` returns a fresh token on the default
+lifetime, and `@` anchors it like any object: `local period =
+lifetime.token("period") @ self`. The name is an optional string for
+display only (`tostring`, `lifetime.format`, tombstone messages).
+
+Why: a token is a value with identity, held in fields and destroyed from
+anywhere (decision 6's own reason it cannot be a marking), which a
+function returns as naturally as `setmetatable` does; the extension's
+syntax stays at `@`, `!@`, `scope` and `caller`; `token` is no longer a
+word the parser has to treat specially, so Treflove's 41 uses of `token`
+as an identifier need no rule; and the name the earlier entry rejected
+the function for ("the name would be written twice") is now optional and
+written once, as the argument.
+
+This departs from decision 6 of `xd/docs/10-lua-lifetime-decisions.md`,
+which decides that named tokens get "their own declaration form" and
+leans towards a `token` keyword. The token itself is unchanged: identity,
+a dependents list, a hook list, no fields, no metatable access. The
+human carries the departure back to `xd`. The `lifetime` table grows by
+one name, `token`, beside the six decision 11 lists; it builds an
+object, not a formula, so decision 11's "everything that builds a formula
+is syntax" still holds.
+→ [02-semantics.md](02-semantics.md), "Tokens: `lifetime.token`"

@@ -25,12 +25,14 @@ them by hand, writing the inline prologue and epilogue of
   dependents die at block exit "by any route"; each entry is a new scope;
   `caller` is "the innermost block of the calling function"; functions the
   transpiler did not generate are transparent.
-- `docs/02-semantics.md`, "`defer` and hooks": default lifetime is the
+- `docs/02-semantics.md`, "Hooks: the `!@` operator": default lifetime is the
   block's scope; a hook is pinned; "A hook on an object runs **after**
   that object's `__destroy`, interleaved with the object's other
   dependents by attachment order, most recently attached first"; called
   as `fn(reason)`; metatable `"hook"`; `discard` cancels, `destroy` runs,
-  `@` re-targets; errors follow the destructor rule.
+  `@` re-targets; errors follow the destructor rule. "Named hooks": a
+  named hook's `tostring` is `hook NAME`; after it runs it is dead,
+  `lifetime.alive` is `false`, `destroy` and `discard` are no-ops.
 - `docs/02-semantics.md`, "Cascading death": "A scope has no body: scope
   exit destroys the objects anchored to it in reverse attachment order".
 - `docs/02-semantics.md`, "Errors in destructors": an error already
@@ -71,10 +73,16 @@ them by hand, writing the inline prologue and epilogue of
 - Requiring the runtime wraps `coroutine.resume`, `coroutine.wrap` and
   `coroutine.yield` so that `S.D` is always the running coroutine's table;
   the wrapped functions keep Lua's return values and errors exactly.
-- `lifetime.hook(f, a1, …, an)` creates a hook: a table with metatable
-  `"hook"`, attached pinned to the anchors (a scope record included), whose
-  body calls `f(reason)`; `lifetime.hook(5)` raises `attempt to defer a
-  number value`; calling or indexing a hook raises the hook errors.
+- `lifetime.hook(f, name, a1, …, an)` creates a hook: a table with
+  metatable `"hook"`, attached pinned to the anchors (a scope record
+  included) through their `hooks` lists, whose body calls `f(reason)`;
+  `lifetime.hook(5)` raises `attempt to defer a number value`; calling or
+  indexing a hook raises the hook errors.
+- With a name, `tostring(h)` is `hook NAME` and `lifetime.format(h)` is
+  `hook NAME`; with `nil`, `tostring(h)` is `hook: 0x…`.
+- `destroy(h)` on a live hook runs `f("destroy")` once; afterwards
+  `lifetime.alive(h)` is `false` and a second `destroy(h)` or `discard(h)`
+  does nothing.
 - A hook attached to an object runs after the object's `__destroy` and in
   its position among the dependents by attachment sequence.
 - `discard(h)` never runs `f`; `destroy(h)` runs it now with `"destroy"`;

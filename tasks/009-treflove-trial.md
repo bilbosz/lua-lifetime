@@ -24,8 +24,8 @@ repository itself is not modified.
 ## Spec
 
 - `docs/02-semantics.md`, "Cascading death" (the order the trial must
-  show), "`defer` and hooks" (the input hook), "Tombstones" (what the
-  nested `release()` calls see), "Named tokens" (the "logged in" period,
+  show), "Hooks: the `!@` operator" (the input hook), "Tombstones" (what the
+  nested `release()` calls see), "Tokens: `lifetime.token`" (the "logged in" period,
   idiom C, if the slice reaches `Session:login`).
 - `xd/docs/notes/xd-in-treflove.md`, sections 1 and 2, idioms A and B: the
   code shape to reproduce, with `lifetime.all(x, lifetime.reachable)`

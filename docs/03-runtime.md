@@ -81,7 +81,7 @@ holding anchors and the term flag.
 
 Hooks go into `hooks` instead of `dependents` under the same sequence
 counter, so `lifetime.dependents` and the cascade can merge the two lists
-by sequence number into one attachment order (02, "`defer` and hooks").
+by sequence number into one attachment order (02, "Hooks: the `!@` operator").
 
 ## The cascade
 
@@ -196,10 +196,21 @@ its depth or by the catching function's epilogue.
 
 ## Tokens
 
-`lifetime.token(name, pin, a1, …)` creates a token: a table with a state
-record, the metatable `"token"`, and the name for `tostring` and
-`lifetime.format`. It is attached like any object, with the implicit term
-unless pinned, and gets a sentinel under the same rule as a table.
+`lifetime.token([name])` creates a token: a table with a state record,
+the metatable `"token"`, and the name (or `nil`) for `tostring` and
+`lifetime.format`. It starts on the default lifetime; generated code
+anchors it with `attach` like any object, with the implicit term unless
+pinned, and it gets a sentinel under the same rule as a table.
+
+## Hooks
+
+`lifetime.hook(f, name, a1, …)` creates a hook: a table with a state
+record, the metatable `"hook"`, the function, and the name (a constant
+string the emitter passes for a named hook, `nil` otherwise). It is
+attached pinned to its anchors and linked into each anchor's `hooks`
+list, never into `dependents`, so the anchor holds it strongly; it never
+carries a sentinel. Its body calls `f(reason)`. Naming costs one string
+constant per creation site and nothing per call.
 
 ## Program end
 
@@ -219,7 +230,7 @@ same work by hand.
 **Free.** Code that does not use the extension pays nothing:
 
 - a plain Lua chunk transpiles to itself;
-- an object never anchored, hooked, declared as a token or passed to
+- an object never anchored, hooked, created by `lifetime.token` or passed to
   `destroy`, `discard` or `lifetime.of` has no state record and no proxy;
 - a block with no `@ scope` and no bare hook gets no scope record and no
   wrapper;

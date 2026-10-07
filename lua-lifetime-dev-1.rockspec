@@ -14,7 +14,7 @@ description = {
     summary = "Ownership and destructors for Lua.",
     detailed = [[
 Owned and scoped objects with destructors for Lua. x @ owner, x @ scope,
-defer hooks. Cleanup runs in a defined order when the owner dies or the
+cleanup !@ owner hooks. Cleanup runs in a defined order when the owner dies or the
 scope exits. Transpiles to Lua 5.1 / LuaJIT.]],
     homepage = "https://github.com/bilbosz/lua-lifetime",
     labels = {"lifetime", "destructor", "ownership", "transpiler"}

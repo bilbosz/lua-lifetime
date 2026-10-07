@@ -52,11 +52,11 @@ weak tables for one more cycle.
 - **`reachable`**: the term that stands for "something still refers to
   this object". Its truth is decided by the host collector (decision 2),
   not at a statement boundary.
-- **Token**: an opaque object created by a `token` declaration (decision
-  6): identity, a dependents list, a hook list, no fields.
+- **Token**: an opaque object created by `lifetime.token([name])`
+  (decision 6): identity, a dependents list, a hook list, no fields.
 - **Dependent**: an object whose formula mentions a given anchor.
-- **Hook**: an object created with `defer` whose destructor is a user
-  function.
+- **Hook**: an object created with the operator `!@` whose destructor is
+  a user function.
 - **Dying**: an object whose death has been decided in the cascade now
   running and whose destructor has not yet run, or has run but whose
   dependents are still being destroyed. Fully usable; cannot be moved or
@@ -172,7 +172,7 @@ latest, or earlier when nothing refers to it. The same holds for `@ scope`,
 `@ caller`, `@ tok` and for a list: `x @ (a, b)` is `x @ (a, b,
 lifetime.reachable)`. Two exceptions:
 
-- `defer f @ a` keeps replace semantics: a hook is pinned by its anchor,
+- `f !@ a` keeps replace semantics: a hook is pinned by its anchor,
   because nothing else refers to a hook and a collectable hook would never
   run.
 - `lifetime.pin(a1, …, an)` returns a lifetime value over the listed
@@ -233,32 +233,20 @@ Returning an object anchored to `scope` alone hands the caller a tombstone
 tombstone of decision 8 in place of `nil`). Anchor to `caller`, to what the
 caller passed in, or to nothing.
 
-## Named tokens
+## Tokens: `lifetime.token`
 
-*From file 10, decision 6. The declaration syntax is this repository's
-decision ([05-decisions.md](05-decisions.md), "Tokens are declared with
-`token NAME`").*
+*From file 10, decision 6. Created by a function of the `lifetime` module
+at the human's request ([05-decisions.md](05-decisions.md), "Tokens are
+created by `lifetime.token`"), not by the declaration form decision 6
+names.*
 
 A token names a span of time: "logged in", "this view's generation", "the
-current script". It is created by a declaration:
-
-```ebnf
-stat ::= … | 'token' Name [ '@' anchor ]
-```
-
-`token period @ self` declares a local `period` holding a fresh token
-anchored to `self`; `token generation` declares one on the default
-lifetime. A token is an object for every rule on this page: it is an
-anchor (`menu @ period`), a dependent (`token period @ self`), it can be
-moved, destroyed and discarded, and `lifetime.dependents(period)` lists
-what it owns. It has no fields: indexing or assigning a field raises
-`attempt to index a token value`. `getmetatable(tok)` is the string
-`"token"` and `tostring(tok)` is `token NAME`. A token has no `__destroy`;
-attach a hook for cleanup that belongs to the span itself.
+current script". `lifetime.token([name])` returns a fresh one, on the
+default lifetime like any new object, and `@` gives it a lifetime:
 
 ```lua
 function Session:login(user)
-  token period @ self              -- ends at logout, or with the session
+  local period = lifetime.token("period") @ self   -- ends at logout, or with the session
   self.period = period
   self.menu = Screen.new("menu") @ period
   backstack:push(function() self:logout() end) @ period
@@ -269,30 +257,72 @@ function Session:logout()
 end
 ```
 
-## `defer` and hooks
+- `name` is an optional string used only for display: `tostring(tok)` is
+  `token NAME`, or `token: 0x…` without a name, and `lifetime.format` and
+  the tombstone's message use the same text. A name that is not a string
+  is `bad argument #1 to 'lifetime.token' (string expected, got number)`.
+- A token is an object for every rule on this page: it is an anchor
+  (`menu @ period`), a dependent (`lifetime.token() @ self`), it can be
+  moved, destroyed and discarded, and `lifetime.dependents(period)` lists
+  what it owns.
+- Like any object anchored with `@`, `lifetime.token("period") @ self`
+  carries the implicit `reachable` term: it dies with `self`, or earlier
+  if nothing refers to it. Keep it in a field, as above, or pin it:
+  `lifetime.token("period") @ lifetime.pin(self)`.
+- It has no fields: indexing or assigning a field raises `attempt to index
+  a token value`. `getmetatable(tok)` is the string `"token"`. A token has
+  no `__destroy`; attach a hook for cleanup that belongs to the span
+  itself.
 
-*From `xd/docs/06-hooks.md` and `xd/docs/04-syntax.md`, "`defer`"; the
-order relative to `__destroy` by decision 10; pinning by decision 4.*
+## Hooks: the `!@` operator
+
+*From `xd/docs/06-hooks.md` and `xd/docs/04-syntax.md`, "`defer`",
+respelled as an infix operator at the human's request
+([05-decisions.md](05-decisions.md), "Hooks are made with the operator
+`!@`"); named hooks are this repository's ("A hook bound to a name
+carries the name"); the order relative to `__destroy` by decision 10;
+pinning by decision 4.*
 
 ```ebnf
-exp  ::= … | 'defer' exp
-stat ::= … | 'defer' exp [ '@' anchor ]
+exp  ::= … | exp '!@' anchor
+stat ::= … | prefixexp '!@' anchor | functiondef '!@' anchor
 ```
 
-`defer` turns a function into a **hook**: an object whose death calls the
-function. `defer` takes the whole expression up to a `@`, a comma or a
-closing token, so `defer a or b` is `defer (a or b)` and `defer f @ s` is
-`(defer f) @ s`; to anchor the function itself, parenthesise (`defer (f @
-obj)`). The operand must be a function: `attempt to defer a number value`.
+`f !@ a` turns the function `f` into a **hook** attached to `a`: an
+object whose death calls `f`. It is `xd`'s `defer f @ a` written as one
+operator: `@` attaches an object to a lifetime, `!@` attaches an action.
 
-- A hook's **default lifetime** is the enclosing block's scope, not
-  `reachable`: a bare `defer f` runs `f` when the block exits, which is the
-  `defer` of Zig and the `scope(exit)` of D. `defer f @ lifetime.reachable`
-  keeps no reference, so the collector may run `f` at any later time; legal
-  and almost never meant.
+```lua
+local hook = function() print("exited") end !@ scope   -- runs when this block exits
+function() cache[key] = nil end !@ session             -- runs when session dies
+unsubscribe !@ (emitter, listener)                     -- runs when either dies
+```
+
+- `!@` is a postfix operator with the precedence and the right operand of
+  `@`: the lowest precedence of any operator, and a `prefixexp`, `scope`,
+  `caller` or a parenthesised list on the right. It applies to the whole
+  expression on its left, so `a or b !@ s` hooks the value of `a or b`.
+  `@` and `!@` associate to the left: `f !@ a @ b` creates the hook on `a`
+  and then moves it to `b`.
+- The left operand must be a function: `attempt to defer a number value`.
+  A hook is not a function, so `h !@ x` on a hook is `attempt to defer a
+  hook value`; a hook is moved with `@`.
+- **The anchor is always written.** There is no bare form and no default
+  lifetime: cleanup at block exit is `f !@ scope`, which says what `xd`'s
+  bare `defer f` said by default. `f !@ lifetime.reachable` keeps no
+  reference, so the collector may run `f` at any later time; legal and
+  almost never meant.
+- As a statement the left side is a `prefixexp` or an anonymous `function
+  … end`, so `function() … end !@ scope` stands on its own; any other
+  expression needs parentheses at statement start, as for `@`.
+- `!@` is one token: `!` immediately followed by `@`. A lone `!` is a
+  syntax error, and `a != b` reads `unexpected symbol near '!' (use '~='
+  for inequality)`.
 - A hook is a dependent of its anchors, so it runs exactly where an object
   anchored to the same formula would be destroyed, and it is always pinned
-  ("The implicit `reachable` term").
+  ("The implicit `reachable` term"), whether or not anything holds it. A
+  move keeps it pinned: `hook @ other` never adds the `reachable` term to
+  a hook.
 - The function is called as `fn(reason)` with the reason of
   "`__destroy` and reasons". Whether it also learns which anchor died is
   open (proposal D of `xd/docs/09-lessons-from-treflove.md`;
@@ -302,21 +332,48 @@ obj)`). The operand must be a function: `attempt to defer a number value`.
   attached first (decision 10, reversing the sentence in
   `xd/docs/06-hooks.md`). Among hooks on one scope this is still
   last-deferred-first-run.
-- After it runs the hook is dead. A hook runs at most once. `discard(h)`
-  cancels it; `destroy(h)` runs it now; `h @ other` re-targets it.
 - A hook is a table with the private metatable `"hook"`: `getmetatable(h)
-  == "hook"`, `tostring(h)` is `hook: 0x…`, calling or indexing it raises
-  `attempt to call a hook value` / `attempt to index a hook value`.
+  == "hook"`; calling or indexing it raises `attempt to call a hook value`
+  / `attempt to index a hook value`.
 
 ```lua
 do
   local f = io.open(path) @ scope
-  defer function() print("after f is still open") end
+  function() print("after f is still open") end !@ scope
   local g = io.open(other) @ scope
-  defer function() print("runs first") end
+  function() print("runs first") end !@ scope
 end
 -- order: "runs first", g destroyed, "after f is still open", f destroyed
 ```
+
+### Named hooks
+
+A hook is an object, so the expression form hands it back, and holding it
+is how a hook is run early, cancelled or moved:
+
+```lua
+local hook = fn !@ self
+destroy(hook)       -- runs fn now with reason "destroy"; hook is dead afterwards
+destroy(hook)       -- no-op: a dead hook does nothing
+-- instead: discard(hook)  cancels it, fn never runs
+-- instead: hook @ other   re-targets it, fn runs when other dies
+```
+
+- A hook created as the value bound to a name carries that name: `local
+  NAME = f !@ …`, `NAME = f !@ …` and `t.NAME = f !@ …` (so `self.NAME =
+  f !@ …`) name the hook `NAME`; in a multiple assignment each hook takes
+  the name of its own target. `tostring(hook)` is `hook NAME`,
+  `lifetime.format` renders it as `hook NAME`, and the tombstone's message
+  names it. A hook bound any other way (`t[k] = f !@ a`, an argument, a
+  statement on its own) is anonymous and `tostring` gives `hook: 0x…`.
+- The name is fixed at creation: storing the hook somewhere else later
+  does not rename it.
+- Holding a handle does not lengthen the hook's life; dropping it does not
+  shorten it. A hook dies by its anchors, by `destroy`, or by `discard`.
+- After it runs the hook is dead: a hook runs at most once.
+  `lifetime.alive(hook)` is then `false`, `destroy` and `discard` on it are
+  no-ops, and `hook @ other` raises the dead-object error. `discard` on a
+  live hook cancels it.
 
 Errors raised by the function follow the destructor error rule below.
 
@@ -375,7 +432,7 @@ do
   local b = {} @ a
   local c = {} @ scope
   local d = {} @ (a, c)
-  defer function() print("hook on a") end @ a
+  function() print("hook on a") end !@ a
 end
 ```
 
@@ -434,7 +491,7 @@ end
    most-derived first; a merged-index class library must chain its own.
 7. Which objects the runtime can notify: those it has seen. An object is
    seen once it has been anchored with `@` (`@ lifetime.reachable`
-   included), given a hook, declared as a token, or passed to `destroy`,
+   included), given a hook, created by `lifetime.token`, or passed to `destroy`,
    `discard` or `lifetime.of`. A plain Lua table with a `__destroy` that
    the runtime never saw is collected silently, as Lua collects it; `x @
    lifetime.reachable` is the way to register an object on the default
@@ -593,16 +650,19 @@ not close the state, so step 2 does not run after it; LuaJIT's
 ## The `lifetime` table
 
 *From `xd/docs/04-syntax.md`, "The `lifetime` table", reduced by decisions
-5, 7 and 11 to the six names decision 11 lists.*
+5, 7 and 11 to the six names decision 11 lists, plus `lifetime.token`
+([05-decisions.md](05-decisions.md), "Tokens are created by
+`lifetime.token`").*
 
 | Name | Meaning |
 | --- | --- |
 | `lifetime.reachable` | The `reachable` term as a lifetime value: `x @ lifetime.reachable` releases `x` to the collector; `lifetime.of(x)` of a default-lifetime object returns it. |
+| `lifetime.token([name])` | A fresh token on the default lifetime ("Tokens: `lifetime.token`"). |
 | `lifetime.pin(a1, …, an)` | A lifetime value over the anchors without the implicit `reachable` term ("The implicit `reachable` term"). |
 | `lifetime.of(obj)` | `obj`'s current formula as a lifetime value, a snapshot: a later move of `obj` does not change it. Error on `nil`, a value, a dead object. |
 | `lifetime.alive(x)` | The liveness check ("Tombstones"). |
 | `lifetime.dependents(obj)` | A fresh array of the live objects and hooks whose formula mentions `obj`, in attachment order. |
-| `lifetime.format(v)` | A string rendering of a lifetime value, an object's formula, a token or a hook: `(conn, reachable)`, `conn` (pinned), `reachable`, `token period`, `scope`, `hook`, `none` for a value whose anchors all died. Object anchors render through `tostring`. |
+| `lifetime.format(v)` | A string rendering of a lifetime value, an object's formula, a token or a hook: `(conn, reachable)`, `conn` (pinned), `reachable`, `token period`, `scope`, `hook cleanup` for a named hook and `hook` for an anonymous one, `none` for a value whose anchors all died. Object anchors render through `tostring`. |
 
 A **lifetime value** is a table with the private metatable `"lifetime"`:
 no fields, no lifetime of its own. It holds its anchors strongly, so
@@ -631,10 +691,11 @@ reduced to what a transpiler can honour.*
   conjunction is the list form after `@`, there is no disjunction, and
   scopes are syntax (decisions 5, 7 and 11).
 - `@` is reserved and cannot appear in identifiers or elsewhere.
-- `defer` is a reserved word. Whether `scope`, `caller` and `token` are
-  reserved everywhere or only where the grammar names them is open
-  ([06-open-questions.md](06-open-questions.md), "Reserved words"); Treflove
-  uses `token` as an identifier in 41 places and `defer` in 8.
+- `!@` is an operator, and `!` cannot appear anywhere else. The extension
+  adds no reserved word; `defer` and `token` are ordinary names. Whether
+  `scope` and `caller` are reserved everywhere or only where the grammar
+  names them is open ([06-open-questions.md](06-open-questions.md),
+  "Reserved words").
 - `__gc` is not removed; the runtime uses it. A `__gc` of your own on a
   userdata still runs, as in Lua. Tables get `__destroy` through the
   runtime, not `__gc`.
@@ -651,7 +712,7 @@ reduced to what a transpiler can honour.*
 | `@ (a, b)` | both, while referenced | whichever dies first, the collector, `destroy()` |
 | `@ lifetime.pin(a)` | `a` | `a`'s death, `destroy()` |
 | `@ lifetime.pin(a, b)` | both | whichever dies first, `destroy()` |
-| `defer f @ a` | `a` | `a`'s death, `destroy()`, cancelled by `discard()` |
+| `f !@ a` | `a` | `a`'s death, `destroy()`, cancelled by `discard()` |
 | `@ lifetime.of(x)` | what `x` had at that moment | any part failing, `destroy()` |
 
 Any row can be swapped for any other at run time by writing `@` again on
