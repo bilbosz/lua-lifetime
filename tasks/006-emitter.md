@@ -38,7 +38,8 @@ conformance runner can run programs that use the syntax.
 
 ## Acceptance criteria
 
-- Every output chunk starts with the header line.
+- Every output chunk that uses the extension or names a lifetime builtin
+  starts with the header line; any other chunk is emitted unchanged.
 - Each row of the expansion table is produced for its source form, with
   `scope` resolving to the innermost enclosing block's record local and
   `caller` to `lifetime.caller()`.
