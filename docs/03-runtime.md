@@ -31,11 +31,18 @@ visible"). The record holds:
   term is present, plus, per anchor, the sequence number under which this
   object sits in that anchor's list.
 - `seq`: the next attachment sequence number this object hands out as an
-  anchor.
+  anchor, and `lo`, the lowest sequence number that may still hold an
+  entry.
 - `dependents`: a **weak-valued** table, sequence number to dependent.
-  Weak values get holes when a dependent is collected, so iteration
-  collects the keys, sorts them, and walks in that order with `pairs`,
-  never `ipairs` (decision 4).
+  Weak values get holes when a dependent is collected or detached, so
+  iteration is a numeric loop `for i = seq - 1, lo, -1`, skipping `nil`
+  slots: newest first, never stopped by a hole as `ipairs` would be
+  (decision 4), and never a sort. Sequence numbers only grow, so the order
+  is the attachment order without any bookkeeping. When holes outnumber
+  live entries the runtime **compacts**: it renumbers the live entries
+  densely from `lo`, in order, updates each dependent's stored sequence
+  number, and resets `seq`. Compaction is amortised over the detaches that
+  made the holes and never runs during a cascade.
 - `hooks`: a **strong-valued** table, sequence number to hook (decision
   4: a hook is pinned by its anchor).
 - `sentinel`: the `newproxy(true)` sentinel, or `nil` ("The sentinel").
@@ -103,8 +110,10 @@ death":
   which objects are exempt.
 
 `where` is the source position of the statement that caused the death:
-`destroy` reads it with `debug.getinfo(2, "Sl")`; the generated epilogue
-passes the line of the block exit; the finalizer passes `"collector"`.
+`destroy` reads it with `debug.getinfo(2, "Sl")` only when the object it
+destroys has dependents or a destructor to report about, which is off the
+plain-Lua path; the generated epilogue passes the line of the block exit
+as a constant; the finalizer passes `"collector"`.
 
 ## The tombstone
 
@@ -143,7 +152,9 @@ common), with the exit flag of "Program end" turning the reason into
 - never a hook (pinned by its anchor) and never a pinned object.
 
 Allocating a proxy per anchored object is the cost of reachable-only
-destructors; a program that pins everything pays nothing.
+destructors; a program that pins everything pays nothing. The proxy is
+allocated lazily: on the first `@` that makes the object need one, not at
+`setmetatable`, and never again for the same object.
 
 ## Scope records and `caller`
 
@@ -153,17 +164,35 @@ creates (`lifetime.enter()`) and the epilogue destroys
 body, reason `"anchor"` for its dependents. `@ scope` in the block compiles
 to an attachment to that record.
 
-`caller` uses a **depth counter**, per coroutine (keyed by
-`coroutine.running()`), as decision 5 describes: every generated function
-prologue increments it and the epilogue decrements it and destroys the
-record at that depth if one exists. A callee's `@ caller` asks
-`lifetime.caller()` for the record at `depth - 1`, allocating it on first
-use, so a call that never uses `caller` costs one increment and one
-decrement. Two things this design leaves open are recorded in
+`caller` uses a **depth counter**, per coroutine, as decision 5
+describes. For speed the counter is not reached through a call: the
+runtime keeps one table `D` per coroutine, with the current depth in
+`D.n` and the record of the activation at depth `d`, if one was asked
+for, in `D[d]`, and a state table `S` whose field `S.D` is the `D` of the
+running coroutine. The generated prologue and epilogue are inline
+([04-transpiler.md](04-transpiler.md), "Functions: prologue and epilogue
+for `caller`"):
+
+```lua
+local __D = __lt_S.D; local __d = __D.n + 1; __D.n = __d     -- prologue
+if __D[__d] then __lt_drop(__D, __d) end; __D.n = __d - 1    -- epilogue
+```
+
+A call that never uses `caller` costs two field reads, two field writes
+and one indexed read: no function call, no allocation. The epilogue
+*assigns* the depth rather than decrementing it, so an error that skipped
+inner epilogues and was caught inside this function is corrected when
+this function returns. A callee's `@ caller` calls `lifetime.caller()`,
+which returns `D[D.n - 1]`, allocating it on first use. `S.D` follows the
+running coroutine because the runtime wraps `coroutine.resume`,
+`coroutine.wrap` and `coroutine.yield` when it is first required and
+swaps `S.D` on each switch; `coroutine.running` is never called on the
+hot path. Two things this design leaves open are recorded in
 [06-open-questions.md](06-open-questions.md): the record belongs to the
 calling function's activation, not to its innermost block as decision 5
-words it; and an error that unwinds through generated prologues without a
-`pcall` wrapper leaves the counter stale.
+words it; and a record left behind by an error that was not caught until
+an outer function is destroyed late, by the next prologue that reaches
+its depth or by the catching function's epilogue.
 
 ## Tokens
 
@@ -179,14 +208,52 @@ scope epilogue has run; from then on the sentinel finalizers that the
 closing state runs report `"exit"`. How an embedding host sets the flag is
 open ([06-open-questions.md](06-open-questions.md)).
 
-## What this costs
+## Performance
 
-- One hidden field per object the runtime has seen, visible to `pairs`.
-- One `newproxy` per table with the `reachable` term and a destructor, and
-  per scope record that is created.
-- A sort of the dependents' sequence numbers at every cascade and every
-  `lifetime.dependents` call.
-- The depth counter: one increment and one decrement per generated
-  function call that contains a call.
+Performance is a priority second only to the spec and ownership order
+(`CLAUDE.md`, rule 5; [05-decisions.md](05-decisions.md), "Performance
+is a priority"). The runtime is designed to the following budget, and
+`make bench` (task 010) measures each line against plain Lua doing the
+same work by hand.
 
-All accepted; none of it is optimised in the first implementation.
+**Free.** Code that does not use the extension pays nothing:
+
+- a plain Lua chunk transpiles to itself;
+- an object never anchored, hooked, declared as a token or passed to
+  `destroy`, `discard` or `lifetime.of` has no state record and no proxy;
+- a block with no `@ scope` and no bare hook gets no scope record and no
+  wrapper;
+- a function whose body contains no call gets no `caller` prologue.
+
+**Cheap.** What the extension costs where it is used:
+
+| Operation | Cost |
+| --- | --- |
+| `x @ a`, first time | one state record, one link into `a`'s `dependents`; one proxy if `x` needs a sentinel |
+| `x @ b`, a move | one unlink, one link; no allocation |
+| cascade over `n` objects | `O(n)` plus the holes in the walked ranges; no sort, no allocation except the tombstone's state |
+| `lifetime.dependents(a)` | one numeric loop over `a`'s range and the result array |
+| `caller` prologue and epilogue | inline field updates, no call (above) |
+| a block with a scope record | one record (a small table) per entry, plus the wrapper ([04-transpiler.md](04-transpiler.md), "The error path") |
+
+**Forced, and measured.** Two costs follow from the spec and are paid
+only where the spec asks for them:
+
+- the sentinel, one `newproxy(true)` per table that has the `reachable`
+  term and something to run at collection;
+- the `pcall` wrapper of a block that needs a scope record, a closure per
+  entry into the block. Whether the error path can be built without it is
+  open ([06-open-questions.md](06-open-questions.md), "Catch-site
+  unwinding"); the benchmark of task 010 that runs such a block in a
+  loop is the evidence for that question.
+
+Rules the implementation follows on hot paths: runtime functions are
+locals of the module, and the generated chunk binds the ones it calls to
+locals; numeric `for` loops, not `pairs`, over runtime tables; no
+`debug.*`, `coroutine.running` or `select("#", …)` on a path that runs per
+call or per block entry (the line number for a tombstone's message is a
+constant the emitter passes, not `debug.getinfo`); one state record per
+object, its fields fixed so LuaJIT keeps the table shape stable.
+
+What stays deliberately simple, because it is not on a hot path: error
+messages, `lifetime.format`, compaction, and the program-end sweep.

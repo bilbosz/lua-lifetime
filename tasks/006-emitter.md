@@ -52,8 +52,14 @@ conformance runner can run programs that use the syntax.
   receives `ok, err` and re-raises an error unchanged.
 - A block without those constructs is emitted verbatim: no record, no
   wrapper, no closure.
-- Every generated function whose body contains a call gets `enter_call`
-  first and `exit_call` on fall-through and before every `return`.
+- Every generated function whose body contains a call gets the inline
+  `caller` prologue on its `function` line and the inline epilogue on
+  fall-through and before every `return`, exactly as
+  `docs/04-transpiler.md` writes them; no call into the runtime on that
+  path.
+- The chunk header binds every runtime function the chunk calls to a
+  local and names nothing it does not use; a chunk with no extension
+  syntax and no lifetime builtin gets no header.
 - Output lines match input lines for every statement (a diagnostic test
   that `error()` on line N reports line N through the generated code).
 - `make test` green under both interpreters; `make lint` clean. The
@@ -87,6 +93,18 @@ record if it contains, **directly** (not in a nested function) …". A
 `defer` inside a nested function body belongs to that function's body
 block, not to the enclosing block. Case 1 adds a nested function with its
 own `defer` to pin it.
+
+## Performance
+
+Hot paths: everything the emitter writes. Benchmarks: a scoped block in a
+loop (record, wrapper and epilogue) against hand-written cleanup; the
+same loop with no scoped object (must equal plain Lua); a call-heavy
+function with and without the `caller` prologue; `return` through a
+block epilogue. Must stay free: a block with no `@ scope` and no bare
+hook is emitted verbatim; a function with no call gets no prologue; a
+chunk with no extension syntax gets no header. The numbers for the
+wrapper are the evidence for "Catch-site unwinding" in
+`docs/06-open-questions.md`; report them.
 
 ## Out of scope
 

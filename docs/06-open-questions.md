@@ -113,6 +113,15 @@ The observable difference is only where an uncaught error leaves records
 behind. Touches decisions 5 and 10, which name the per-block wrapper; goes
 to the human.
 
+Since performance became a priority ([05-decisions.md](05-decisions.md))
+this is also the largest performance question in the design: the
+per-block wrapper allocates a closure on every entry into a block with a
+scope record, a loop body included, and it is the one cost the
+transpiler adds that grows with how often a block runs rather than with
+how many objects it owns. *Leaning:* catch-site unwinding, decided on the
+numbers of the task 010 benchmark that runs a scoped block in a loop both
+ways.
+
 ### Reserved words
 
 `defer` is reserved, as in `xd`. Treflove's `events/defer-manager.lua`
@@ -147,3 +156,28 @@ to be listed among its anchors' dependents and skipped by
 `lifetime.dependents`. *Leaning:* list them; alternatively, refuse a value
 with a dead anchor at `@` and keep snapshots immutable. Task 004 decides
 with the human.
+
+### The cost of `caller` on every call
+
+Decision 5 gives every generated function a prologue and an epilogue so
+that any callee can ask for `caller`. Inlined
+([03-runtime.md](03-runtime.md), "Scope records and `caller`") that is a
+handful of field operations per call, paid by programs that never write
+`caller`, against the rule that code not using the extension pays nothing.
+The transpiler cannot see across modules whether a callee uses `caller`.
+Options: (a) keep the prologue everywhere; (b) a build flag, so a program
+that does not use `caller` is built without it, and `@ caller` in a
+module built with the flag reaching a caller built without it is the main
+scope; (c) a pragma per module. *Leaning:* measure first (task 010); if
+the prologue costs more than a few percent on a call-heavy benchmark,
+(b). Touches decision 5's "every generated function prologue increments
+it"; goes to the human.
+
+### Iterating dependents without `pairs`
+
+Decision 4 says the runtime "iterates in that order with `pairs`, never
+`ipairs`". The runtime design walks the weak-valued list with a numeric
+loop over its sequence range, skipping holes, which keeps what the
+sentence protects (a hole never ends the walk, the order is attachment
+order) and avoids a sort per cascade and a `pairs` walk. The letter of
+the decision differs; confirm, and carry the wording back to `xd`.

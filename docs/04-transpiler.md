@@ -50,14 +50,19 @@ anchoritem ::= exp | 'scope' | 'caller'
 
 ## The generated chunk header
 
-Every output chunk begins with one line that binds the runtime:
+Every output chunk that uses the extension begins with one line that
+binds the runtime, and the runtime functions the chunk calls, to locals:
 
 ```lua
-local lifetime = require("lifetime"); local destroy, discard = lifetime.destroy, lifetime.discard
+local lifetime = require("lifetime"); local destroy, discard = lifetime.destroy, lifetime.discard; local __lt_attach, __lt_S, __lt_drop = lifetime.attach, lifetime.S, lifetime.drop
 ```
 
 so that `destroy(x)`, `discard(x)` and `lifetime.*` in the source resolve
-without installing globals. `destroyerror` is not bound: the runtime reads
+without installing globals, and generated code reaches the runtime
+through locals (upvalues in nested functions), never through a global and
+a field lookup. The header names only what the chunk uses; a chunk that
+uses no extension syntax and names no lifetime builtin gets no header
+and is its input unchanged. `destroyerror` is not bound: the runtime reads
 it raw from `_G` (02, "Errors in destructors"). A source file that shadows
 these names gets what it wrote.
 
@@ -65,11 +70,11 @@ these names gets what it wrote.
 
 | Source | Generated |
 | --- | --- |
-| `e @ a` | `lifetime.attach(e, false, a)` |
-| `e @ (a, b)` | `lifetime.attach(e, false, a, b)` |
-| `e @ scope` | `lifetime.attach(e, false, <scope local>)` |
-| `e @ caller` | `lifetime.attach(e, false, lifetime.caller())` |
-| `e @ lifetime.pin(a, b)` | `lifetime.attach(e, false, lifetime.pin(a, b))` (the value carries no term) |
+| `e @ a` | `__lt_attach(e, false, a)` |
+| `e @ (a, b)` | `__lt_attach(e, false, a, b)` |
+| `e @ scope` | `__lt_attach(e, false, <scope local>)` |
+| `e @ caller` | `__lt_attach(e, false, lifetime.caller())` |
+| `e @ lifetime.pin(a, b)` | `__lt_attach(e, false, lifetime.pin(a, b))` (the value carries no term) |
 | `x @ a` as a statement | the same call as a statement |
 | `defer f` | `lifetime.hook(f, <scope local>)` |
 | `defer f @ a` | `lifetime.hook(f, a)` |
@@ -77,7 +82,9 @@ these names gets what it wrote.
 | `token t` | `local t = lifetime.token("t")` |
 
 `attach` returns its first argument, so the expression form keeps its
-value. The implicit `reachable` term is the runtime's business
+value. The rows below that still read `lifetime.x` are bound to a local in
+the header the same way when the chunk uses them; the table shows the
+runtime entry point, not the spelling. The implicit `reachable` term is the runtime's business
 (`lifetime.attach` adds it unless every anchor is a pinned value), not the
 emitter's. The exact names are the emitter task's to fix with the runtime
 tasks; this table fixes the shape.
@@ -142,7 +149,11 @@ end
 - Message handlers of an enclosing `xpcall` run at the raise point, before
   the epilogue, as they would in Lua.
 - The wrapper is emitted only for blocks that need a scope record; a block
-  with no `scope` anchor and no bare `defer` costs nothing. A yield inside
+  with no `scope` anchor and no bare `defer` costs nothing. Where it is
+  emitted it allocates a closure per entry into the block, the most
+  expensive thing the transpiler generates; the benchmarks of task 010
+  measure it, and "Catch-site unwinding" in
+  [06-open-questions.md](06-open-questions.md) is the alternative. A yield inside
   a wrapped block fails on plain 5.1 and works on LuaJIT (02, "Coroutines").
 - A main chunk that needs a record is wrapped the same way; an uncaught
   error therefore still runs the main scope's cascade before reaching the
@@ -156,16 +167,19 @@ per-block wrapper.
 
 ## Functions: prologue and epilogue for `caller`
 
-Every generated function whose body contains a call expression gets:
+Every generated function whose body contains a call expression gets an
+inline prologue and epilogue, on the lines of `function` and `end`:
 
 ```lua
-function f(...) lifetime.enter_call()
+function f(...) local __D = __lt_S.D; local __d = __D.n + 1; __D.n = __d
   …
-lifetime.exit_call() end
+if __D[__d] then __lt_drop(__D, __d) end; __D.n = __d - 1 end
 ```
 
-with `exit_call` also inserted before every `return` of the function (the
-values evaluated first, as for block epilogues). The counter is what
+with the epilogue also inserted before every `return` of the function
+(the values evaluated first, as for block epilogues). No call into the
+runtime happens unless a callee asked for `caller`; the cost per call is
+in [03-runtime.md](03-runtime.md), "Performance". The counter is what
 `lifetime.caller()` in a callee resolves against
 ([03-runtime.md](03-runtime.md), "Scope records and `caller`"). A function
 whose body contains no call cannot be anyone's caller and gets no

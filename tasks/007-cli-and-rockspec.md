@@ -74,6 +74,13 @@ The sentence most likely to be misread: "An uncaught error is reported …
 after the main scope's cascade has run". The cascade must run before the
 message is printed, not after. Case 2's output order pins it.
 
+## Performance
+
+Hot path: none new; `lifetime run` must not add per-call or per-block
+cost over loading the generated file directly. Benchmark: startup time of
+`lifetime run examples/plain.lt` against `lua5.1`/`luajit` running the
+generated file.
+
 ## Out of scope
 
 - The `teal-lifetime` rockspec.

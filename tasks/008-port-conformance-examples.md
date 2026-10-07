@@ -73,6 +73,12 @@ documented deviation … not a changed expectation" in `xd`. The `xd`
 `.expected` files are never edited from here; the lua-lifetime
 `.expected` is written fresh and the difference documented.
 
+## Performance
+
+Hot path: none new. The ported examples are not benchmarks; do not
+optimise for them. If an example shows a cost the benchmarks miss, note
+it for a follow-up task.
+
 ## Out of scope
 
 - Writing to the `xd` repository.

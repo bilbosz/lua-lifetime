@@ -41,11 +41,19 @@ What you are checking, in priority order:
    order and the statement of death, and would fail if the behaviour
    regressed. Run `make test` and `make lint` yourself, and note which
    interpreters ran; do not trust the handoff.
-5. **Scope.** The diff does exactly what the task says. Extra features,
-   optimisations or semantic drift are findings, even when they are good
-   ideas; they belong in a new task or a `/spec-change`.
-6. **Code quality**, last and lightly: clarity over cleverness, no dead
-   code, names that match the spec's vocabulary.
+5. **Performance.** Run `make bench` on `master` and on the branch, on
+   the same machine, under both interpreters. A slowdown beyond the
+   threshold in `bench/README.md` on a benchmark the task touches, a cost
+   added to code that does not use the extension, or a hot path the task
+   names with no benchmark, is a finding.
+6. **Scope.** The diff does exactly what the task says. Extra features,
+   optimisations of paths the task does not name, or semantic drift are
+   findings, even when they are good ideas; they belong in a new task or a
+   `/spec-change`.
+7. **Code quality**, last and lightly: clarity over cleverness where speed
+   does not need cleverness, no dead code, names that match the spec's
+   vocabulary. An optimisation that is not obvious carries a comment naming
+   the benchmark that justifies it.
 
 Be specific: file, line, the spec sentence, the concrete failing input, and
 the observed versus expected behaviour. A finding without a reproduction is a

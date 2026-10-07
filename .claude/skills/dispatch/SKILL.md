@@ -31,7 +31,8 @@ For task `NNN`:
    reviewer's findings verbatim. Wait for its handoff.
 3. **Check the handoff** before spending reviewer effort: the branch exists,
    `make test` and `make lint` were reported with the interpreters that
-   ran, and the handoff lists what was left out. If the implementer reports
+   ran, `make bench` was reported against `master` for the benchmarks the
+   task names, and the handoff lists what was left out. If the implementer reports
    red tests or an unaddressed blocking finding, send it back once with the
    specific gap; do not forward a known-broken branch to review.
 4. **Review.** Spawn the `reviewer` agent with the task path, branch name, the
@@ -76,7 +77,8 @@ request.
    `gh pr create`). Title: `[NNN] <task title>`. Body, in this order: the
    task's *Goal*; the spec sections relied on (from the handoff); the
    reviewer's verdict section and the trace from the final review; the
-   rounds taken; anything under *Spec issues found*. Record the PR URL in the
+   benchmark comparison with `master`; the rounds taken; anything under
+   *Spec issues found*. Record the PR URL in the
    task file's `pr` field in a follow-up commit on the branch.
 4. Merge the pull request with a **merge commit** (`merge_pull_request` with
    `merge_method: merge`, or `gh pr merge --merge`). Never squash or rebase;

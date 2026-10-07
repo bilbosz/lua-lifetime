@@ -33,7 +33,8 @@ description: The procedure the implementer follows to complete one task from tas
 
 - Follow the technical decisions in `CLAUDE.md`: Lua 5.1 plus `newproxy`,
   no dependencies, hand-written lexer and parser, state inside the object,
-  weak dependents lists walked by sorted sequence number, tombstones.
+  weak dependents lists walked by a numeric loop over the sequence range,
+  tombstones, runtime functions bound to locals in generated code.
 - Name things after the spec's vocabulary: anchor, dependent, formula,
   dying, dead, tombstone, hook, token, scope record, sentinel, lifetime
   value. A reviewer should be able to grep the spec for any identifier.
@@ -43,7 +44,12 @@ description: The procedure the implementer follows to complete one task from tas
 - Write code that runs on both `lua5.1` and `luajit`. `unpack`, not
   `table.unpack`; `loadstring`; no `goto` in generated code unless the
   input had one; no integer division; no `__len` or `__pairs` on tables.
-- No optimisation. If a correct implementation is slow, it is correct.
+- Correct first, then fast (`CLAUDE.md`, rule 5). Write the version the
+  tests prove; then run `make bench`, find the cost on the hot path the
+  task's *Performance* section names, and remove what is not forced by
+  the spec. Keep every test green while you do. Code that does not use
+  the extension must pay nothing: check that the plain-Lua benchmarks did
+  not move.
 - Where behaviour comes from a specific spec sentence, put a short comment
   with the doc file and heading. Not for every line; for the decision points.
 
@@ -66,7 +72,11 @@ Conformance tests: if the task adds or changes an `examples/*.lt`, update its
 in the commit message.
 
 Run `make test` and `make lint`. Both must be green, and the test output
-must show both interpreters when both are installed. If a pre-existing test
+must show both interpreters when both are installed.
+
+Benchmarks: add or update the benchmarks the task's *Performance* section
+names, under `bench/`. Run `make bench` on the branch and on `master` and
+keep both outputs for the handoff. If a pre-existing test
 fails for reasons outside the task, do not fix it silently: record it in the
 handoff.
 
@@ -81,6 +91,9 @@ open. In particular:
   spec says may be collected? Is there a side table keyed by an anchor?
   Either is a bug.
 - Does anything work on one interpreter only?
+- Did the change add any cost to code that does not use the feature? Did
+  a benchmark the task touches get slower than `master` beyond the
+  threshold in `bench/README.md`?
 - Is anything in the diff not required by the task? Remove it or justify it in
   the handoff.
 - Did you change semantics anywhere? If yes, revert and record the issue.
@@ -97,7 +110,8 @@ Your final message is for a reviewer who has not seen your work. Include:
 1. Task id, branch, commit range (`git log --oneline master..HEAD`).
 2. What was implemented, by acceptance criterion, each with its spec citation.
 3. Test results: the summary line of `make test` for each interpreter, and
-   the result of `make lint`.
+   the result of `make lint`. Benchmark results: `make bench` on the branch
+   and on `master`, per interpreter, for the benchmarks the task names.
 4. What was left out and why, including anything under *Spec issues found*.
 5. For later rounds: each reviewer finding and what you did about it.
 6. Anything you are unsure about, stated as a question with your current

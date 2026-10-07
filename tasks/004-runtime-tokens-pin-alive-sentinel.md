@@ -94,6 +94,15 @@ The sentence most likely to be misread: "every object that was unreachable
 before the call has had its cascade run" (not "will have, eventually").
 Case 1 pins it by checking the log before the next statement.
 
+## Performance
+
+Hot paths: the sentinel (one `newproxy` per object that needs one) and
+`lifetime.alive`. Benchmarks: anchoring `n` objects with the `reachable`
+term and a `__destroy` against the same objects pinned (no proxy); a
+`collectgarbage("collect")` over `n` unreachable anchored objects. Must
+stay free: a pinned object and a hook get no proxy (assert through the
+state record).
+
 ## Out of scope
 
 - Syntax: tasks 005, 006.

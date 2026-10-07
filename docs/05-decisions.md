@@ -65,3 +65,35 @@ because `a` adds it, and `x @ (lifetime.pin(a), lifetime.pin(b))` does
 not. A `pin` keyword after `@` was rejected because it would be a second
 way to write a formula.
 → [02-semantics.md](02-semantics.md), "The implicit `reachable` term and `lifetime.pin`"
+
+## Performance is a priority, second only to correctness
+
+Decided by the human on 2026-10-07, replacing rule 5 of the bootstrap
+`CLAUDE.md` ("Performance is not a goal. Do not optimise."), which had
+been copied from `xd`, where the stage 1 interpreter is a reference
+implementation in Python. lua-lifetime is meant to run inside real
+programs on LuaJIT, such as Treflove's frame loop, and a runtime that
+makes every call and every block slower than plain Lua would not be used.
+The order is: the spec, then ownership order, then speed, then brevity.
+An optimisation never changes what a program observes; one that would is
+a spec change. The principle is pay for what you use: code that does not
+use the extension pays nothing, code that does pays as little as the
+design allows, and the cost is measured by `make bench` against plain Lua
+and against `master`, not argued.
+
+What it changed at once, in the design: the dependents list is walked by
+a numeric loop over the sequence range with compaction, not by a sort per
+cascade; the generated chunk binds runtime functions to locals; the
+`caller` prologue and epilogue are inline field updates on a
+per-coroutine table that the runtime swaps on coroutine switches, not
+calls; the sentinel is allocated lazily; no `debug.*` or
+`coroutine.running` on a per-call path. What it did not change: the
+semantics, reachability being the collector's, and the cascade order.
+What it reopened: the per-block `pcall` wrapper, now the most expensive
+thing the transpiler emits ([06-open-questions.md](06-open-questions.md),
+"Catch-site unwinding"), and the per-call cost of `caller` on programs
+that never use it ("The cost of `caller` on every call"). Task 010 adds
+the benchmark harness, and every task's *Performance* section names what
+it measures.
+→ `CLAUDE.md`, rule 5; [03-runtime.md](03-runtime.md), "Performance";
+[04-transpiler.md](04-transpiler.md)
