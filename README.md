@@ -1,7 +1,7 @@
 # lua-lifetime
 
 Owned and scoped objects with destructors for Lua. `x @ owner`, `x @
-scope`, `!cleanup @ owner` hooks. Cleanup runs in a defined order when the owner dies
+scope`, `cleanup !@ owner` hooks. Cleanup runs in a defined order when the owner dies
 or the scope exits. Transpiles to Lua 5.1 / LuaJIT.
 
 **Status:** bootstrapped, not yet implemented. The specification is
@@ -15,14 +15,14 @@ local function serve(socket)
   local conn = Connection.open(socket) @ scope      -- dies at block exit
   local buf = Buffer.new(64 * 1024) @ conn          -- dies with conn, or earlier if unreferenced
   local header = Slice.new(buf, 0, 512) @ (buf, conn)
-  !function() metrics.connections = metrics.connections - 1 end @ conn
+  function() metrics.connections = metrics.connections - 1 end !@ conn
   handle(header)
 end
 -- at the end of serve: conn.__destroy runs first, then its dependents,
 -- most recently attached first: the hook, then header, then buf.
 ```
 
-Lua source with `@`, the hook operator `!`, `scope`, `caller` and named tokens goes in,
+Lua source with `@`, the hook operator `!@`, `scope`, `caller` and named tokens goes in,
 plain Lua 5.1 comes out, and the generated code calls into the runtime
 module `lifetime`, which is the language's own `lifetime` table.
 Ownership is deterministic: anchored lifetimes, scope exit, `destroy`,

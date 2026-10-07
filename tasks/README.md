@@ -46,8 +46,8 @@ during implementation and review.
 | 002 | Runtime: anchors, dependents inside the anchor, `destroy`, cascade order, tombstones, `destroyerror` | 001, 010 |
 | 003 | Runtime: scope records, `caller` depth counter, hooks | 002 |
 | 004 | Runtime: named tokens, `lifetime.pin`, `lifetime.alive`, reachable-only destructors via `newproxy`, `collectgarbage` | 002 |
-| 005 | Lexer and parser: Lua 5.1 plus `@`, the list form, the hook operator `!`, `scope`, `caller`, the token declaration | 001, 010 |
-| 006 | Emitter: `@` and lists, hooks (`!`), block epilogues on every exit path, the `pcall` error path, `caller` prologue and epilogue | 003, 005 |
+| 005 | Lexer and parser: Lua 5.1 plus `@`, the list form, the hook operator `!@`, `scope`, `caller`, the token declaration | 001, 010 |
+| 006 | Emitter: `@` and lists, hooks (`!@`), block epilogues on every exit path, the `pcall` error path, `caller` prologue and epilogue | 003, 005 |
 | 007 | CLI `lifetime build` and `lifetime run`; the rockspec installs and runs | 006 |
 | 008 | Port the conformance examples from `xd/examples/`; document each deviation in `docs/07-conformance.md` | 004, 007 |
 | 009 | Treflove trial: transpile the sessions-and-listeners slice described in `xd/docs/notes/xd-in-treflove.md` and run it under LuaJIT | 008 |

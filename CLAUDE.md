@@ -14,7 +14,7 @@ documents are derived from `xd/docs/10-lua-lifetime-decisions.md` in the
 | Path | What |
 | --- | --- |
 | `docs/01-overview.md` | What lua-lifetime is, the one-screen taste, where the semantics come from, the relation to `xd` and `teal-lifetime`. Read once. |
-| `docs/02-semantics.md` | **The spec** of the language extension: `@` and the list form, the implicit `reachable` term and `lifetime.pin`, `scope` and `caller`, hooks and the `!` operator, tokens, `destroy`, the cascade order, `__destroy`, tombstones, errors, reachability, program end. |
+| `docs/02-semantics.md` | **The spec** of the language extension: `@` and the list form, the implicit `reachable` term and `lifetime.pin`, `scope` and `caller`, hooks and the `!@` operator, tokens, `destroy`, the cascade order, `__destroy`, tombstones, errors, reachability, program end. |
 | `docs/03-runtime.md` | The design of the `lifetime` module: state records inside the anchor, the sentinel, the cascade, scope records and the `caller` counter, tokens. |
 | `docs/04-transpiler.md` | The grammar and the code generation: what `@` expands to, block epilogues on every exit path, the `pcall` wrapper, the function prologue for `caller`, the command. |
 | `docs/05-decisions.md` | Decision log of this repository. Check here before proposing a change. |
@@ -170,10 +170,11 @@ Skills, invoked with `/name`:
   the collector runs, not at the block exit.
 - `destroy` on a dead or dying object is a no-op, so a destructor may
   destroy its own dependents by hand.
-- `!f @ x` is pinned by `x` even though every other `@ x` is not.
-- `!a or b` is `!(a or b)`: the hook operator takes the whole expression
-  up to `@`, unlike Lua's unary operators.
-- `defer` is an ordinary name; hooks are made with `!`.
+- `f !@ x` is pinned by `x` even though every other `@ x` is not, and
+  stays pinned when moved with `@`.
+- A hook has no default lifetime: block-exit cleanup is written
+  `f !@ scope`.
+- `defer` is an ordinary name; hooks are made with `!@`.
 - `scope` and `caller` cannot be stored or passed; there is no scope
   value and no loop-iteration trap.
 - A plain table the runtime never saw is collected silently, `__destroy`

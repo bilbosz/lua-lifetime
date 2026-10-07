@@ -98,73 +98,76 @@ it measures.
 → `CLAUDE.md`, rule 5; [03-runtime.md](03-runtime.md), "Performance";
 [04-transpiler.md](04-transpiler.md)
 
-## Hooks are made with the prefix operator `!`, not the keyword `defer`
+## Hooks are made with the operator `!@`, not the keyword `defer`
 
-Proposed at the human's request on 2026-10-07 ("no keyword for that, but
-some kind of operator"), adopted when the pull request that carries it is
-merged. `!f` is the `defer f` of `xd` respelled; every rule carries over
-unchanged: `!` takes the whole expression up to a `@`, a comma or a
-closer; a bare `!f` defaults to the enclosing block's scope; `!f @ a` is
-pinned by `a`; the hook runs after its anchor's `__destroy`. The
-extension therefore adds no reserved word, and `defer` is an ordinary name
-again (Treflove's `events/defer-manager.lua` names a local `defer`).
+Decided by the human on 2026-10-07 ("no keyword for that, but some kind
+of operator", then "`local hook = function() print("exited") end !@
+scope`"). `f !@ a` is `xd`'s `defer f @ a` written as one infix operator
+with the precedence and right operand of `@`: `@` attaches an object to a
+lifetime, `!@` attaches an action. The rest of `defer` carries over: the
+hook is pinned by its anchors, runs after its anchor's `__destroy`, is
+called with the reason, and is moved, destroyed and discarded like any
+object. The extension adds no reserved word, so `defer` is an ordinary
+name again (Treflove's `events/defer-manager.lua` names a local `defer`).
 
-The operator is `!` because:
+Two things change with the spelling:
 
-- it is unused by Lua 5.1, 5.2, 5.3, 5.4 and LuaJIT, so it collides with
-  nothing a Lua programmer writes today; Teal is believed not to use it
-  either, to be confirmed before `teal-lifetime` starts
-  ([06-open-questions.md](06-open-questions.md), "Teal and `!`");
-- Lua has no binary or postfix `!`, so a `!` at a line start always
-  begins a statement and never continues the previous expression;
-- it is one character, stands at the start of the statement where
-  `defer` stood (the argument `xd/docs/07-decisions.md`, "`defer` stays as
-  syntactic sugar", made for the keyword), and reads as "do this", as in
-  Ruby's bang methods and Rust's macros.
+- **The anchor is always written.** There is no bare form, so there is
+  no default lifetime: cleanup at block exit is `f !@ scope`. The
+  argument `xd/docs/07-decisions.md`, "`defer` stays as syntactic sugar",
+  made for a keyword (a bare form needs a default no function could
+  supply) does not arise. The cost is two more words for the most common
+  hook; the gain is that every hook says when it runs.
+- **No precedence rule of its own.** `defer` took the whole expression up
+  to `@` so that `defer a or b` could not mean `(defer a) or b`
+  (`xd/docs/07-decisions.md`, "`defer` takes the whole expression up to
+  `@`"). A postfix operator at the lowest precedence applies to the whole
+  expression on its left anyway: `a or b !@ s` hooks `a or b`.
 
-Its cost is that C programmers read `!` as "not". On a function value
-"not" has no meaning in Lua, and the one place a C habit lands on it,
-`a != b`, gets a targeted error that suggests `~=`.
+Why `!@`: `!` is unused by Lua 5.1 to 5.4 and LuaJIT and is believed
+unused by Teal ([06-open-questions.md](06-open-questions.md), "Teal and
+`!@`"), so the two-character token collides with nothing; the `@` keeps
+the lifetime vocabulary on one character; and the `!` marks the
+difference from `@`, so a hook does not read as anchoring the function.
+A C programmer's `a != b` gets a targeted error that suggests `~=`.
 
-Considered and rejected:
+Considered and rejected, in this order:
 
-- **`~f`** (the prefix `xd` considered): Lua 5.3+ and Teal use unary `~`
-  for bitwise not, so `teal-lifetime` could not parse it.
-- **`@f`**, prefix `@`, so that `@` is the whole vocabulary: a line that
-  starts with `@` after a line ending in an expression parses as a
-  postfix `@` on that expression, the same trap as Lua's ambiguous `(`;
-  and `@f @ self` reads as noise.
-- **`f @@ a`** or **`f @! a`**, a second postfix operator: the common case,
-  cleanup at block exit, then needs `f @@ scope` written out or a special
-  bare form, and the operator reads as anchoring the function rather than
-  running it.
-- **`a -> f`** or **`a => f`**, an arrow from lifetime to action: `-->` is
-  a comment, so one missing space silently comments the hook out, and
-  `=>` reads as a lambda.
-- **`$f`**: free everywhere, but it reads as interpolation or a variable
-  in shells and templates and says nothing about running later.
-- **`&f`**: binary `&` is bitwise and in Lua 5.3+ and Teal.
+- **A prefix `!f [@ a]`**, proposed first in the same pull request: it
+  needed a default lifetime for the bare form and a precedence looser
+  than every Lua operator, unlike any unary operator, to keep `!a or b`
+  from meaning `(!a) or b`. The human preferred the infix form.
+- **`~f`**: Lua 5.3+ and Teal use unary `~` for bitwise not.
+- **A prefix `@f`**: a line starting with `@` after a line ending in an
+  expression parses as a postfix `@` on that expression.
+- **`f @@ a`**: the same shape as `!@`, but one mistyped character away
+  from `@`, which would silently anchor the function instead of hooking
+  it.
+- **`a -> f`, `a => f`**: `-->` is a comment, so one missing space comments
+  the hook out, and `=>` reads as a lambda.
+- **`$f`, `&f`**: `$` reads as interpolation; binary `&` is bitwise and in
+  Lua 5.3+ and Teal.
 
 This departs from the spelling of `xd/docs/04-syntax.md` and
-`xd/docs/06-hooks.md` and from the wording of decisions 4, 5 and 11 of
-`xd/docs/10-lua-lifetime-decisions.md`, which write `defer`; the
-semantics are untouched. The human carries the spelling back to `xd`.
-→ [02-semantics.md](02-semantics.md), "Hooks: the `!` operator";
+`xd/docs/06-hooks.md`, from the default lifetime of `defer` in
+`xd/docs/06-hooks.md`, and from the wording of decisions 4, 5 and 11 of
+`xd/docs/10-lua-lifetime-decisions.md`, which write `defer`. The human
+carries it back to `xd`.
+→ [02-semantics.md](02-semantics.md), "Hooks: the `!@` operator";
 [04-transpiler.md](04-transpiler.md), "Grammar"
 
 ## A hook bound to a name carries the name
 
 Decided at the human's request on 2026-10-07 ("I want the defers to be
 named or to be able to be named … we should be able to destroy them").
-The expression form already returned the hook, so `local hook = !fn @
-self` followed by `destroy(hook)`, `discard(hook)` or `hook @ other`
-worked; this entry makes that the documented way to hold a hook and adds
-the name: a hook created as the value of `local NAME =`, `NAME =` or
+`local hook = fn !@ self` followed by `destroy(hook)`, `discard(hook)` or
+`hook @ other` is the documented way to hold a hook, and the hook gets a
+name: a hook created as the value of `local NAME =`, `NAME =` or
 `t.NAME =` carries `NAME`, rendered by `tostring` as `hook NAME`, by
 `lifetime.format`, and in a tombstone's message. The name comes from the
 binding the way a token's name comes from its declaration (`token
 NAME`), so dumps of what an object owns read as code. A separate naming
-syntax (`!name: f`, a `hook NAME = …` declaration) was rejected: binding
+syntax (a name inside the operator, a `hook NAME = …` declaration) was rejected: binding
 to a local is what a handle needs anyway, and a second spelling would add
 syntax for a debugging aid. The name is a constant string passed at the
 creation site and costs nothing per call.

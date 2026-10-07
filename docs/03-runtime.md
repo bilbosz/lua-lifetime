@@ -81,7 +81,7 @@ holding anchors and the term flag.
 
 Hooks go into `hooks` instead of `dependents` under the same sequence
 counter, so `lifetime.dependents` and the cascade can merge the two lists
-by sequence number into one attachment order (02, "Hooks: the `!` operator").
+by sequence number into one attachment order (02, "Hooks: the `!@` operator").
 
 ## The cascade
 

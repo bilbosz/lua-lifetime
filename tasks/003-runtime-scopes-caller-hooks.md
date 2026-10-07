@@ -25,7 +25,7 @@ them by hand, writing the inline prologue and epilogue of
   dependents die at block exit "by any route"; each entry is a new scope;
   `caller` is "the innermost block of the calling function"; functions the
   transpiler did not generate are transparent.
-- `docs/02-semantics.md`, "Hooks: the `!` operator": default lifetime is the
+- `docs/02-semantics.md`, "Hooks: the `!@` operator": default lifetime is the
   block's scope; a hook is pinned; "A hook on an object runs **after**
   that object's `__destroy`, interleaved with the object's other
   dependents by attachment order, most recently attached first"; called

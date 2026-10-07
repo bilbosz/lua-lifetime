@@ -55,8 +55,8 @@ weak tables for one more cycle.
 - **Token**: an opaque object created by a `token` declaration (decision
   6): identity, a dependents list, a hook list, no fields.
 - **Dependent**: an object whose formula mentions a given anchor.
-- **Hook**: an object created with the prefix operator `!` whose
-  destructor is a user function.
+- **Hook**: an object created with the operator `!@` whose destructor is
+  a user function.
 - **Dying**: an object whose death has been decided in the cascade now
   running and whose destructor has not yet run, or has run but whose
   dependents are still being destroyed. Fully usable; cannot be moved or
@@ -172,7 +172,7 @@ latest, or earlier when nothing refers to it. The same holds for `@ scope`,
 `@ caller`, `@ tok` and for a list: `x @ (a, b)` is `x @ (a, b,
 lifetime.reachable)`. Two exceptions:
 
-- `!f @ a` keeps replace semantics: a hook is pinned by its anchor,
+- `f !@ a` keeps replace semantics: a hook is pinned by its anchor,
   because nothing else refers to a hook and a collectable hook would never
   run.
 - `lifetime.pin(a1, …, an)` returns a lifetime value over the listed
@@ -269,51 +269,55 @@ function Session:logout()
 end
 ```
 
-## Hooks: the `!` operator
+## Hooks: the `!@` operator
 
 *From `xd/docs/06-hooks.md` and `xd/docs/04-syntax.md`, "`defer`",
-respelled as an operator by this repository ([05-decisions.md](05-decisions.md),
-"Hooks are made with the prefix operator `!`"); named hooks are this
-repository's ("A hook bound to a name carries the name"); the order
-relative to `__destroy` by decision 10; pinning by decision 4.*
+respelled as an infix operator at the human's request
+([05-decisions.md](05-decisions.md), "Hooks are made with the operator
+`!@`"); named hooks are this repository's ("A hook bound to a name
+carries the name"); the order relative to `__destroy` by decision 10;
+pinning by decision 4.*
 
 ```ebnf
-exp  ::= … | '!' exp
-stat ::= … | '!' exp [ '@' anchor ]
+exp  ::= … | exp '!@' anchor
+stat ::= … | prefixexp '!@' anchor | functiondef '!@' anchor
 ```
 
-The prefix operator `!` turns a function into a **hook**: an object whose
-death calls the function. It is the `defer` of `xd` spelled as an
-operator, and every rule of `defer` carries over unchanged.
+`f !@ a` turns the function `f` into a **hook** attached to `a`: an
+object whose death calls `f`. It is `xd`'s `defer f @ a` written as one
+operator: `@` attaches an object to a lifetime, `!@` attaches an action.
 
 ```lua
-!function() file:close() end                         -- runs when this block exits
-!function() cache[key] = nil end @ session           -- runs when session dies
-!unsubscribe @ (emitter, listener)                   -- runs when either dies
-local cleanup = !function() tmp:remove() end @ self  -- a named hook, kept to destroy or move later
+local hook = function() print("exited") end !@ scope   -- runs when this block exits
+function() cache[key] = nil end !@ session             -- runs when session dies
+unsubscribe !@ (emitter, listener)                     -- runs when either dies
 ```
 
-- `!` takes the whole expression up to a `@`, a comma or a closing token:
-  it binds looser than every Lua operator and tighter than `@` alone, so
-  `!a or b` is `!(a or b)` and `!f @ s` is `(!f) @ s`. This differs from
-  Lua's unary operators on purpose: with unary precedence `!a or b` would
-  be `(!a) or b`, a hook that is always truthy, and `b` would never be
-  evaluated (`xd/docs/07-decisions.md`, "`defer` takes the whole
-  expression up to `@`"). To anchor the function itself, parenthesise:
-  `!(f @ obj)`.
-- The operand must be a function: `attempt to defer a number value`.
-- Lua has no binary or postfix `!`, so a `!` at the start of a line
-  always starts a new statement, whatever the previous line ended with.
-  `a != b` is a syntax error: `unexpected symbol near '!' (use '~=' for
-  inequality)`.
-- A hook's **default lifetime** is the enclosing block's scope, not
-  `reachable`: a bare `!f` runs `f` when the block exits, which is the
-  `defer` of Zig and the `scope(exit)` of D. `!f @ lifetime.reachable`
-  keeps no reference, so the collector may run `f` at any later time; legal
-  and almost never meant.
+- `!@` is a postfix operator with the precedence and the right operand of
+  `@`: the lowest precedence of any operator, and a `prefixexp`, `scope`,
+  `caller` or a parenthesised list on the right. It applies to the whole
+  expression on its left, so `a or b !@ s` hooks the value of `a or b`.
+  `@` and `!@` associate to the left: `f !@ a @ b` creates the hook on `a`
+  and then moves it to `b`.
+- The left operand must be a function: `attempt to defer a number value`.
+  A hook is not a function, so `h !@ x` on a hook is `attempt to defer a
+  hook value`; a hook is moved with `@`.
+- **The anchor is always written.** There is no bare form and no default
+  lifetime: cleanup at block exit is `f !@ scope`, which says what `xd`'s
+  bare `defer f` said by default. `f !@ lifetime.reachable` keeps no
+  reference, so the collector may run `f` at any later time; legal and
+  almost never meant.
+- As a statement the left side is a `prefixexp` or an anonymous `function
+  … end`, so `function() … end !@ scope` stands on its own; any other
+  expression needs parentheses at statement start, as for `@`.
+- `!@` is one token: `!` immediately followed by `@`. A lone `!` is a
+  syntax error, and `a != b` reads `unexpected symbol near '!' (use '~='
+  for inequality)`.
 - A hook is a dependent of its anchors, so it runs exactly where an object
   anchored to the same formula would be destroyed, and it is always pinned
-  ("The implicit `reachable` term"), whether or not anything holds it.
+  ("The implicit `reachable` term"), whether or not anything holds it. A
+  move keeps it pinned: `hook @ other` never adds the `reachable` term to
+  a hook.
 - The function is called as `fn(reason)` with the reason of
   "`__destroy` and reasons". Whether it also learns which anchor died is
   open (proposal D of `xd/docs/09-lessons-from-treflove.md`;
@@ -330,9 +334,9 @@ local cleanup = !function() tmp:remove() end @ self  -- a named hook, kept to de
 ```lua
 do
   local f = io.open(path) @ scope
-  !function() print("after f is still open") end
+  function() print("after f is still open") end !@ scope
   local g = io.open(other) @ scope
-  !function() print("runs first") end
+  function() print("runs first") end !@ scope
 end
 -- order: "runs first", g destroyed, "after f is still open", f destroyed
 ```
@@ -343,7 +347,7 @@ A hook is an object, so the expression form hands it back, and holding it
 is how a hook is run early, cancelled or moved:
 
 ```lua
-local hook = !fn @ self
+local hook = fn !@ self
 destroy(hook)       -- runs fn now with reason "destroy"; hook is dead afterwards
 destroy(hook)       -- no-op: a dead hook does nothing
 -- instead: discard(hook)  cancels it, fn never runs
@@ -351,14 +355,14 @@ destroy(hook)       -- no-op: a dead hook does nothing
 ```
 
 - A hook created as the value bound to a name carries that name: `local
-  NAME = !f …`, `NAME = !f …` and `t.NAME = !f …` (so `self.NAME = !f …`)
-  name the hook `NAME`; in a multiple assignment each hook takes the name
-  of its own target. `tostring(hook)` is `hook NAME`, `lifetime.format`
-  renders it as `hook NAME`, and the tombstone's message names it. A hook
-  bound any other way (`t[k] = !f`, an argument, a bare statement) is
-  anonymous and `tostring` gives `hook: 0x…`.
-- The name is fixed at creation, as a token's is: storing the hook
-  somewhere else later does not rename it.
+  NAME = f !@ …`, `NAME = f !@ …` and `t.NAME = f !@ …` (so `self.NAME =
+  f !@ …`) name the hook `NAME`; in a multiple assignment each hook takes
+  the name of its own target. `tostring(hook)` is `hook NAME`,
+  `lifetime.format` renders it as `hook NAME`, and the tombstone's message
+  names it. A hook bound any other way (`t[k] = f !@ a`, an argument, a
+  statement on its own) is anonymous and `tostring` gives `hook: 0x…`.
+- The name is fixed at creation: storing the hook somewhere else later
+  does not rename it.
 - Holding a handle does not lengthen the hook's life; dropping it does not
   shorten it. A hook dies by its anchors, by `destroy`, or by `discard`.
 - After it runs the hook is dead: a hook runs at most once.
@@ -423,7 +427,7 @@ do
   local b = {} @ a
   local c = {} @ scope
   local d = {} @ (a, c)
-  !function() print("hook on a") end @ a
+  function() print("hook on a") end !@ a
 end
 ```
 
@@ -679,8 +683,8 @@ reduced to what a transpiler can honour.*
   conjunction is the list form after `@`, there is no disjunction, and
   scopes are syntax (decisions 5, 7 and 11).
 - `@` is reserved and cannot appear in identifiers or elsewhere.
-- `!` is an operator: it cannot appear elsewhere. The extension adds no
-  reserved word; `defer` is an ordinary name. Whether `scope`, `caller`
+- `!@` is an operator, and `!` cannot appear anywhere else. The extension
+  adds no reserved word; `defer` is an ordinary name. Whether `scope`, `caller`
   and `token` are reserved everywhere or only where the grammar names them
   is open ([06-open-questions.md](06-open-questions.md), "Reserved
   words"); Treflove uses `token` as an identifier in 41 places.
@@ -700,7 +704,7 @@ reduced to what a transpiler can honour.*
 | `@ (a, b)` | both, while referenced | whichever dies first, the collector, `destroy()` |
 | `@ lifetime.pin(a)` | `a` | `a`'s death, `destroy()` |
 | `@ lifetime.pin(a, b)` | both | whichever dies first, `destroy()` |
-| `!f @ a` | `a` | `a`'s death, `destroy()`, cancelled by `discard()` |
+| `f !@ a` | `a` | `a`'s death, `destroy()`, cancelled by `discard()` |
 | `@ lifetime.of(x)` | what `x` had at that moment | any part failing, `destroy()` |
 
 Any row can be swapped for any other at run time by writing `@` again on

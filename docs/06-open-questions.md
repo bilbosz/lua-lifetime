@@ -124,7 +124,7 @@ ways.
 
 ### Reserved words
 
-The extension adds no reserved word: hooks are made with the `!`
+The extension adds no reserved word: hooks are made with the `!@`
 operator ([05-decisions.md](05-decisions.md)), so `defer` is an ordinary
 name and Treflove's `events/defer-manager.lua` keeps its local `defer`.
 Treflove uses `token` as an identifier in 41 places (its game pieces are
@@ -136,11 +136,11 @@ valid Lua, so every existing use of `token` as a variable keeps working.
 Decision 5 calls them keywords without saying reserved; settled by the
 parser task with the human.
 
-### Teal and `!`
+### Teal and `!@`
 
-The hook operator `!` was chosen partly because Teal is believed not to
-use it. The bootstrap session could not reach Teal's sources to confirm.
-Before `teal-lifetime` starts, check Teal's lexer for `!` and record the
+The hook operator `!@` was chosen partly because Teal is believed not to
+use `!`. The session that chose it could not reach Teal's sources to
+confirm. Before `teal-lifetime` starts, check Teal's lexer for `!` and record the
 answer here; if Teal uses it, the Teal front end needs another spelling or
 Teal needs to give it up.
 
