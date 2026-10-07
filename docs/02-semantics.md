@@ -468,9 +468,14 @@ function Connection.__destroy(self, reason)
 end
 ```
 
-1. `__destroy` is looked up on the object's metatable at the moment of
-   death. For functions, coroutines and userdata that means the shared
-   per-type metatable read by `debug.getmetatable`, as in Lua.
+1. `__destroy` is looked up at the moment of death by an **ordinary
+   index** on the object's metatable, `debug.getmetatable(obj).__destroy`,
+   not by a raw read: it is found the way a method is, through the
+   metatable's `__index` chain at any depth, and a function `__index` on
+   that chain is called (so it may run during destruction). This differs
+   from Lua's own metamethods, which are read raw. For functions,
+   coroutines and userdata the metatable is the shared per-type one, as
+   in Lua.
 2. During the call `self` is fully functional: fields, metatable and
    methods work, every dependent is alive, everything it merely references
    is alive unless it is dying in the same cascade.
@@ -486,9 +491,21 @@ end
    with the `any` combinator (decision 10). What, if anything, takes its
    place
    is open ([06-open-questions.md](06-open-questions.md)).
-6. Base-class destructors: open. File 10 leans towards walking the
-   `__index` chain of metatables and calling every distinct `__destroy`
-   most-derived first; a merged-index class library must chain its own.
+6. **One destructor per object.** The runtime calls only the `__destroy`
+   that rule 1 finds. A class that does not define one inherits its
+   base's, as it inherits any method; a class that overrides it chains
+   to its bases by hand, as constructors are chained, and calling the base
+   last gives the C++ order of decision 10:
+
+   ```lua
+   function Derived.__destroy(self, reason)
+     self.buffer:flush()               -- derived body first
+     Base.__destroy(self, reason)      -- then the base
+   end
+   ```
+
+   ([05-decisions.md](05-decisions.md), "Base-class destructors are
+   chained by hand".)
 7. Which objects the runtime can notify: those it has seen. An object is
    seen once it has been anchored with `@` (`@ lifetime.reachable`
    included), given a hook, created by `lifetime.token`, or passed to `destroy`,

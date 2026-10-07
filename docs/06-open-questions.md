@@ -10,16 +10,6 @@ questions move to [05-decisions.md](05-decisions.md).
 
 ## From the open points of file 10
 
-### Base-class destructors
-
-Decision 10. C++ runs the derived body, then the base bodies. *Leaning
-(file 10):* the runtime walks the metatable `__index` chain while it is a
-table, collects every distinct `__destroy`, and calls them most-derived
-first. A merged-index class library, as Treflove's, cannot be walked and
-chains its own; lesson 3 of `xd/docs/09-lessons-from-treflove.md` (one
-destructor per metatable) stays for it unless the library exposes its base
-list.
-
 ### Whether a hook or destructor learns which anchor died
 
 Proposal D of `xd/docs/09-lessons-from-treflove.md`. `remaining` is gone

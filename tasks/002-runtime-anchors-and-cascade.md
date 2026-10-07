@@ -55,9 +55,14 @@ or tokens (tasks 003, 004).
   a dead or dying object are no-ops; `destroy(5)` raises the argument
   error.
 - `lifetime.discard(obj)` skips `obj`'s own body only.
-- `__destroy` is read from `getmetatable(obj)` (or `debug.getmetatable`)
-  at the moment of death and called as `__destroy(obj, reason)` with
-  `"destroy"` for the root and `"anchor"` for dependents.
+- `__destroy` is read at the moment of death by an ordinary index on
+  `debug.getmetatable(obj)` (inherited through the `__index` chain, a
+  function `__index` called), and that one function is called as
+  `__destroy(obj, reason)` with `"destroy"` for the root and `"anchor"`
+  for dependents (`docs/02-semantics.md`, "`__destroy` and reasons", rules
+  1 and 6). Tests: a subclass with no `__destroy` runs its base's; a
+  subclass that overrides runs only its own unless it chains; a function
+  `__index` supplies one.
 - Inside a body, `attach` on an object that predates the phase and has an
   explicit formula raises `attempt to move an anchored table during
   destruction`; on an object created during the phase it works.

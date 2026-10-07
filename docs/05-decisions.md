@@ -201,3 +201,32 @@ one name, `token`, beside the six decision 11 lists; it builds an
 object, not a formula, so decision 11's "everything that builds a formula
 is syntax" still holds.
 → [02-semantics.md](02-semantics.md), "Tokens: `lifetime.token`"
+
+## Base-class destructors are chained by hand; `__destroy` is found like a method
+
+Decided by the human on 2026-10-07, settling the open point "Base-class
+destructors" of `xd/docs/10-lua-lifetime-decisions.md`. The runtime looks
+`__destroy` up with an ordinary index on the object's metatable, so it is
+inherited through any depth of `__index` chain and through a function
+`__index`, and calls that one function. A class that overrides it calls
+its base by hand.
+
+Checked under Lua 5.1 and LuaJIT: Lua follows `__index` through every
+level for ordinary indexing (and stops with `loop in gettable` past 100
+levels), calls a function `__index`, but reads its own metamethods
+(`__tostring`, `__add`, `__gc`) raw, so they are not inherited. `__destroy`
+is the runtime's, not Lua's, so the runtime picks the rule.
+
+Rejected: walking the chain and calling every distinct `__destroy`
+most-derived first (the leaning of file 10). The walk can only follow
+`__index` while it is a table, so it stops at a function `__index` and
+cannot walk a merged-index library such as Treflove's; it would run some
+base destructors and skip others depending on how a class library is
+built, run a base twice in code that already chains by hand, and cost a
+walk per death. Also rejected: a raw lookup, Lua's metamethod rule, under
+which a subclass without its own `__destroy` silently skips its base's
+cleanup. Treflove chains constructors by hand already (64 `Base.init(self,
+…)` calls), so chaining destructors the same way is what its code expects;
+lesson 3 of `xd/docs/09-lessons-from-treflove.md` (one destructor per
+metatable) stands, with the class library as the place that chains.
+→ [02-semantics.md](02-semantics.md), "`__destroy` and reasons", rules 1 and 6
