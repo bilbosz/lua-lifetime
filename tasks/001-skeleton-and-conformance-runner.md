@@ -98,7 +98,7 @@ largest file of the test corpus in the handoff, as a first baseline.
 
 ## Out of scope
 
-- Any extension syntax (`@`, `!@`, `scope`, `caller`, `token`): task 005.
+- Any extension syntax (`@`, `!@`, `scope`, `caller`): task 005.
 - The runtime: tasks 002 to 004.
 - `lifetime run`, `lifetime build` as a command, the rockspec: task 007.
 - Lua 5.2+ syntax (`goto`, `::label::`) in the input: task 005 covers

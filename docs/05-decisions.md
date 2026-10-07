@@ -14,7 +14,7 @@ lifetimes". Output files are `.lua`. `.lifetime` was rejected as long,
 `.llt` as unpronounceable.
 → [04-transpiler.md](04-transpiler.md), `examples/README.md`
 
-## Tokens are declared with `token NAME [@ anchor]`
+## Tokens are declared with `token NAME [@ anchor]` (superseded)
 
 Decision 6 of file 10 calls for a declaration form and leans towards a
 `token` keyword. Deriving [02-semantics.md](02-semantics.md) and the
@@ -32,8 +32,8 @@ reads like a variable; a library function (`lifetime.token("period")`) was
 rejected because decision 6 asked for a declaration and because the name
 would be written twice. Whether `token` is reserved everywhere is a
 separate open question ("Reserved words" in
-[06-open-questions.md](06-open-questions.md)).
-→ [02-semantics.md](02-semantics.md), "Named tokens"
+[06-open-questions.md](06-open-questions.md)). Superseded below by
+"Tokens are created by `lifetime.token`".
 
 ## The dead metatable raises
 
@@ -165,10 +165,39 @@ named or to be able to be named … we should be able to destroy them").
 name: a hook created as the value of `local NAME =`, `NAME =` or
 `t.NAME =` carries `NAME`, rendered by `tostring` as `hook NAME`, by
 `lifetime.format`, and in a tombstone's message. The name comes from the
-binding the way a token's name comes from its declaration (`token
-NAME`), so dumps of what an object owns read as code. A separate naming
+binding, so dumps of what an object owns read as code; the transpiler
+can do this because `!@` is syntax and it sees the binding. (A token's
+name is passed explicitly to `lifetime.token`, which is a plain call.) A separate naming
 syntax (a name inside the operator, a `hook NAME = …` declaration) was rejected: binding
 to a local is what a handle needs anyway, and a second spelling would add
 syntax for a debugging aid. The name is a constant string passed at the
 creation site and costs nothing per call.
 → [02-semantics.md](02-semantics.md), "Named hooks"
+
+## Tokens are created by `lifetime.token`
+
+Decided by the human on 2026-10-07 ("Token should be in the module
+lifetime.token"), superseding "Tokens are declared with `token NAME`"
+above. `lifetime.token([name])` returns a fresh token on the default
+lifetime, and `@` anchors it like any object: `local period =
+lifetime.token("period") @ self`. The name is an optional string for
+display only (`tostring`, `lifetime.format`, tombstone messages).
+
+Why: a token is a value with identity, held in fields and destroyed from
+anywhere (decision 6's own reason it cannot be a marking), which a
+function returns as naturally as `setmetatable` does; the extension's
+syntax stays at `@`, `!@`, `scope` and `caller`; `token` is no longer a
+word the parser has to treat specially, so Treflove's 41 uses of `token`
+as an identifier need no rule; and the name the earlier entry rejected
+the function for ("the name would be written twice") is now optional and
+written once, as the argument.
+
+This departs from decision 6 of `xd/docs/10-lua-lifetime-decisions.md`,
+which decides that named tokens get "their own declaration form" and
+leans towards a `token` keyword. The token itself is unchanged: identity,
+a dependents list, a hook list, no fields, no metatable access. The
+human carries the departure back to `xd`. The `lifetime` table grows by
+one name, `token`, beside the six decision 11 lists; it builds an
+object, not a formula, so decision 11's "everything that builds a formula
+is syntax" still holds.
+→ [02-semantics.md](02-semantics.md), "Tokens: `lifetime.token`"

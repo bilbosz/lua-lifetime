@@ -1,6 +1,6 @@
 ---
 id: 005
-title: Lexer and parser: Lua 5.1 plus `@`, the list form, the hook operator `!@`, `scope`, `caller`, the token declaration
+title: Lexer and parser: Lua 5.1 plus `@`, the list form, the hook operator `!@`, `scope`, `caller`
 status: todo
 depends: [001, 010]
 branch:
@@ -15,7 +15,7 @@ The lexer and parser of task 001 accept the whole extended grammar of
 `docs/04-transpiler.md` and produce AST nodes for `@` (expression and
 statement, single anchor and list, `scope` and `caller` as anchors),
 the hook operator `!@` (expression and statement, with the name of its
-binding target for named hooks), and the `token` declaration, plus
+binding target for named hooks), plus
 LuaJIT's `goto` and labels in the input. Before writing the parser, the
 implementer settles "Reserved words" in `docs/06-open-questions.md` with
 the human (an open point this repository owns) and records the answer in
@@ -34,12 +34,12 @@ the human (an open point this repository owns) and records the answer in
 - `docs/02-semantics.md`, "Scopes: `scope` and `caller`": "using them
   anywhere but after `@` (including inside the list form) is a syntax
   error".
-- `docs/02-semantics.md`, "Named tokens": `token Name [@ anchor]`.
 - `docs/02-semantics.md`, "Hooks: the `!@` operator": the anchor is
   always written; the statement form's left side; "Named hooks": which
   binding targets name a hook.
 - `docs/05-decisions.md`, "Hooks are made with the operator `!@`".
-- `docs/05-decisions.md`, "Tokens are declared with `token NAME`".
+- `docs/05-decisions.md`, "Tokens are created by `lifetime.token`":
+  there is no token syntax; `token` is an ordinary name.
 
 ## Acceptance criteria
 
@@ -68,10 +68,8 @@ the human (an open point this repository owns) and records the answer in
 - `!@` is one token; `! @` is a syntax error; `a != b` raises
   `unexpected symbol near '!' (use '~=' for inequality)`.
 - `defer` is an ordinary name: `local defer = 1` parses.
-- `token t` and `token t @ a` parse to a `Token` node declaring a local;
-  under the settled reserved-words decision, `token` as a variable either
-  still parses (contextual) or is a syntax error (reserved), and a test
-  pins whichever it is.
+- `token` is an ordinary name: `local token = 1` and
+  `lifetime.token("p") @ a` parse as Lua and an `@`.
 - `scope` or `caller` anywhere but after `@` or inside the list form is a
   syntax error with Lua's wording.
 - `goto name` and `::name::` parse (LuaJIT syntax) so the emitter can

@@ -1,7 +1,7 @@
 -- lifetime/emit.lua: code generation.
 --
 -- Turns the AST into Lua 5.1 source per docs/04-transpiler.md: the chunk
--- header, what `@` expands to, hooks (`!@`) and `token`, block prologues and
+-- header, what `@` expands to, hooks (`!@`), block prologues and
 -- epilogues on every exit path, the `pcall` wrapper for the error path,
 -- the function prologue and epilogue for `caller`. Keeps every statement
 -- on its source line. Exports `emit(ast)`.

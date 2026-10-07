@@ -1,6 +1,6 @@
 ---
 id: 004
-title: Runtime: named tokens, `lifetime.pin`, `lifetime.alive`, reachable-only destructors via `newproxy`, `collectgarbage`
+title: Runtime: `lifetime.token`, `lifetime.pin`, `lifetime.alive`, reachable-only destructors via `newproxy`, `collectgarbage`
 status: todo
 depends: [002]
 branch:
@@ -22,8 +22,10 @@ behave as specified.
 - `docs/02-semantics.md`, "The implicit `reachable` term and
   `lifetime.pin`": `@ a` means `@ (a, reachable)`; `pin` strips the term;
   the mixing rule; the errors of `pin`.
-- `docs/02-semantics.md`, "Named tokens": identity, no fields, metatable
-  `"token"`, `tostring` is `token NAME`, an anchor and a dependent.
+- `docs/02-semantics.md`, "Tokens: `lifetime.token`": `lifetime.token([name])`
+  returns a fresh token on the default lifetime; identity, no fields,
+  metatable `"token"`, `tostring` is `token NAME` or `token: 0x…`; an
+  anchor and a dependent; the name must be a string.
 - `docs/02-semantics.md`, "Tombstones and `lifetime.alive`": `alive` is
   `true` for alive and dying, `false` for tombstones, `nil`, `false`;
   argument error for a value.
@@ -57,10 +59,12 @@ behave as specified.
   the older one's walk skips the younger one if it was its dependent.
 - `x @ lifetime.reachable` on a plain table with `__destroy` registers it;
   without it, the same table is collected silently.
-- `lifetime.token(name, pin, …)` creates a token: `getmetatable(t) ==
-  "token"`, `tostring(t) == "token " .. name`, indexing raises `attempt to
-  index a token value`, it can be anchored and be an anchor, and it carries
-  a sentinel under the same rule as a table.
+- `lifetime.token([name])` creates a token on the default lifetime:
+  `getmetatable(t) == "token"`, `tostring(t) == "token " .. name` with a
+  name and `token: 0x…` without, `lifetime.token(5)` raises the argument
+  error, indexing raises `attempt to index a token value`, it can be
+  anchored with `attach` and be an anchor, and it carries a sentinel under
+  the same rule as a table.
 - `lifetime.alive` behaves per the spec table.
 - `make test` green under both interpreters; `make lint` clean.
 
@@ -79,8 +83,8 @@ behave as specified.
 5. Weak table: `w = setmetatable({}, {__mode = "k"})`, `w[x] = true`;
    drop `x`; after one collect `next(w)` may still be `x`; after two it
    is `nil`. The test asserts the second, and documents the first.
-6. Token: `token period @ session` (via `lifetime.token`), `menu @
-   period`, hook on `period`; `destroy(period)` logs `hook, menu` (reverse
+6. Token: `period = attach(lifetime.token("period"), false, session)`,
+   `menu @ period`, hook on `period`; `destroy(period)` logs `hook, menu` (reverse
    attachment); `destroy(session)` afterwards does not mention `period`.
 7. `alive`: `true` before `destroy`, `true` inside the body (checked from
    `__destroy`), `false` after; `alive(nil) == false`; `alive(5)` raises.

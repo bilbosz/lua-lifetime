@@ -33,7 +33,6 @@ Lua 5.1 (`lparser.c`, the manual's §8) plus:
 exp        ::= … | exp '@' anchor | exp '!@' anchor
 stat       ::= … | prefixexp '@' anchor
              | prefixexp '!@' anchor | functiondef '!@' anchor
-             | 'token' Name [ '@' anchor ]
 anchor     ::= prefixexp | 'scope' | 'caller' | '(' anchorlist ')'
 anchorlist ::= anchoritem { ',' anchoritem }
 anchoritem ::= exp | 'scope' | 'caller'
@@ -48,9 +47,8 @@ anchoritem ::= exp | 'scope' | 'caller'
   must then be followed by `!@`; `function name` keeps its Lua meaning.
 - `scope` and `caller` are valid only where `anchor` and `anchoritem` name
   them. `@()` is a syntax error. Lists do not nest.
-- Reserved words: none added; `defer` is an ordinary name. Whether
-  `scope`, `caller` and `token` are
-  reserved everywhere is open ([06-open-questions.md](06-open-questions.md),
+- Reserved words: none added; `defer` and `token` are ordinary names.
+  Whether `scope` and `caller` are reserved everywhere is open ([06-open-questions.md](06-open-questions.md),
   "Reserved words"); until settled, the parser treats them as keywords only
   where the grammar names them.
 
@@ -86,11 +84,10 @@ these names gets what it wrote.
 | `f !@ scope` | `lifetime.hook(f, nil, <scope local>)` |
 | `f !@ (a, b)` | `lifetime.hook(f, nil, a, b)` |
 | `local h = f !@ a`, `h = f !@ a`, `t.h = f !@ a` | `… = lifetime.hook(f, "h", a)`: the name of the binding target ([02-semantics.md](02-semantics.md), "Named hooks") |
-| `token t @ a` | `local t = lifetime.token("t", a)` |
-| `token t` | `local t = lifetime.token("t")` |
 
 `attach` returns its first argument, so the expression form keeps its
-value. The rows below that still read `lifetime.x` are bound to a local in
+value. `lifetime.token("t")` is an ordinary call and is emitted as
+written; `lifetime.token("t") @ a` is the `@` row. The rows below that still read `lifetime.x` are bound to a local in
 the header the same way when the chunk uses them; the table shows the
 runtime entry point, not the spelling. The implicit `reachable` term is the runtime's business
 (`lifetime.attach` adds it unless every anchor is a pinned value), not the
@@ -100,7 +97,8 @@ tasks; this table fixes the shape.
 ## Blocks: prologue and epilogue on every exit path
 
 A block **needs a scope record** if it contains, directly (not in a nested
-function), `scope` as an anchor (after `@` or `!@`, alone or in a list), or a `token … @ scope`. Only such blocks get code; every
+function), `scope` as an anchor (after `@` or `!@`, alone or in a list). Only such
+blocks get code; every
 other block is emitted verbatim. For a block that needs one:
 
 ```lua

@@ -7,11 +7,10 @@ and a runtime module, `lifetime`, does the bookkeeping the generated code
 calls into.
 
 - **Transpiler.** Lua 5.1 syntax plus the postfix operator `@`, the
-  hook operator `!@`, the anchors `scope` and `caller`, and the `token`
-  declaration goes in; plain Lua 5.1 that runs on Lua 5.1 and LuaJIT comes
+  hook operator `!@`, and the anchors `scope` and `caller` goes in; plain Lua 5.1 that runs on Lua 5.1 and LuaJIT comes
   out. See [04-transpiler.md](04-transpiler.md).
 - **Runtime.** `require("lifetime")` is the `lifetime` table of the
-  language itself: `lifetime.pin`, `lifetime.reachable`, `lifetime.of`,
+  language itself: `lifetime.token`, `lifetime.pin`, `lifetime.reachable`, `lifetime.of`,
   `lifetime.alive`, `lifetime.dependents`, `lifetime.format`, and the
   builtins `destroy` and `discard`. It keeps every object's anchors and
   dependents, runs cascades in a defined order, and tombstones what died.

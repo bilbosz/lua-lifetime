@@ -127,14 +127,12 @@ ways.
 The extension adds no reserved word: hooks are made with the `!@`
 operator ([05-decisions.md](05-decisions.md)), so `defer` is an ordinary
 name and Treflove's `events/defer-manager.lua` keeps its local `defer`.
-Treflove uses `token` as an identifier in 41 places (its game pieces are
-tokens) and `scope` and `caller` nowhere. *Leaning:* `scope` and
-`caller` are keywords only after `@` and inside the list form, where a
-variable of that name could not be anchored to anyway; `token` is a
-keyword only at statement start followed by a `Name`, which is never
-valid Lua, so every existing use of `token` as a variable keeps working.
-Decision 5 calls them keywords without saying reserved; settled by the
-parser task with the human.
+Tokens come from `lifetime.token`, so `token` is an ordinary name too
+(Treflove uses it 41 times). Treflove uses `scope` and `caller` nowhere.
+*Leaning:* `scope` and `caller` are keywords only after `@` or `!@` and
+inside the list form, where a variable of that name could not be
+anchored to anyway. Decision 5 calls them keywords without saying
+reserved; settled by the parser task with the human.
 
 ### Teal and `!@`
 

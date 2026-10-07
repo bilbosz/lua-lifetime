@@ -52,8 +52,8 @@ weak tables for one more cycle.
 - **`reachable`**: the term that stands for "something still refers to
   this object". Its truth is decided by the host collector (decision 2),
   not at a statement boundary.
-- **Token**: an opaque object created by a `token` declaration (decision
-  6): identity, a dependents list, a hook list, no fields.
+- **Token**: an opaque object created by `lifetime.token([name])`
+  (decision 6): identity, a dependents list, a hook list, no fields.
 - **Dependent**: an object whose formula mentions a given anchor.
 - **Hook**: an object created with the operator `!@` whose destructor is
   a user function.
@@ -233,32 +233,20 @@ Returning an object anchored to `scope` alone hands the caller a tombstone
 tombstone of decision 8 in place of `nil`). Anchor to `caller`, to what the
 caller passed in, or to nothing.
 
-## Named tokens
+## Tokens: `lifetime.token`
 
-*From file 10, decision 6. The declaration syntax is this repository's
-decision ([05-decisions.md](05-decisions.md), "Tokens are declared with
-`token NAME`").*
+*From file 10, decision 6. Created by a function of the `lifetime` module
+at the human's request ([05-decisions.md](05-decisions.md), "Tokens are
+created by `lifetime.token`"), not by the declaration form decision 6
+names.*
 
 A token names a span of time: "logged in", "this view's generation", "the
-current script". It is created by a declaration:
-
-```ebnf
-stat ::= … | 'token' Name [ '@' anchor ]
-```
-
-`token period @ self` declares a local `period` holding a fresh token
-anchored to `self`; `token generation` declares one on the default
-lifetime. A token is an object for every rule on this page: it is an
-anchor (`menu @ period`), a dependent (`token period @ self`), it can be
-moved, destroyed and discarded, and `lifetime.dependents(period)` lists
-what it owns. It has no fields: indexing or assigning a field raises
-`attempt to index a token value`. `getmetatable(tok)` is the string
-`"token"` and `tostring(tok)` is `token NAME`. A token has no `__destroy`;
-attach a hook for cleanup that belongs to the span itself.
+current script". `lifetime.token([name])` returns a fresh one, on the
+default lifetime like any new object, and `@` gives it a lifetime:
 
 ```lua
 function Session:login(user)
-  token period @ self              -- ends at logout, or with the session
+  local period = lifetime.token("period") @ self   -- ends at logout, or with the session
   self.period = period
   self.menu = Screen.new("menu") @ period
   backstack:push(function() self:logout() end) @ period
@@ -268,6 +256,23 @@ function Session:logout()
   destroy(self.period)             -- the entry, then the menu, in reverse order of attachment
 end
 ```
+
+- `name` is an optional string used only for display: `tostring(tok)` is
+  `token NAME`, or `token: 0x…` without a name, and `lifetime.format` and
+  the tombstone's message use the same text. A name that is not a string
+  is `bad argument #1 to 'lifetime.token' (string expected, got number)`.
+- A token is an object for every rule on this page: it is an anchor
+  (`menu @ period`), a dependent (`lifetime.token() @ self`), it can be
+  moved, destroyed and discarded, and `lifetime.dependents(period)` lists
+  what it owns.
+- Like any object anchored with `@`, `lifetime.token("period") @ self`
+  carries the implicit `reachable` term: it dies with `self`, or earlier
+  if nothing refers to it. Keep it in a field, as above, or pin it:
+  `lifetime.token("period") @ lifetime.pin(self)`.
+- It has no fields: indexing or assigning a field raises `attempt to index
+  a token value`. `getmetatable(tok)` is the string `"token"`. A token has
+  no `__destroy`; attach a hook for cleanup that belongs to the span
+  itself.
 
 ## Hooks: the `!@` operator
 
@@ -486,7 +491,7 @@ end
    most-derived first; a merged-index class library must chain its own.
 7. Which objects the runtime can notify: those it has seen. An object is
    seen once it has been anchored with `@` (`@ lifetime.reachable`
-   included), given a hook, declared as a token, or passed to `destroy`,
+   included), given a hook, created by `lifetime.token`, or passed to `destroy`,
    `discard` or `lifetime.of`. A plain Lua table with a `__destroy` that
    the runtime never saw is collected silently, as Lua collects it; `x @
    lifetime.reachable` is the way to register an object on the default
@@ -645,11 +650,14 @@ not close the state, so step 2 does not run after it; LuaJIT's
 ## The `lifetime` table
 
 *From `xd/docs/04-syntax.md`, "The `lifetime` table", reduced by decisions
-5, 7 and 11 to the six names decision 11 lists.*
+5, 7 and 11 to the six names decision 11 lists, plus `lifetime.token`
+([05-decisions.md](05-decisions.md), "Tokens are created by
+`lifetime.token`").*
 
 | Name | Meaning |
 | --- | --- |
 | `lifetime.reachable` | The `reachable` term as a lifetime value: `x @ lifetime.reachable` releases `x` to the collector; `lifetime.of(x)` of a default-lifetime object returns it. |
+| `lifetime.token([name])` | A fresh token on the default lifetime ("Tokens: `lifetime.token`"). |
 | `lifetime.pin(a1, …, an)` | A lifetime value over the anchors without the implicit `reachable` term ("The implicit `reachable` term"). |
 | `lifetime.of(obj)` | `obj`'s current formula as a lifetime value, a snapshot: a later move of `obj` does not change it. Error on `nil`, a value, a dead object. |
 | `lifetime.alive(x)` | The liveness check ("Tombstones"). |
@@ -684,10 +692,10 @@ reduced to what a transpiler can honour.*
   scopes are syntax (decisions 5, 7 and 11).
 - `@` is reserved and cannot appear in identifiers or elsewhere.
 - `!@` is an operator, and `!` cannot appear anywhere else. The extension
-  adds no reserved word; `defer` is an ordinary name. Whether `scope`, `caller`
-  and `token` are reserved everywhere or only where the grammar names them
-  is open ([06-open-questions.md](06-open-questions.md), "Reserved
-  words"); Treflove uses `token` as an identifier in 41 places.
+  adds no reserved word; `defer` and `token` are ordinary names. Whether
+  `scope` and `caller` are reserved everywhere or only where the grammar
+  names them is open ([06-open-questions.md](06-open-questions.md),
+  "Reserved words").
 - `__gc` is not removed; the runtime uses it. A `__gc` of your own on a
   userdata still runs, as in Lua. Tables get `__destroy` through the
   runtime, not `__gc`.

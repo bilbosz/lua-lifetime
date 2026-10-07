@@ -174,7 +174,10 @@ Skills, invoked with `/name`:
   stays pinned when moved with `@`.
 - A hook has no default lifetime: block-exit cleanup is written
   `f !@ scope`.
-- `defer` is an ordinary name; hooks are made with `!@`.
+- `defer` and `token` are ordinary names; hooks are made with `!@`, tokens
+  with `lifetime.token([name])`.
+- `lifetime.token("p") @ self` dies early if nothing holds it, like any
+  `@ self`; keep it in a field or anchor it with `lifetime.pin(self)`.
 - `scope` and `caller` cannot be stored or passed; there is no scope
   value and no loop-iteration trap.
 - A plain table the runtime never saw is collected silently, `__destroy`

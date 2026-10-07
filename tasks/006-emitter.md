@@ -12,7 +12,7 @@ review:
 ## Goal
 
 The emitter turns the extended AST into Lua 5.1 that calls the runtime:
-the chunk header, the `@` expansions, hooks (`!@`, named and anonymous), `token`, scope records with
+the chunk header, the `@` expansions, hooks (`!@`, named and anonymous), scope records with
 an epilogue on every exit path, the `pcall` wrapper for blocks that need
 it, and the function prologue and epilogue for `caller`. After this task a
 `.lt` program runs through `cli.build` plus `loadstring`, and the
@@ -44,8 +44,8 @@ conformance runner can run programs that use the syntax.
 - Each row of the expansion table is produced for its source form, with
   `scope` resolving to the innermost enclosing block's record local and
   `caller` to `lifetime.caller()`.
-- A block that contains (directly) `scope` as an anchor of `@` or `!@`, or `token …
-  @ scope` gets `enter` at its start and `exit` on fall-through, before
+- A block that contains (directly) `scope` as an anchor of `@` or `!@`
+  gets `enter` at its start and `exit` on fall-through, before
   every `return` that leaves it (values evaluated first, packed with
   `select("#", …)`), before every `break` that leaves it, and before every
   `goto` that leaves it; a `goto` into such a block is a compile error.
