@@ -35,8 +35,9 @@ What you are checking, in priority order:
 3. **Collector honesty.** No strong reference from the runtime to a
    dependent the language says may be collected; no side table keyed by an
    anchor; no claim about *when* a reachable death happens other than
-   "after `collectgarbage("collect")`"; nothing that works on LuaJIT only
-   or on 5.1 only.
+   "after `collectgarbage("collect")`", and none about the order among
+   objects one collection finds; nothing that works on LuaJIT only or on
+   5.1 only.
 4. **Test adequacy.** Tests exist for every acceptance criterion, check
    order and the statement of death, and would fail if the behaviour
    regressed. Run `make test` and `make lint` yourself, and note which

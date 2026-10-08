@@ -456,6 +456,14 @@ it owns, flushes the buffer it owns, or tells its children to detach can do
 so. It may also see dependents it destroyed by hand already torn down;
 that is the author's choice, as in C++.
 
+This holds for every death the program causes: `destroy`, a scope exit, an
+anchor's death. It does not hold for deaths the collector finds. When one
+collection finds several objects unreachable, their cascades run in an
+undefined order ("Reachability is the collector's"), so a destructor run
+with reason `"unreachable"` or `"exit"` may find a dependent already dead.
+Such a destructor checks with `lifetime.alive` before it uses one, or the
+program destroys the owner explicitly where the order matters.
+
 ## `__destroy` and reasons
 
 *From `xd/docs/03-destruction.md`, "The `__destroy` metamethod", rules 1
@@ -478,7 +486,10 @@ end
    in Lua.
 2. During the call `self` is fully functional: fields, metatable and
    methods work, every dependent is alive, everything it merely references
-   is alive unless it is dying in the same cascade.
+   is alive unless it is dying in the same cascade. In a death the
+   collector finds, `self` and its fields are still intact, but a
+   dependent or a referenced object found in the same collection may
+   already be dead (see "Reachability is the collector's").
 3. When the cascade reaches step 2.3 the object is dead no matter what the
    method did. There is no resurrection.
 4. `__destroy` may create new objects and anchor them to anything alive. It
@@ -562,10 +573,13 @@ and anchoring to it are refused.
 
 Weak tables keep their Lua meaning: a weak entry is cleared when its key or
 value is collected, which for a tombstone is once nothing else refers to it
-(5.1 clears weak entries one cycle after the finalizer, "Host"). An object
-still held in an array stays as a tombstone until something removes it by
-identity, usually a hook that runs while the object is dying and still
-findable.
+(5.1 clears weak entries one cycle after the finalizer, "Host"). Until
+then a weak table still lists the tombstone: code that iterates a weak
+table of objects that may die, such as an event manager's weak-key
+listener table, must skip tombstones with `lifetime.alive`, or the
+object's destructor must unregister it. An object still held in an array
+stays as a tombstone until something removes it by identity, usually a
+hook that runs while the object is dying and still findable.
 
 ## Errors in destructors and `destroyerror`
 
@@ -611,13 +625,23 @@ when that is, except:
 
 - **`collectgarbage("collect")` is the deterministic point.** When it
   returns, every object that was unreachable before the call has had its
-  cascade run, with reason `"unreachable"`. Weak entries that held such an
+  cascade run, with reason `"unreachable"`, or `"anchor"` for a dependent
+  whose owner's cascade reached it first. Weak entries that held such an
   object clear one collection later ("Host"), so a test that checks a
   weak table collects twice.
-- Within one collection, objects are finalized **newest first** by
-  creation ("Host"), each taking its whole subtree in cascade order; an
-  object already destroyed in an earlier walk is skipped. This is the
-  order `xd/docs/03-destruction.md`, "A cycle", step 4 gives.
+- **The order is undefined.** When one collection finds several objects
+  unreachable, the order in which their cascades run is undefined, the
+  way C++ leaves the order of static objects in different translation
+  units unspecified ([05-decisions.md](05-decisions.md), "The order of
+  deaths the collector finds is undefined, for now"). Each cascade still
+  runs as "Cascading death" says, body first, then the dependents still
+  alive, then the tombstone. But when a destructor runs, a dependent found
+  in the same collection may already be dead, having run its own cascade
+  with reason `"unreachable"`, and the owner's walk skips it; so may any
+  object it refers to, and a resource with its own finalizer, such as a
+  file or a LÖVE object, may already be closed. What a destructor run by
+  the collector can rely on is itself: `self`, its fields and everything
+  they refer to are intact, kept alive by Lua for the finalizer.
 - A destructor run by the collector runs at an arbitrary allocation point,
   in the middle of whatever the program was doing. Deterministic ownership
   does not remove reentrancy; code that dispatches events keeps its
@@ -626,8 +650,9 @@ when that is, except:
   from an anchor to its dependents are weak and do not count
   ([03-runtime.md](03-runtime.md)); a dependent's reference to its anchor
   is strong, as any field would be. A subtree nobody outside holds is
-  therefore an ordinary cycle and dies as a whole when the collector finds
-  its root (decision 3).
+  therefore an ordinary cycle and dies as a whole, in one collection,
+  when nothing outside refers to its root (decision 3); its members die
+  in the undefined order above.
 - `collectgarbage` keeps all of its Lua 5.1 options; nothing is removed.
 
 Everything else stays exact and synchronous: anchored lifetimes, scope
@@ -642,7 +667,8 @@ A coroutine's stack is a chain of scopes; while it is suspended they are
 alive and so is everything anchored to them. A coroutine the collector
 finds unreachable cannot run its pending epilogues (5.1 has no
 `coroutine.close`): the runtime destroys its scope records from the
-finalizer, innermost first, and the Lua frames are dropped. On plain Lua
+finalizer, in the undefined order of every death the collector finds, and
+the Lua frames are dropped. On plain Lua
 5.1 a block that needs the error-path wrapper cannot yield (`attempt to
 yield across metamethod/C-call boundary`); LuaJIT allows it. `caller`
 across a coroutine boundary is open ([06-open-questions.md](06-open-questions.md)).
@@ -654,13 +680,15 @@ across a coroutine boundary is open ([06-open-questions.md](06-open-questions.md
 1. **The main scope exits** like any block: its dependents die in reverse
    attachment order, each with its cascade, reason `"anchor"`.
 2. **The host closes the state.** Lua finalizes every object that still has
-   a pending finalizer, newest first ("Host"); the runtime runs each one's
+   a pending finalizer, in an undefined order as for every death the
+   collector finds ("Reachability is the collector's"); the runtime runs each one's
    cascade with reason `"exit"` when it has been told the program is ending
    (`lifetime run` tells it; how an embedding host tells it is open,
    [06-open-questions.md](06-open-questions.md)), else `"unreachable"`.
 
-Newest first means an instance dies before the metatable it was created
-with, so `__destroy` can still be found. `os.exit` on plain Lua 5.1 does
+An object's metatable is kept alive for its finalizer, so `__destroy` is
+still found, unless the metatable is itself an object with a lifetime that
+the same sweep destroyed first: do not anchor class tables. `os.exit` on plain Lua 5.1 does
 not close the state, so step 2 does not run after it; LuaJIT's
 `os.exit(code, true)` does. There is no `os.exit` of our own.
 

@@ -64,7 +64,9 @@ listed in `tests/run.lua`. For anything involving death:
   (interleave log lines with the program's own prints, or check the log
   before and after the statement);
 - pin a death by `reachable` with `collectgarbage("collect")`, twice when
-  a weak table must have cleared, and never with a timer or a loop;
+  a weak table must have cleared, and never with a timer or a loop; when
+  one collection finds several objects, assert that each died exactly
+  once, compared as a set, never their relative order, which is undefined;
 - include the `reason` argument where the spec defines it.
 
 Conformance tests: if the task adds or changes an `examples/*.lt`, update its

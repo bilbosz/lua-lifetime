@@ -178,3 +178,34 @@ loop over its sequence range, skipping holes, which keeps what the
 sentence protects (a hole never ends the walk, the order is attachment
 order) and avoids a sort per cascade and a `pairs` walk. The letter of
 the decision differs; confirm, and carry the wording back to `xd`.
+
+### A defined order for deaths the collector finds
+
+The order is undefined for now ([05-decisions.md](05-decisions.md), "The
+order of deaths the collector finds is undefined, for now"). A design that
+defines it, verified in a prototype under Lua 5.1 and LuaJIT, is kept here
+for when a program needs it:
+
+- **Defer once.** When a sentinel fires and its object still has a table
+  or token anchor that is alive, the runtime does not destroy the object.
+  It marks it deferred, gives it a fresh sentinel and returns. If the
+  anchor is unreachable too, the anchor's sentinel fires later in the same
+  collection and its cascade takes the deferred object in the order of
+  "Cascading death", with reason `"anchor"`. If the anchor is really
+  alive, the object dies alone when its fresh sentinel fires, one
+  collection later.
+- **The promise of `collectgarbage("collect")`.** The runtime wraps
+  `collectgarbage` and, right after a real full collection, runs the
+  cascade of every deferred object still alive: that collection is
+  complete, so their anchors did not die in it.
+
+Prototype results: a connection and its buffer dropped together ran the
+connection's body with the buffer intact, then the buffer with reason
+`"anchor"`; app, session and login dropped together ran in that order,
+the last two with reason `"anchor"`. Costs: one proxy per deferral, a
+wrapped `collectgarbage`, and one extra collection cycle for a lone
+dependent under the automatic collector. It does not order resources with
+their own finalizer, such as files, which follow Lua's newest-first rule.
+*Leaning:* adopt when the Treflove trial (task 009) or another real
+program shows destructors run by the collector that need their
+dependents.

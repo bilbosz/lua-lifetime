@@ -28,7 +28,8 @@ module `lifetime`, which is the language's own `lifetime` table.
 Ownership is deterministic: anchored lifetimes, scope exit, `destroy`,
 the cascade order, hooks and destructors run by them. Plain reachability
 is Lua's collector, with `collectgarbage("collect")` as the point a
-program may rely on.
+program may rely on, and no defined order among the objects it finds
+together.
 
 ## Documents
 

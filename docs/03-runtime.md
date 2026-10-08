@@ -15,7 +15,7 @@ page is corrected.
 | `__gc` on userdata only | A table whose destructor must run when the collector finds it carries a `newproxy(true)` sentinel ("The sentinel"). |
 | No ephemerons | No side table keyed by anchor. Dependents live inside the anchor (decision 3). The only side table is weak-keyed with values that never refer back to the key. |
 | No yield across `pcall` on plain 5.1 | The runtime never wraps user code in `pcall` on a path a coroutine may yield through; destructor bodies are called in protected mode only where 02 says errors are routed. |
-| Finalizers run in reverse creation order | The collector's order of 02, "Reachability is the collector's", comes for free. |
+| Finalizers run in reverse creation order | The runtime does not reorder them. The spec leaves the order of deaths the collector finds undefined (02, "Reachability is the collector's"); sentinels fire in whatever order their creation gives, which in practice destroys a dependent before its owner when both are found together. |
 | A finalized object stays in weak tables one more cycle | The cascade unlinks a dying dependent from its anchors' lists explicitly; it never waits for the weak entry to clear. |
 
 ## The state of an object
@@ -137,11 +137,13 @@ proxy and everything it references for the finalizer, and the finalizer
 reaches the table through `getmetatable(proxy).owner`. No side table is
 needed, which is what decision 3 requires.
 
-The finalizer runs `cascade(obj, "unreachable", "collector")` if the
-object is still `"dying"`-eligible (not already dead through an earlier
-walk of the same collection, which the reverse-creation order makes
-common), with the exit flag of "Program end" turning the reason into
-`"exit"`. Which objects carry a sentinel:
+The finalizer runs `cascade(obj, "unreachable", "collector")` unless the
+object is already dead or dying through an earlier walk of the same
+collection, with the exit flag of "Program end" turning the reason into
+`"exit"`. It does nothing to order itself against the other sentinels of
+the same collection; a design that would, deferring once, is recorded in
+[06-open-questions.md](06-open-questions.md), "A defined order for deaths
+the collector finds". Which objects carry a sentinel:
 
 - a table whose formula has the `reachable` term and that has a
   `__destroy`, dependents or hooks, because its collection must run a

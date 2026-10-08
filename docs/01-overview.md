@@ -48,7 +48,8 @@ the cascade order, hooks and destructors run by them happen exactly where
 the program says. Plain reachability is Lua's collector: an object nobody
 anchored, or an anchored object that nothing refers to any more, dies when
 the collector finds it, and `collectgarbage("collect")` is the point at
-which a program may rely on that having happened. The repository
+which a program may rely on that having happened. Objects the collector
+finds together die in an undefined order. The repository
 description says the same thing in one line: *cleanup runs in a defined
 order when the owner dies or the scope exits*.
 

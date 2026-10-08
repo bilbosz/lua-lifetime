@@ -230,3 +230,45 @@ cleanup. Treflove chains constructors by hand already (64 `Base.init(self,
 lesson 3 of `xd/docs/09-lessons-from-treflove.md` (one destructor per
 metatable) stands, with the class library as the place that chains.
 → [02-semantics.md](02-semantics.md), "`__destroy` and reasons", rules 1 and 6
+
+## The order of deaths the collector finds is undefined, for now
+
+Decided by the human on 2026-10-08 ("Let's make destruction order
+undefined for now - this is true C++ spirit"). When one collection finds
+several objects unreachable, the order in which their cascades run is
+undefined; so is the order of the program-end sweep and of the scope
+records of a collected coroutine, which are the same mechanism. The order
+of every death the program causes is unchanged: `destroy`, scope exit and
+an anchor's death run body first, then dependents most recently attached
+first, then the tombstone (decision 10).
+
+What prompted it: a prototype of the runtime of
+[03-runtime.md](03-runtime.md), run under Lua 5.1 and LuaJIT, showed that
+a dependent gets its sentinel after its owner does, so Lua's newest-first
+finalization destroys the dependent first. A connection and its buffer
+dropped together gave `buf body (unreachable)`, then `conn body`, whose
+`self.buf` was already a tombstone. The same probes confirmed that the
+object a sentinel guards is fully intact in its finalizer, that weak
+tables keep it until the next collection, and that a file opened after
+the object was anchored is already closed when its destructor runs.
+
+A fix exists and was verified in the same prototype, deferring once
+([06-open-questions.md](06-open-questions.md), "A defined order for
+deaths the collector finds"). It was not adopted now because it costs a
+proxy per deferral, a wrapped `collectgarbage` and a cycle of delay for a
+lone dependent, and because nothing yet shows a program that needs it:
+Treflove destroys its trees explicitly. An undefined order can be defined
+later without breaking any program; the reverse is not true.
+
+Consequences: a destructor run with reason `"unreachable"` or `"exit"`
+relies only on itself and its fields, and checks its dependents with
+`lifetime.alive`; tests assert that each object found by a collection
+died once with the right kind of reason, never their relative order;
+examples never depend on that order. This departs from decision 3 of
+`xd/docs/10-lua-lifetime-decisions.md`, whose proposal A has the root's
+cascade take an unreferenced subtree "with reason `anchor`", from
+decision 10's "my dependents are still here" for collector deaths, and
+from the newest-first program-end order of `xd/docs/02-lifetimes.md`. The
+human carries it back to `xd`.
+→ [02-semantics.md](02-semantics.md), "Reachability is the collector's",
+"Cascading death", "Program end"

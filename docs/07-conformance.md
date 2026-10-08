@@ -21,7 +21,10 @@ An `xd` example is ported into `examples/` of this repository as
    `reachable` to a statement. The port inserts `collectgarbage("collect")`
    at that statement, and the `.expected` file is the one `xd` adopts for
    the rewritten example under its `/spec-change` pass (decision 9: both
-   targets run the same file).
+   targets run the same file). A port never prints from more than one
+   destructor run by the same collection, since their order is undefined;
+   where an `xd` example does, the port destroys those objects explicitly
+   or records a deviation.
 3. **Deviation.** The program depends on behaviour the decisions reverse
    in a way no rewrite preserves (a hook that decodes `remaining`,
    dependents destroyed before their anchor, a dead reference reading

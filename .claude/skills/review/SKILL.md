@@ -62,7 +62,8 @@ The task file, the branch name, the implementer's handoff, and the diff
 - No side table keyed by an anchor. The sentinel reaches its table through
   its own metatable.
 - No test or code claims a reachable death at a point other than after
-  `collectgarbage("collect")`.
+  `collectgarbage("collect")`, or an order among the objects one
+  collection finds; that order is undefined.
 - Nothing works on one interpreter only; `make test` ran under both when
   both are installed.
 

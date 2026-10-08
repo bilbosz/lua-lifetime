@@ -59,9 +59,10 @@ returns.
 
 ## Test cases
 
-1. `examples/exit_order.lt`: two registered globals with destructors and
+1. `examples/exit_order.lt`: one registered global with a destructor and
    a main-scope local; expected output ends with the main-scope local
-   (`anchor`), then the globals newest first (`exit`).
+   (`anchor`), then the global (`exit`). Only one destructor prints during
+   the sweep, since the order among several is undefined.
 2. `examples/uncaught_error.lt`: a main-scope dependent, then `error("x")`;
    the dependent's line prints, then the `.expected` ends with `!error:
    examples/uncaught_error.lt:N: x`.

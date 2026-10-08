@@ -65,8 +65,9 @@ repository itself is not modified.
 2. Input before form, form before input, both in one cascade: three
    runs, three asserted logs.
 3. A collected session (dropped from the server's table, `collectgarbage
-   ("collect")` twice): its RPs' `stop()` ran, the weak-key `sessions`
-   entry is gone.
+   ("collect")` twice): its RPs' `stop()` ran, compared as a set since
+   their order with the session's own destructor is undefined; the
+   weak-key `sessions` entry is gone.
 
 The sentence most likely to be misread: lesson 1 of
 `xd/docs/09-lessons-from-treflove.md` ("held objects pin what they

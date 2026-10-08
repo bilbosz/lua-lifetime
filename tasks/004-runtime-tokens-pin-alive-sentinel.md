@@ -33,8 +33,9 @@ behave as specified.
   the runtime can notify; `x @ lifetime.reachable` registers.
 - `docs/02-semantics.md`, "Reachability is the collector's": after
   `collectgarbage("collect")` every object unreachable before the call
-  has had its cascade run with reason `"unreachable"`; newest first
-  within one collection; weak entries clear one collection later.
+  has had its cascade run; the order among objects one collection finds
+  is undefined; a destructor run by the collector can rely only on itself
+  and its fields; weak entries clear one collection later.
 - `docs/03-runtime.md`, "The sentinel": the proxy's own metatable holds
   the owner; which objects carry a sentinel; the finalizer skips an object
   already dead.
@@ -55,8 +56,11 @@ behave as specified.
 - `collectgarbage("collect")` after dropping the last reference to such an
   object runs its cascade with reason `"unreachable"`, dependents
   included, before the call returns.
-- Two unreferenced objects in one collection are finalized newest first;
-  the older one's walk skips the younger one if it was its dependent.
+- Every object one collection finds unreachable has its cascade run
+  exactly once before `collectgarbage("collect")` returns; a dependent
+  already dead when its owner's walk reaches it is skipped. Their relative
+  order is undefined (`docs/02-semantics.md`, "Reachability is the
+  collector's") and no test asserts it.
 - `x @ lifetime.reachable` on a plain table with `__destroy` registers it;
   without it, the same table is collected silently.
 - `lifetime.token([name])` creates a token on the default lifetime:
@@ -76,10 +80,12 @@ behave as specified.
 2. Pinned: the same with `lifetime.pin(a)`; after the collect the log is
    empty; `destroy(a)` logs `a, x (anchor)`.
 3. Subtree as a cycle: `parent` registered with `@ lifetime.reachable`,
-   `child @ parent` with `child.parent = parent`; drop `parent`;
-   collect: log `parent (unreachable), child (anchor)` in that order.
-4. Newest first: `a` then `b` both registered, unrelated, both dropped;
-   one collect logs `b, a`.
+   `child @ parent` with `child.parent = parent`; drop `parent`; one
+   collect: both destructors ran exactly once, compared as a set; the
+   parent's reason is `"unreachable"`, the child's `"unreachable"` or
+   `"anchor"`, depending on the undefined order.
+4. Two unrelated objects, both dropped: one collect runs both
+   destructors, compared as a set.
 5. Weak table: `w = setmetatable({}, {__mode = "k"})`, `w[x] = true`;
    drop `x`; after one collect `next(w)` may still be `x`; after two it
    is `nil`. The test asserts the second, and documents the first.

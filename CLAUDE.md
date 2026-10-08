@@ -69,13 +69,14 @@ Skills, invoked with `/name`:
    every interpreter it finds. Never edit an `.expected` file to make a
    test pass unless the spec says the old expectation was wrong, and then
    say so in the commit.
-3. **Ownership order is the product; reachability timing is not.**
-   Cascade order, scope-exit order, the moment a `destroy` or a block exit
-   runs a destructor, and the tombstone afterwards are all specified. A
-   test that checks *that* something was destroyed but not *in what order*
-   and *at which statement* is not finished. A death by `reachable`
-   happens when the collector finds it; tests pin it with
-   `collectgarbage("collect")` and never with timing.
+3. **Ownership order is the product; reachability timing and order are
+   not.** Cascade order, scope-exit order, the moment a `destroy` or a
+   block exit runs a destructor, and the tombstone afterwards are all
+   specified. A test that checks *that* something was destroyed but not
+   *in what order* and *at which statement* is not finished. A death by
+   `reachable` happens when the collector finds it; tests pin it with
+   `collectgarbage("collect")` and never with timing, and never assert the
+   order among objects one collection finds, which is undefined.
 4. **No semantic changes in implementation tasks.** If implementing a task
    makes you want to change the semantics, stop, write down why in the task
    file under "Spec issues found", and finish the parts that do not depend
@@ -166,6 +167,11 @@ Skills, invoked with `/name`:
 - A reachable death is the collector's: nothing is destroyed at the end of
   the statement that dropped the last reference. Tests call
   `collectgarbage("collect")`, twice when a weak table must have cleared.
+- Objects one collection finds die in an undefined order: a destructor
+  run by the collector may find its dependents already dead. It checks
+  with `lifetime.alive`, or the program destroys the owner explicitly.
+- A destroyed object stays in weak tables, as a tombstone, until the next
+  collection; dispatch over a weak listener table skips tombstones.
 - `local tmp = {} @ scope` followed by `tmp = nil` is collected whenever
   the collector runs, not at the block exit.
 - `destroy` on a dead or dying object is a no-op, so a destructor may
