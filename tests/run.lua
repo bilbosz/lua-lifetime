@@ -15,6 +15,7 @@ local test = require("tests.lib.test")
 local TEST_MODULES = {
     "tests.test-harness",
     "tests.test-runtime",
+    "tests.test-scopes",
     "tests.test-lexer",
     "tests.test-parser",
     "tests.test-emit",
