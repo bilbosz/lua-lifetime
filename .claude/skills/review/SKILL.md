@@ -78,7 +78,9 @@ The task file, the branch name, the implementer's handoff, and the diff
 - The task's *Performance* section is honoured: the named benchmarks exist
   and ran.
 - No benchmark the task touches is slower than `master` beyond the
-  threshold in `bench/README.md`.
+  threshold in `bench/README.md`: a `SLOWER` mark counts only when two
+  consecutive `make bench BASE=master` invocations show it ("The
+  threshold" there); one of two is noise.
 - Code that does not use the extension pays nothing: the plain-Lua
   benchmarks did not move, a block without `@ lifetime.scope` or a bare hook is
   emitted verbatim, an object never anchored has no state.

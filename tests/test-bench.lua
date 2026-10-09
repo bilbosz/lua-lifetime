@@ -1,7 +1,8 @@
 -- tests/test-bench.lua: the benchmark harness, bench/lib/bench.lua
--- (task 010). Timings are fake: a clock is injected that advances by a
--- fixed cost per call of the benchmarked function, so every number below
--- is exact up to floating-point rounding.
+-- (task 010), and the alternating comparison of `make bench BASE=` with
+-- its exit status (task 011). Timings are fake: a clock is injected that
+-- advances by a fixed cost per call of the benchmarked function, so every
+-- number below is exact up to floating-point rounding.
 local test = require("tests.lib.test")
 local bench = require("bench.lib.bench")
 
@@ -232,17 +233,203 @@ end)
 
 test.suite("bench compare")
 
-test.case("ratio branch/base per benchmark, marked beyond the threshold", function()
-    local branch = "a\t110.0\t1.000\nb\t111.0\t-\nc\t50.0\t0.500\nnew\t10.0\t-\n"
-    local base = "c\t100.0\t1.000\nb\t100.0\t-\na\t100.0\t1.000\n"
-    test.assert_deep_eq(bench.compare(branch, base), {
-        "a\t110.0\t100.0\t1.100\t", -- exactly 10% slower is within the threshold
-        "b\t111.0\t100.0\t1.110\tSLOWER",
-        "c\t50.0\t100.0\t0.500\t",
-        "new\t10.0\t-\t-\t" -- the base could not run it
+-- bench/README.md, "The threshold": SLOWER only when both pairings of
+-- alternating runs exceed bench.THRESHOLD; the ratio of the medians is
+-- reported beside the two pairings (task 011).
+test.case("two pairings both over the threshold: SLOWER, ratio of the medians", function()
+    test.assert_deep_eq(bench.compare({
+        {"a\t112.0\t1.000\n", "a\t100.0\t1.000\n"},
+        {"a\t113.0\t1.000\n", "a\t100.0\t1.000\n"}
+    }), {"a\t112.5\t100.0\t1.120\t1.130\t1.125\tSLOWER"})
+end)
+
+test.case("one pairing over the threshold: not marked, both shown", function()
+    test.assert_deep_eq(bench.compare({
+        {"a\t112.0\t-\n", "a\t100.0\t-\n"},
+        {"a\t104.0\t-\n", "a\t100.0\t-\n"}
+    }), {"a\t108.0\t100.0\t1.120\t1.040\t1.080\t"})
+    -- The other order; a ratio of the medians over the threshold does not
+    -- mark on its own either.
+    test.assert_deep_eq(bench.compare({
+        {"a\t100.0\t-\n", "a\t100.0\t-\n"},
+        {"a\t130.0\t-\n", "a\t100.0\t-\n"}
+    }), {"a\t115.0\t100.0\t1.000\t1.300\t1.150\t"})
+end)
+
+test.case("neither pairing over the threshold; exactly 10% slower is within it", function()
+    test.assert_deep_eq(bench.compare({
+        {"a\t110.0\t1.000\nc\t50.0\t0.500\n", "c\t100.0\t1.000\na\t100.0\t1.000\n"},
+        {"c\t60.0\t0.500\na\t110.0\t1.000\n", "a\t100.0\t1.000\nc\t100.0\t1.000\n"}
+    }), {
+        "a\t110.0\t100.0\t1.100\t1.100\t1.100\t",
+        "c\t55.0\t100.0\t0.500\t0.600\t0.550\t"
     })
 end)
 
-test.case("an explicit threshold", function()
-    test.assert_deep_eq(bench.compare("a\t105.0\t-\n", "a\t100.0\t-\n", 1.02), {"a\t105.0\t100.0\t1.050\tSLOWER"})
+test.case("a benchmark the base cannot run: '-' for that pairing, never marked", function()
+    test.assert_deep_eq(bench.compare({
+        {"a\t200.0\t-\nnew\t10.0\t-\n", "a\t100.0\t-\n"},
+        {"a\t200.0\t-\nnew\t12.0\t-\n", "new\t5.0\t-\n"}
+    }), {
+        -- a: the base ran it in pairing 1 only; 2.0 there, still no mark.
+        "a\t200.0\t100.0\t2.000\t-\t-\t",
+        -- new: the base ran it in pairing 2 only.
+        "new\t11.0\t5.0\t-\t2.400\t-\t"
+    })
+    test.assert_deep_eq(bench.compare({
+        {"new\t10.0\t-\n", ""},
+        {"new\t12.0\t-\n", ""}
+    }), {"new\t11.0\t-\t-\t-\t-\t"})
+end)
+
+test.case("benchmarks in the branch's order; one only in pairing 2 comes last", function()
+    test.assert_deep_eq(bench.compare({
+        {"b\t100.0\t-\na\t100.0\t-\n", "a\t100.0\t-\nb\t100.0\t-\nz\t1.0\t-\n"},
+        {"z\t1.0\t-\na\t100.0\t-\nb\t100.0\t-\n", "a\t100.0\t-\nb\t100.0\t-\nz\t1.0\t-\n"}
+    }), {
+        "b\t100.0\t100.0\t1.000\t1.000\t1.000\t",
+        "a\t100.0\t100.0\t1.000\t1.000\t1.000\t",
+        "z\t1.0\t1.0\t-\t1.000\t-\t"
+    })
+end)
+
+test.case("an explicit threshold, and one pairing alone", function()
+    test.assert_deep_eq(bench.compare({{"a\t105.0\t-\n", "a\t100.0\t-\n"}}, 1.02), {"a\t105.0\t100.0\t1.050\t1.050\tSLOWER"})
+    test.assert_error(function()
+        bench.compare({})
+    end, "no pairings")
+end)
+
+test.suite("bench/compare.lua")
+
+-- Run a shell command; returns stdout, stderr and the exit status, through
+-- files as run_bench does.
+local function run_shell(command)
+    local out, err, status = os.tmpname(), os.tmpname(), os.tmpname()
+    os.execute(string.format("%s >%s 2>%s; echo $? >%s", command, shell_quote(out), shell_quote(err), shell_quote(status)))
+    local result = {stdout = read_file(out), stderr = read_file(err), status = tonumber(read_file(status):match("%d+"))}
+    os.remove(out)
+    os.remove(err)
+    os.remove(status)
+    return result
+end
+
+local INTERPRETER = arg and arg[-1] or "lua5.1"
+
+test.case("pairs of files, one line per benchmark; usage and read errors fail", function()
+    write_file(FIXTURE .. "/b1.txt", "a\t112.0\t-\n")
+    write_file(FIXTURE .. "/a1.txt", "a\t100.0\t-\n")
+    write_file(FIXTURE .. "/b2.txt", "a\t113.0\t-\n")
+    write_file(FIXTURE .. "/a2.txt", "a\t100.0\t-\n")
+    local compare = shell_quote(INTERPRETER) .. " bench/compare.lua "
+    local r = run_shell(compare .. table.concat({FIXTURE .. "/b1.txt", FIXTURE .. "/a1.txt", FIXTURE .. "/b2.txt", FIXTURE .. "/a2.txt"}, " "))
+    test.assert_eq(r.stderr, "")
+    test.assert_eq(r.status, 0)
+    test.assert_eq(r.stdout, "a\t112.5\t100.0\t1.120\t1.130\t1.125\tSLOWER\n")
+    r = run_shell(compare .. FIXTURE .. "/b1.txt " .. FIXTURE .. "/a1.txt " .. FIXTURE .. "/b2.txt")
+    test.assert_eq(r.status, 2, "an odd number of files")
+    test.assert_true(r.stderr:find("usage", 1, true), "stderr: " .. r.stderr)
+    r = run_shell(compare .. FIXTURE .. "/b1.txt " .. FIXTURE .. "/missing.txt")
+    test.assert_eq(r.status, 1, "a file that cannot be read")
+    test.assert_true(r.stderr:find("missing.txt", 1, true), "stderr: " .. r.stderr)
+end)
+
+-- The cases below run `make`; without it on PATH they are not registered
+-- (task 011, review round 1, F1), so the suite still runs where only an
+-- interpreter is installed.
+local make_case
+if run_shell("command -v make").status == 0 then
+    test.suite("make bench")
+    make_case = test.case
+else
+    print("tests/test-bench.lua: make not on PATH; the make bench cases are skipped")
+    make_case = function() end
+end
+
+-- `make bench` itself, run as a subprocess under the interpreter running
+-- this suite, with a tiny budget, BENCH_FILES set to fixtures (so a run
+-- takes well under a second) and BENCH_OUT under FIXTURE (so the
+-- build/bench-*.txt of a real run are left alone). BASE_DIR points at an
+-- existing tree, so nothing is checked out.
+write_file(FIXTURE .. "/bench-plainprobe.lua", "require(\"bench.lib.bench\").add(\"probe/plain\", function() end)\n")
+write_file(FIXTURE .. "/bench-broken.lua", "error(\"broken fixture\", 0)\n")
+
+local OUT = FIXTURE .. "/out"
+
+local function make_bench(variables)
+    os.execute("rm -rf " .. shell_quote(OUT))
+    -- MAKEFLAGS and MAKELEVEL emptied: under `make test` the outer make's
+    -- flags and command-line variables must not reach this one.
+    return run_shell(string.format("MAKEFLAGS= MAKELEVEL= BENCH_TIME=0.001 make -s --no-print-directory bench INTERPRETERS=%s BENCH_OUT=%s %s", shell_quote(INTERPRETER), OUT, variables))
+end
+
+local function out_file(name)
+    return read_file(OUT .. "/" .. name)
+end
+
+local function out_exists(name)
+    local f = io.open(OUT .. "/" .. name, "rb")
+    if f then
+        f:close()
+        return true
+    end
+    return false
+end
+
+make_case("a base run with no benchmark line fails make bench BASE=, naming the interpreter", function()
+    local r = make_bench("BASE=empty BASE_DIR=" .. FIXTURE .. "/empty BENCH_FILES=" .. FIXTURE .. "/bench-probe.lua")
+    test.assert_eq(r.status, 2, "make's status for a failed recipe")
+    test.assert_true(r.stderr:find("make: bench under " .. INTERPRETER .. ": the base run of pairing 1 (lifetime/ of empty in " .. FIXTURE .. "/empty) printed no benchmark line", 1, true), "stderr: " .. r.stderr)
+    -- The base run's own error stays on stderr.
+    test.assert_true(r.stderr:find("module 'lifetime.cli' not found under " .. FIXTURE .. "/empty/", 1, true), "stderr: " .. r.stderr)
+    test.assert_eq(out_file("bench-" .. INTERPRETER .. "-1.txt"):match("^probe/branch\t"), "probe/branch\t")
+    test.assert_eq(out_file("bench-base-" .. INTERPRETER .. "-1.txt"), "")
+    test.assert_false(out_exists("bench-" .. INTERPRETER .. "-2.txt"), "no second pairing after a base with no line")
+    test.assert_false(out_exists("bench-compare-" .. INTERPRETER .. ".txt"), "no comparison after a base with no line")
+end)
+
+make_case("branch, base, branch, base; a base that fails some files passes with '-'", function()
+    local r = make_bench("BASE=empty BASE_DIR=" .. FIXTURE .. "/empty BENCH_FILES='" .. FIXTURE .. "/bench-probe.lua " .. FIXTURE .. "/bench-plainprobe.lua'")
+    test.assert_eq(r.status, 0, "stderr: " .. r.stderr)
+    -- Four runs, alternating, each announced on stdout.
+    local order = {}
+    for n, side in r.stdout:gmatch("== bench under [^\n]-, pairing (%d) of 2, (%a+)") do
+        order[#order + 1] = n .. " " .. side
+    end
+    test.assert_deep_eq(order, {"1 branch", "1 on", "2 branch", "2 on"})
+    -- The base's failure stays on stderr, once per base run.
+    local _, failures = r.stderr:gsub("module 'lifetime%.cli' not found under " .. FIXTURE:gsub("%p", "%%%0") .. "/empty/", "")
+    test.assert_eq(failures, 2, "stderr: " .. r.stderr)
+    for n = 1, 2 do
+        local branch = out_file("bench-" .. INTERPRETER .. "-" .. n .. ".txt")
+        test.assert_true(branch:match("^probe/branch\t[^\n]+\nprobe/plain\t[^\n]+\n$") ~= nil, "branch run " .. n .. ": " .. branch)
+        local base = out_file("bench-base-" .. INTERPRETER .. "-" .. n .. ".txt")
+        test.assert_true(base:match("^probe/plain\t[^\n]+\n$") ~= nil, "base run " .. n .. ": " .. base)
+    end
+    local compare = out_file("bench-compare-" .. INTERPRETER .. ".txt")
+    test.assert_true(compare:match("^probe/branch\t[%d.]+\t%-\t%-\t%-\t%-\t\nprobe/plain\t[%d.]+\t[%d.]+\t[%d.]+\t[%d.]+\t[%d.]+\t%a*\n$") ~= nil, "compare: " .. compare)
+    test.assert_true(r.stdout:find(compare, 1, true) ~= nil, "the comparison is printed too")
+    test.assert_false(out_exists("bench-" .. INTERPRETER .. ".txt"), "BASE= writes the numbered files only")
+end)
+
+make_case("a branch run that fails fails make bench, with BASE= or without", function()
+    local files = "BENCH_FILES='" .. FIXTURE .. "/bench-broken.lua " .. FIXTURE .. "/bench-plainprobe.lua'"
+    local r = make_bench(files)
+    test.assert_eq(r.status, 2, "without BASE: " .. r.stderr)
+    test.assert_true(r.stderr:find("bench: " .. FIXTURE .. "/bench-broken.lua: broken fixture", 1, true), "stderr: " .. r.stderr)
+    test.assert_eq(out_file("bench-" .. INTERPRETER .. ".txt"):match("^probe/plain\t"), "probe/plain\t", "the other files still ran")
+    r = make_bench("BASE=fake BASE_DIR=" .. FIXTURE .. "/fake " .. files)
+    test.assert_eq(r.status, 2, "with BASE: " .. r.stderr)
+    test.assert_true(out_exists("bench-compare-" .. INTERPRETER .. ".txt"), "the comparison still ran")
+end)
+
+make_case("make bench without BASE: one run per interpreter", function()
+    local r = make_bench("BENCH_FILES=" .. FIXTURE .. "/bench-plainprobe.lua")
+    test.assert_eq(r.status, 0, "stderr: " .. r.stderr)
+    test.assert_eq(r.stderr, "")
+    local _, runs = r.stdout:gsub("== bench under ", "")
+    test.assert_eq(runs, 1)
+    test.assert_true(out_file("bench-" .. INTERPRETER .. ".txt"):match("^probe/plain\t[^\n]+\n$") ~= nil)
+    test.assert_false(out_exists("bench-" .. INTERPRETER .. "-1.txt"))
+    test.assert_false(out_exists("bench-base-" .. INTERPRETER .. "-1.txt"))
 end)

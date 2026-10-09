@@ -34,16 +34,21 @@ modulo whitespace (task 001, the pass-through).
 Lua 5.1 (`lparser.c`, the manual's §8) plus:
 
 ```ebnf
-exp        ::= … | exp '@' anchor | exp '!@' anchor
-stat       ::= … | prefixexp '@' anchor
-             | prefixexp '!@' anchor | functiondef '!@' anchor
+exp        ::= … | exp anchorop
+stat       ::= … | prefixexp anchorop { anchorop }
+             | functiondef '!@' anchor { anchorop }
+anchorop   ::= '@' anchor | '!@' anchor
 anchor     ::= scopeanchor | prefixexp | '(' anchorlist ')'
 anchorlist ::= anchoritem { ',' anchoritem }
 anchoritem ::= scopeanchor | exp
 scopeanchor ::= 'lifetime' '.' 'scope'
 ```
 
-- `@` has the lowest precedence of any operator and is postfix.
+- `@` has the lowest precedence of any operator and is postfix. A
+  statement chains `@` and `!@` exactly as an expression does, left to
+  right: `f !@ a @ b` as a statement creates the hook on `a` and moves it
+  to `b` ([05-decisions.md](05-decisions.md), "A statement chains `@`
+  and `!@` like an expression").
 - `!@` has the precedence and the right operand of `@`. The lexer
   produces `!@` as one token when `!` is immediately followed by `@`; a
   lone `!` is a syntax error, and `!=` is reported as `unexpected symbol
@@ -52,7 +57,7 @@ scopeanchor ::= 'lifetime' '.' 'scope'
   must then be followed by `!@`; `function name` keeps its Lua meaning.
 - `scopeanchor` is the two Names `lifetime` and `scope` joined by `.`,
   with nothing after them that would continue a `prefixexp` (no `.x`, `[`,
-  `(`, `:` or string argument). The parser tries it before `prefixexp`
+  `(`, `:`, string argument or `{` table argument). The parser tries it before `prefixexp`
   where `anchor` and `anchoritem` name it and matches by spelling, whatever
   `lifetime` names at that point; anywhere else `lifetime.scope` is an
   ordinary `prefixexp` and `lifetime.scope.x` or `lifetime.scope()` are
