@@ -14,6 +14,7 @@ local test = require("tests.lib.test")
 -- Add new files here.
 local TEST_MODULES = {
     "tests.test-harness",
+    "tests.test-runtime",
     "tests.test-lexer",
     "tests.test-parser",
     "tests.test-emit",
