@@ -1,11 +1,11 @@
 ---
 id: 011
 title: Benchmark harness: bake the two-run rule into `make bench BASE=`, base exit status, README noise range
-status: review
+status: done
 depends: [010]
 branch: task/011-bench-two-run-rule
 pr: https://github.com/bilbosz/lua-lifetime/pull/12
-commits:
+commits: 9f210a1878d685c4a169d0eb84b6a59192ae9848
 review: APPROVE (round 2)
 ---
 
