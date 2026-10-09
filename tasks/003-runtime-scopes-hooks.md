@@ -4,7 +4,7 @@ title: Runtime: scope records, hooks
 status: review
 depends: [002]
 branch: task/003-runtime-scopes-hooks
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/22
 commits:
 review: APPROVE (round 1)
 ---
