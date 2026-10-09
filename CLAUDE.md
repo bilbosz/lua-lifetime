@@ -25,6 +25,7 @@ documents are derived from `xd/docs/10-lua-lifetime-decisions.md` in the
 | `lifetime/` | The runtime (`init.lua`) and the transpiler (`lexer.lua`, `parser.lua`, `emit.lua`, `cli.lua`). |
 | `bin/lifetime` | The command: `lifetime build FILE -o OUT`, `lifetime run FILE`. |
 | `tests/` | The unit suite (`run.lua`, `lib/test.lua`) and the conformance runner (`conformance.lua`). |
+| `bench/` | The benchmark harness (`lib/bench.lua`, `run.lua`, `compare.lua`), the benchmarks (`bench-*.lua`) and `bench/README.md` with the threshold; `make bench [BASE=master]`. |
 
 ## How work happens here
 

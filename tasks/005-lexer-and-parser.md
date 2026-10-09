@@ -111,6 +111,14 @@ Hot path: the transpiler, not the program. Benchmark: lex and parse time
 of the largest file in the corpus, recorded in `bench/` so later parser
 changes can be compared. Must stay free: nothing at run time.
 
+Known from task 010's review, to measure with `make bench BASE=master`:
+`jit.off(true, true)` in the parser costs about 25% on the small inputs
+(`build/plain.lt`, `build/generated-5000`) under luajit while saving 7x
+on `build/lifetime-largest`, and the lexer is superlinear on
+`build/generated-5000` (about 13x the time for 8x the lines). Fix the
+superlinearity if the lexer is touched anyway; otherwise record the
+numbers in the handoff.
+
 ## Out of scope
 
 - Code generation: task 006.

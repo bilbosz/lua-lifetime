@@ -1,11 +1,11 @@
 ---
 id: 010
 title: Benchmark harness: `make bench`, comparison with plain Lua and with `master`
-status: review
+status: done
 depends: [001]
 branch: task/010-benchmark-harness
 pr: https://github.com/bilbosz/lua-lifetime/pull/9
-commits:
+commits: 49be625a0e8aa10944ef38c32c031af65cd3ebc9
 review: APPROVE (round 1)
 ---
 

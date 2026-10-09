@@ -52,5 +52,6 @@ during implementation and review.
 | 008 | Port the conformance examples from `xd/examples/`; document each deviation in `docs/07-conformance.md` | 004, 007 |
 | 009 | Treflove trial: transpile the sessions-and-listeners slice described in `xd/docs/notes/xd-in-treflove.md` and run it under LuaJIT | 008 |
 | 010 | Benchmark harness: `make bench`, comparison with plain Lua and with `master` | 001 |
+| 011 | Benchmark harness: bake the two-run rule into `make bench BASE=`, base exit status, README noise range | 010 |
 
 Keep this table in sync when adding tasks.
