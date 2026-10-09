@@ -34,10 +34,9 @@ local bench = {}
 
 bench.RUNS = 5
 bench.DEFAULT_TIME = 0.5
--- bench/README.md, "The threshold": a benchmark is a finding when it is
--- more than 10% slower than base in both of two pairings of alternating
--- runs. bench.compare applies the rule: SLOWER only when every pairing's
--- branch/base exceeds THRESHOLD.
+-- bench/README.md, "The threshold": bench.compare marks a benchmark
+-- SLOWER only when every pairing's branch/base exceeds THRESHOLD; a mark
+-- becomes a finding when two consecutive invocations both show it.
 bench.THRESHOLD = 1.10
 bench.SLOWER = "SLOWER"
 

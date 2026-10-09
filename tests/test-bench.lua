@@ -334,7 +334,17 @@ test.case("pairs of files, one line per benchmark; usage and read errors fail", 
     test.assert_true(r.stderr:find("missing.txt", 1, true), "stderr: " .. r.stderr)
 end)
 
-test.suite("make bench")
+-- The cases below run `make`; without it on PATH they are not registered
+-- (task 011, review round 1, F1), so the suite still runs where only an
+-- interpreter is installed.
+local make_case
+if run_shell("command -v make").status == 0 then
+    test.suite("make bench")
+    make_case = test.case
+else
+    print("tests/test-bench.lua: make not on PATH; the make bench cases are skipped")
+    make_case = function() end
+end
 
 -- `make bench` itself, run as a subprocess under the interpreter running
 -- this suite, with a tiny budget, BENCH_FILES set to fixtures (so a run
@@ -366,7 +376,7 @@ local function out_exists(name)
     return false
 end
 
-test.case("a base run with no benchmark line fails make bench BASE=, naming the interpreter", function()
+make_case("a base run with no benchmark line fails make bench BASE=, naming the interpreter", function()
     local r = make_bench("BASE=empty BASE_DIR=" .. FIXTURE .. "/empty BENCH_FILES=" .. FIXTURE .. "/bench-probe.lua")
     test.assert_eq(r.status, 2, "make's status for a failed recipe")
     test.assert_true(r.stderr:find("make: bench under " .. INTERPRETER .. ": the base run of pairing 1 (lifetime/ of empty in " .. FIXTURE .. "/empty) printed no benchmark line", 1, true), "stderr: " .. r.stderr)
@@ -378,7 +388,7 @@ test.case("a base run with no benchmark line fails make bench BASE=, naming the 
     test.assert_false(out_exists("bench-compare-" .. INTERPRETER .. ".txt"), "no comparison after a base with no line")
 end)
 
-test.case("branch, base, branch, base; a base that fails some files passes with '-'", function()
+make_case("branch, base, branch, base; a base that fails some files passes with '-'", function()
     local r = make_bench("BASE=empty BASE_DIR=" .. FIXTURE .. "/empty BENCH_FILES='" .. FIXTURE .. "/bench-probe.lua " .. FIXTURE .. "/bench-plainprobe.lua'")
     test.assert_eq(r.status, 0, "stderr: " .. r.stderr)
     -- Four runs, alternating, each announced on stdout.
@@ -402,7 +412,7 @@ test.case("branch, base, branch, base; a base that fails some files passes with 
     test.assert_false(out_exists("bench-" .. INTERPRETER .. ".txt"), "BASE= writes the numbered files only")
 end)
 
-test.case("a branch run that fails fails make bench, with BASE= or without", function()
+make_case("a branch run that fails fails make bench, with BASE= or without", function()
     local files = "BENCH_FILES='" .. FIXTURE .. "/bench-broken.lua " .. FIXTURE .. "/bench-plainprobe.lua'"
     local r = make_bench(files)
     test.assert_eq(r.status, 2, "without BASE: " .. r.stderr)
@@ -413,7 +423,7 @@ test.case("a branch run that fails fails make bench, with BASE= or without", fun
     test.assert_true(out_exists("bench-compare-" .. INTERPRETER .. ".txt"), "the comparison still ran")
 end)
 
-test.case("make bench without BASE: one run per interpreter", function()
+make_case("make bench without BASE: one run per interpreter", function()
     local r = make_bench("BENCH_FILES=" .. FIXTURE .. "/bench-plainprobe.lua")
     test.assert_eq(r.status, 0, "stderr: " .. r.stderr)
     test.assert_eq(r.stderr, "")

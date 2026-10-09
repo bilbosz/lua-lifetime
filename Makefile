@@ -81,7 +81,7 @@ bench:
 	@status=0; \
 	bench_to() { out=$$1; shift; \
 		{ "$$@"; echo $$? >"$$out.status"; } | tee "$$out"; \
-		code=$$(cat "$$out.status"); rm -f "$$out.status"; return $$code; }; \
+		code=$$(cat "$$out.status"); rm -f "$$out.status"; return $${code:-1}; }; \
 	for i in $(INTERPRETERS); do \
 		if [ -z "$(BASE)" ]; then \
 			echo "== bench under $$i: name, ns/op, ratio to plain Lua ($(BENCH_OUT)/bench-$$i.txt)"; \

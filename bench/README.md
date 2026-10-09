@@ -101,12 +101,18 @@ and the base run's errors stay on standard error.
 
 ## The threshold
 
-A benchmark is a **finding** when it is more than 10% slower than base
-**in both pairings** of one `make bench BASE=master` on the same machine:
-`pairing 1` and `pairing 2` both above 1.10. `bench/compare.lua` applies
-this two-run rule and marks such a benchmark `SLOWER`; a benchmark with
-one pairing above 1.10 and the other not is noise and is not marked, even
-when `branch/base` is above 1.10. The reviewer reads the mark
+`make bench BASE=master` marks a benchmark `SLOWER` when it is more than
+10% slower than base **in both pairings** of the invocation: `pairing 1`
+and `pairing 2` both above 1.10. `bench/compare.lua` applies this two-run
+rule; a benchmark with one pairing above 1.10 and the other not is noise
+and is not marked, even when `branch/base` is above 1.10.
+
+A mark is a finding to confirm, not yet a finding: a benchmark is a
+**finding** when it is marked `SLOWER` in **two consecutive invocations**
+of `make bench BASE=master` on the same machine. A mark in one invocation
+of two is noise: both pairings above 1.10 on identical code is rare, but
+at about a percent per benchmark per invocation it is not rare enough to
+count alone. The reviewer applies this rule
 (`.claude/skills/review/SKILL.md`, "Performance"); the threshold is
 `bench.THRESHOLD` in `bench/lib/bench.lua`.
 
@@ -122,15 +128,16 @@ machine where tasks 010 and 011 were written, `branch/base` for
 **identical** code (a branch whose `lifetime/` matched `master` up to
 comments) ranged from **0.90 to 1.10** across separate `bench/run.lua`
 processes (task 010's review), while the in-process interleaved `ratio`
-of `plain/transpiled` stayed **within 3%** of 1.0. Task 011's two
-invocations of `make bench BASE=master` on identical `lifetime/` (sixteen
-processes) agree, with one outlier each way: one pairing of
-`build/generated-5000` under luajit read 1.143 while the other pairing of
-the same invocation read 0.988 (not marked), and one `plain/transpiled`
-`ratio` read 0.957 among fifteen between 0.984 and 1.018. That is why
-`make bench BASE=` alternates processes and asks both pairings to agree
-rather than timing more runs in one process: a single pairing beyond
-1.10 says nothing, two do.
+of `plain/transpiled` stayed **within 3%** of 1.0, **with occasional
+outliers to 0.94**. Task 011's invocations of `make bench BASE=master` on
+identical `lifetime/` (two by the implementer and two by the reviewer,
+eight processes each) agree: one pairing of `build/generated-5000` under luajit
+read 1.143 while the other pairing of the same invocation read 0.988 (not
+marked), the other pairings spanned 0.903 to 1.089, and the
+`plain/transpiled` `ratio` spanned 0.941 to 1.020. That is why `make
+bench BASE=` alternates processes and asks both pairings to agree rather
+than timing more runs in one process: a single pairing beyond 1.10 says
+nothing, two make a mark, and a mark twice in a row makes a finding.
 
 ## The benchmarks
 
