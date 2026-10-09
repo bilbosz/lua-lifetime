@@ -4,7 +4,7 @@ title: Skeleton, `make test`, conformance runner, pass-through transpiler for pl
 status: review
 depends: []
 branch: task/001-skeleton-and-conformance-runner
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/6
 commits:
 review: APPROVE (round 2)
 ---
