@@ -13,7 +13,9 @@ source (.lt)  →  lexer  →  parser (AST)  →  emit  →  Lua 5.1 source
 
 - `lifetime/lexer.lua`: Lua 5.1 tokens plus `@` and `!@`.
 - `lifetime/parser.lua`: a recursive-descent parser for the grammar
-  below, producing a plain table AST that records the line of every node.
+  below, producing a plain table AST that records the line of every node
+  and, on nodes that own tokens, the lines of those tokens (`lines`), so
+  that the emitter can put every token back on its source line.
 - `lifetime/emit.lua`: code generation from the AST.
 - `lifetime/cli.lua`: the pipeline as one function, `build(source,
   chunkname)`, and the command (`lifetime build FILE -o OUT`, `lifetime run
