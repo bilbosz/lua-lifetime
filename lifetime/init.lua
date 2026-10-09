@@ -13,7 +13,8 @@
 -- replacements for `pcall`, `xpcall`, `coroutine.resume` and
 -- `coroutine.wrap` that unwind it on the error path, the `lifetime.scope`
 -- marker, hooks (`hook`) and the anchor's `strong` table. Task 004:
--- tokens, `pin`, `alive` and the sentinel.
+-- tokens (`token`), `pin`, `alive`, the `newproxy` sentinel that runs a
+-- cascade when the collector finds an object, and the exit flag.
 --
 -- Rules this file keeps (CLAUDE.md, "Technical decisions"; rule 6):
 --
@@ -31,7 +32,11 @@
 --   dependent's record (its anchors), lifetime values (their anchors),
 --   an anchor's `strong` table (its hooks and pinned dependents) and the
 --   scope stacks (the active scope records), all of which the spec makes
---   strong.
+--   strong. A sentinel's metatable holds its owner, and the owner holds
+--   the sentinel: an ordinary cycle the collector takes as a whole. The
+--   runtime itself holds a sentinel only while it is disarmed (`spare`)
+--   or for the moment between the collector's call and the cascade
+--   (`queue`).
 
 local lifetime = {}
 
@@ -39,6 +44,7 @@ local type, next, rawget, rawset, rawequal, select, tostring, pcall, error = typ
 local getmetatable, setmetatable = getmetatable, setmetatable
 local debug_getmetatable, debug_setmetatable, debug_getinfo, debug_traceback = debug.getmetatable, debug.setmetatable, debug.getinfo, debug.traceback
 local concat = table.concat
+local newproxy = newproxy
 
 -- docs/03-runtime.md, "The state of an object": "The field's key is one
 -- table the runtime creates when it is loaded and never hands out".
@@ -96,6 +102,90 @@ local stack = main_stack
 local unwind
 
 ------------------------------------------------------------------------
+-- Sentinels
+------------------------------------------------------------------------
+
+-- docs/03-runtime.md, "The sentinel": "`newproxy(true)` returns a
+-- zero-size userdata with its own fresh metatable ... The runtime stores
+-- the owning table in that metatable (`getmetatable(proxy).owner = obj`)
+-- and sets `__gc` to the finalizer; the table holds the proxy in its
+-- state record." The owner's record holds it in `reachable` (an object
+-- with the `reachable` term and something to run at collection: the term
+-- is backed by the sentinel, so the field is `false` for no term, `true`
+-- for the term alone, or the proxy), and a scope record in `sentinel`.
+-- The cycle proxy -> metatable -> owner -> record -> proxy is an ordinary
+-- one: when the owner becomes unreachable the collector resurrects all of
+-- it for the finalizer.
+--
+-- Finalizers run in reverse creation order of the proxies (both hosts;
+-- docs/02-semantics.md, "Host"), which is "newest first" of
+-- "Reachability is the collector's" when the proxies are in the order of
+-- the `@` that made each object need one. A proxy is allocated lazily, on
+-- the first `@` that makes its owner need one, and is kept for the
+-- owner's whole life ("never again for the same object").
+--
+-- When an owner dies by a cascade its proxy is disarmed (`owner = nil`),
+-- so the finalizer finds nothing to do. A disarmed proxy is kept for the
+-- next owner (`spare`) only when no proxy has been handed out since it
+-- was (`newest[1]` is still it), so that handing it out again keeps the
+-- proxies in the order of the `@`s, exactly as a fresh one would; a loop
+-- body that owns one object then reuses one proxy and allocates none.
+-- `newest` is weak-valued: it keeps no proxy alive, and a proxy the
+-- collector has scheduled for finalization is cleared from it (a
+-- finalized userdata is removed from weak values on both hosts), so such
+-- a proxy is never reused. Every other disarmed proxy also loses its
+-- `__gc`, so the collector frees it without a finalizer call.
+local newest = setmetatable({}, WEAK_VALUES)
+local spare = false
+
+-- The finalizer, defined with the cascade below.
+local finalize
+
+-- A sentinel for `owner` (docs/03-runtime.md, "The sentinel").
+local function new_sentinel(owner)
+    local p = spare
+    if p then
+        spare = false
+        getmetatable(p).owner = owner
+        return p
+    end
+    p = newproxy(true)
+    local mt = getmetatable(p)
+    mt.__gc = finalize
+    mt.owner = owner
+    newest[1] = p
+    return p
+end
+
+-- Disarm the sentinel of an owner that died by a cascade.
+local function drop_sentinel(p)
+    local mt = getmetatable(p)
+    mt.owner = nil
+    if newest[1] == p then
+        spare = p
+    else
+        mt.__gc = nil
+    end
+end
+
+-- docs/02-semantics.md, "Reachability is the collector's": "A destructor
+-- run by the collector runs at an arbitrary allocation point, in the
+-- middle of whatever the program was doing." That includes the runtime's
+-- own allocations: `attach` validates its anchors, then allocates (a
+-- state record, a dependents list, a proxy) and links. A cascade run in
+-- between could kill an anchor already validated and leave the object
+-- linked to a tombstone. `busy` counts the runtime operations that
+-- validate and then mutate across an allocation; while it is not 0 the
+-- finalizer queues its proxy (holding it, and so its owner, for that
+-- moment), and the operation drains the queue when it ends, so the
+-- cascade runs as if the collector had found the object just after it.
+local busy = 0
+local queue, queue_head, queue_tail = {}, 1, 0
+
+-- Defined with the finalizer below.
+local drain
+
+------------------------------------------------------------------------
 -- State records
 ------------------------------------------------------------------------
 
@@ -103,7 +193,9 @@ local unwind
 -- fixed, so LuaJIT keeps one table shape; `false` stands for the
 -- design's `nil`. The formula is `n` anchors in the array part as pairs
 -- `[2i - 1] = anchor, [2i] = the sequence number under which this object
--- sits in that anchor's `deps``, plus `reachable`, the implicit term.
+-- sits in that anchor's `deps``, plus `reachable`, the implicit term:
+-- `false` without it, `true` with it, or the object's sentinel when the
+-- object has it and something to run at collection ("Sentinels" above).
 -- `deps` is this object's side as an anchor, created on the first link
 -- (`link`): the weak-valued table of dependents by sequence number, which
 -- also carries the counters `seq`, `lo` and `limit` of the design, so
@@ -209,16 +301,31 @@ local function hook_name(h, st)
     return "hook: " .. raw_tostring(h):sub(8)
 end
 
+-- docs/02-semantics.md, "Tokens: `lifetime.token`": "`tostring(tok)` is
+-- `token NAME`, or `token: 0x…` without a name, and `lifetime.format` and
+-- the tombstone's message use the same text." A token's record has the
+-- field `token` and keeps the name it was created with in `name`.
+local function token_name(t, st)
+    local name = st.name
+    if name then
+        return "token " .. name
+    end
+    return "token: " .. raw_tostring(t):sub(8)
+end
+
 -- `<name>` of a tombstone: `tostring(obj)` before death
 -- (docs/02-semantics.md, "Tombstones"). An object whose metatable had a
 -- `__tostring` had its name captured when it started dying (`decide`);
 -- for any other table `tostring` gives `table: 0x…`, which depends only
 -- on identity, so it is computed here, on the error path, instead of
 -- allocating a string per tombstone. A hook's record has the field `fn`
--- (`false` once dead) and renders through `hook_name`.
+-- (`false` once dead) and renders through `hook_name`; a token's has
+-- `token` and renders through `token_name`.
 local function name_of(obj, st)
     if st.fn ~= nil then
         return hook_name(obj, st)
+    elseif st.token then
+        return token_name(obj, st)
     end
     local name = st.name
     if name then
@@ -271,6 +378,19 @@ HOOK_MT.__call = function()
 end
 HOOK_MT.__tostring = function(h)
     return hook_name(h, rawget(h, STATE))
+end
+
+-- docs/02-semantics.md, "Tokens: `lifetime.token`": "It has no fields:
+-- indexing or assigning a field raises `attempt to index a token value`.
+-- `getmetatable(tok)` is the string `"token"`." The token table holds
+-- nothing but its state record, so every user index reaches these.
+local TOKEN_MT = {__metatable = "token"}
+TOKEN_MT.__index = function()
+    error("attempt to index a token value", 2)
+end
+TOKEN_MT.__newindex = TOKEN_MT.__index
+TOKEN_MT.__tostring = function(t)
+    return token_name(t, rawget(t, STATE))
 end
 
 -- docs/03-runtime.md, "The state of an object": scope records are
@@ -411,6 +531,16 @@ end
 -- formula without the `reachable` term) puts it in `strong`: "Hooks and
 -- pinned dependents go into `strong` instead of `dependents` under the
 -- same sequence counter".
+--
+-- An anchor's first link gives it dependents, so an anchor with the
+-- `reachable` term needs a sentinel from now on (docs/03-runtime.md, "The
+-- sentinel": "a table whose formula has the `reachable` term and that has
+-- a `__destroy`, dependents or hooks"; "a token with the `reachable`
+-- term", under the same rule). A scope record needs one only when it is
+-- on a coroutine's stack: the main thread's stack is the runtime's own
+-- root, so a record on it is never unreachable while active ("a scope
+-- record, so that the records of a collected suspended coroutine are
+-- destroyed"). Called inside a `busy` operation.
 local function link(anchor, ast, obj, pinned)
     local deps = ast.deps
     if not deps then
@@ -421,6 +551,12 @@ local function link(anchor, ast, obj, pinned)
             deps = setmetatable({seq = 1, lo = 1, limit = MIN_LIMIT}, WEAK_VALUES)
         end
         ast.deps = deps
+        local term = ast.reachable
+        if term == true then
+            ast.reachable = new_sentinel(anchor)
+        elseif term == nil and ast.stack ~= main_stack then
+            ast.sentinel = new_sentinel(anchor)
+        end
     end
     local s = deps.seq
     if s - deps.lo >= deps.limit and phase_depth == 0 then
@@ -554,12 +690,13 @@ end
 -- object starts dying"), while every object of the cascade is alive.
 --
 -- The dependents are the merge of `deps` and `strong` by sequence number.
--- A hook needs no capture: its name is fixed at creation (`hook_name`).
+-- A hook or a token needs no capture: its name is fixed at creation
+-- (`hook_name`, `token_name`).
 local function decide(obj, st, id)
     st.phase = "dying"
     st.phase_id = id
     local mt = debug_getmetatable(obj)
-    if mt ~= nil and mt ~= HOOK_MT and rawget(mt, "__tostring") ~= nil then
+    if mt ~= nil and mt ~= HOOK_MT and mt ~= TOKEN_MT and rawget(mt, "__tostring") ~= nil then
         local depth = stack.n
         local ok, name = pcall(tostring, obj)
         if ok then
@@ -676,7 +813,8 @@ local function destroy_object(obj, st, reason, where, skip_body)
     -- about 1.8 times as slow on LuaJIT after `runtime/attach-destroy-100`
     -- in the same process, whatever the load path (task file, "Spec
     -- issues found").
-    local n, pinned = st.n, not st.reachable
+    local term = st.reachable
+    local n, pinned = st.n, not term
     if n == 1 then
         unlink(rawget(st[1], STATE), st[2], pinned)
         st[1] = nil
@@ -709,6 +847,13 @@ local function destroy_object(obj, st, reason, where, skip_body)
     if hook then
         st.fn = false
     end
+    -- The sentinel is disarmed: a dead object has nothing left to run at
+    -- collection (docs/03-runtime.md, "The sentinel": the finalizer skips
+    -- an object already dead).
+    if term ~= true and term then
+        drop_sentinel(term)
+        st.reachable = true
+    end
     st.phase = "dead"
     st.where = where
     st.reason = reason
@@ -722,16 +867,22 @@ end
 -- A root already decided dying by a running cascade and not yet reached
 -- (a destructor destroying its own dependent by hand, early) is
 -- destroyed now with the subtree that cascade decided, which is closed.
-local function cascade(root, st, reason, where, skip_body)
+--
+-- `propagating` is the finalizer's: "the sentinel's finalizer runs the
+-- cascade in protected mode and every error of it goes to
+-- `destroyerror`, the first included" (docs/02-semantics.md, "Errors in
+-- destructors and `destroyerror`"), so the cascade starts as if an error
+-- were already propagating, and raises nothing.
+local function cascade(root, st, reason, where, skip_body, propagating)
     local id = phase_counter + 1
     phase_counter = id
     if not st.phase then
         decide(root, st, id)
     end
     local outer_id, outer_held, outer_error = phase_id, held, held_error
-    phase_id, phase_depth, held, held_error = id, phase_depth + 1, false, nil
+    phase_id, phase_depth, held, held_error = id, phase_depth + 1, propagating or false, nil
     destroy_object(root, st, reason, where, skip_body)
-    local raise, err = held, held_error
+    local raise, err = held and not propagating, held_error
     phase_id, phase_depth, held, held_error = outer_id, phase_depth - 1, outer_held, outer_error
     if raise then
         error(err, 0)
@@ -800,10 +951,17 @@ end
 -- the full cascade ... `destroy(nil)` is a no-op. `destroy` on a dead or
 -- dying object is a no-op ... `destroy(5)` is `bad argument #1 to
 -- 'destroy' (object expected, got number)`."
+--
+-- `where_of_caller` allocates, so the collector may run a finalizer
+-- there ("Sentinels" above) whose cascade kills `obj`: the test is
+-- repeated after it, and a `destroy` that comes second is a no-op.
 function lifetime.destroy(obj)
     local st = destroy_target(obj, "destroy")
     if st then
-        cascade(obj, st, "destroy", where_of_caller(), false)
+        local where = where_of_caller()
+        if st.phase ~= "dead" then
+            cascade(obj, st, "destroy", where, false)
+        end
     end
 end
 
@@ -811,7 +969,10 @@ end
 function lifetime.discard(obj)
     local st = destroy_target(obj, "discard")
     if st then
-        cascade(obj, st, "destroy", where_of_caller(), true)
+        local where = where_of_caller()
+        if st.phase ~= "dead" then
+            cascade(obj, st, "destroy", where, true)
+        end
     end
 end
 
@@ -823,7 +984,10 @@ end
 -- a live table, or a lifetime value whose anchors are all live. Returns
 -- whether the element carries the `reachable` term ("The implicit
 -- `reachable` term": a table carries it; a value carries it if it does).
--- Raises at `level` (counted from this function).
+-- Raises at `level` (counted from this function). A dead or dying token
+-- is named as one: "`attempt to anchor to a dead table` (or `dead
+-- token`)" (docs/05-decisions.md, "Lifetime values are immutable
+-- snapshots").
 local function check_anchor(a, level)
     if type(a) ~= "table" then
         error("attempt to anchor to a " .. type(a) .. " value", level)
@@ -835,7 +999,7 @@ local function check_anchor(a, level)
             if phase == "marker" then
                 error(MARKER_MESSAGE, level)
             end
-            error("attempt to anchor to a " .. phase .. " table", level)
+            error("attempt to anchor to a " .. phase .. (ast.token and " token" or " table"), level)
         end
         return true
     end
@@ -847,12 +1011,37 @@ local function check_anchor(a, level)
             local ast_i = rawget(a[i], STATE)
             local phase = ast_i and ast_i.phase
             if phase then
-                error("attempt to anchor to a " .. phase .. " table", level)
+                error("attempt to anchor to a " .. phase .. (ast_i.token and " token" or " table"), level)
             end
         end
         return a.reachable
     end
     return true
+end
+
+-- Whether `obj` has a `__destroy`, for the sentinel (docs/03-runtime.md,
+-- "The sentinel": "a table whose formula has the `reachable` term and
+-- that has a `__destroy`"). `mt` is `getmetatable(obj)`, which LuaJIT
+-- compiles: the real metatable unless it is protected. A `__destroy`
+-- found there is the answer for an unprotected metatable, the common
+-- case; otherwise `debug.getmetatable` decides (a protected metatable, or
+-- a metatable without `__destroy`). `__destroy` is read again at the
+-- moment of death; a `__destroy` added later than this check runs on
+-- `destroy` and on an anchor's death, but not at collection ("allocated
+-- lazily: on the first `@` that makes the object need one, not at
+-- `setmetatable`").
+local function has_destroy(obj, mt)
+    if mt == nil then
+        return false
+    end
+    if type(mt) == "table" and rawget(mt, "__destroy") ~= nil then
+        return true
+    end
+    local real = debug_getmetatable(obj)
+    if real == nil or rawequal(real, mt) then
+        return false
+    end
+    return rawget(real, "__destroy") ~= nil
 end
 
 -- Link `obj` (record `st`) to the anchors of element `a`, from pair
@@ -933,10 +1122,14 @@ local function attach_general(fname, obj, pin, count, ...)
         if st.fn ~= nil then
             pin = true
         end
-    else
-        if is_value(obj) then
-            error("attempt to anchor a lifetime value", 3)
-        end
+    elseif is_value(obj) then
+        error("attempt to anchor a lifetime value", 3)
+    end
+
+    -- Everything is valid; from here on the collector's finalizers wait
+    -- ("Sentinels": `busy`).
+    busy = busy + 1
+    if st == nil then
         st = new_state(obj)
     end
 
@@ -945,9 +1138,9 @@ local function attach_general(fname, obj, pin, count, ...)
     -- `reachable` term.
     local reachable = term and not pin
     local old = 2 * st.n
-    local was_pinned = not st.reachable
+    local had = st.reachable
     for j = 1, old, 2 do
-        unlink(rawget(st[j], STATE), st[j + 1], was_pinned)
+        unlink(rawget(st[j], STATE), st[j + 1], not had)
     end
     local k = 1
     if count == 1 then
@@ -960,19 +1153,51 @@ local function attach_general(fname, obj, pin, count, ...)
     for j = k, old do
         st[j] = nil
     end
-    st.n = (k - 1) / 2
-    st.reachable = reachable
+    local n = (k - 1) / 2
+    st.n = n
+
+    -- The sentinel, after the anchors got theirs, so that it is the newest
+    -- (docs/03-runtime.md, "The sentinel"). A hook whose formula is the
+    -- term alone (`f !@ lifetime.reachable`) carries one and runs when
+    -- collected (docs/05-decisions.md, "A hook anchored to
+    -- `lifetime.reachable` alone runs when collected"); every other hook
+    -- and every pinned object carries none. A move that keeps the term
+    -- keeps the sentinel; one that drops the term drops it.
+    local hook = st.fn ~= nil
+    if hook and n == 0 then
+        reachable = true
+    end
+    if reachable then
+        if had == true or had == false then
+            if hook or st.deps or has_destroy(obj, getmetatable(obj)) then
+                st.reachable = new_sentinel(obj)
+            else
+                st.reachable = true
+            end
+        end
+    else
+        if had ~= true and had then
+            drop_sentinel(had)
+        end
+        st.reachable = false
+    end
+    busy = busy - 1
+    if busy == 0 and queue_tail ~= 0 then
+        drain()
+    end
     return obj
 end
 
 -- docs/03-runtime.md, "Attachment: what `@` does": `lifetime.attach(obj,
 -- pin, a1, …, an)` performs steps 1 to 4 of docs/02-semantics.md,
 -- "Acquiring a lifetime", and returns `obj`. `pin` true attaches without
--- the implicit `reachable` term (hooks; `lifetime.pin` is task 004's);
--- otherwise the formula carries it when any element does ("The implicit
--- `reachable` term"). A formula without the term is pinned: the anchors
--- hold the object in their `strong` tables. A hook stays pinned whatever
--- `pin` says.
+-- the implicit `reachable` term (hooks); otherwise the formula carries it
+-- when any element does ("The implicit `reachable` term"), so a list of
+-- `lifetime.pin` values alone is pinned. A formula without the term is
+-- pinned: the anchors hold the object in their `strong` tables. A hook
+-- stays pinned whatever `pin` says, unless its formula is the term
+-- alone. Step 5, the sentinel, follows docs/03-runtime.md, "The
+-- sentinel".
 function lifetime.attach(obj, pin, ...)
     local count = select("#", ...)
 
@@ -981,25 +1206,42 @@ function lifetime.attach(obj, pin, ...)
     -- alive with one anchor and the `reachable` term and staying so (the
     -- ordinary move; a pinned object or a hook takes the general path),
     -- outside any destroy phase. It does exactly what the general path
-    -- does for these arguments; anything else falls through to it.
+    -- does for these arguments; anything else falls through to it. A move
+    -- keeps the object's sentinel, if it has one; only the anchor may need
+    -- one (`link`).
     if count == 1 and type(obj) == "table" and phase_depth == 0 then
         local a = ...
         local ast = type(a) == "table" and rawget(a, STATE)
         if ast and not ast.phase then
             local st = rawget(obj, STATE)
             if st == nil then
-                if getmetatable(obj) ~= "lifetime" then
+                local mt = getmetatable(obj)
+                if mt ~= "lifetime" then
+                    busy = busy + 1
                     st = new_state(obj)
                     st[1] = a
                     st[2] = link(a, ast, obj, pin)
                     st.n = 1
-                    st.reachable = not pin
+                    if pin then
+                        st.reachable = false
+                    elseif has_destroy(obj, mt) then
+                        st.reachable = new_sentinel(obj)
+                    end
+                    busy = busy - 1
+                    if busy == 0 and queue_tail ~= 0 then
+                        drain()
+                    end
                     return obj
                 end
             elseif not st.phase and st.n == 1 and st.reachable and not pin then
+                busy = busy + 1
                 unlink(rawget(st[1], STATE), st[2], false)
                 st[1] = a
                 st[2] = link(a, ast, obj, false)
+                busy = busy - 1
+                if busy == 0 and queue_tail ~= 0 then
+                    drain()
+                end
                 return obj
             end
         end
@@ -1013,12 +1255,15 @@ end
 -- Inspection
 ------------------------------------------------------------------------
 
+-- The record's `reachable` may hold the sentinel; a value holds the term
+-- as a boolean and never the sentinel.
 local function value_of(st)
     local n = st.n
-    if n == 0 and st.reachable then
+    local term = st.reachable ~= false
+    if n == 0 and term then
         return REACHABLE
     end
-    local v = new_value(n, st.reachable)
+    local v = new_value(n, term)
     for i = 1, n do
         v[i] = st[2 * i - 1]
     end
@@ -1029,7 +1274,9 @@ end
 -- `obj`'s current formula as a lifetime value, a snapshot ... Error on
 -- `nil`, a value, a dead object." Passing an object to `of` makes the
 -- runtime see it ("`__destroy` and reasons", rule 7); on the default
--- lifetime it returns `lifetime.reachable`.
+-- lifetime it returns `lifetime.reachable`. Seen with the term and a
+-- `__destroy`, the object gets its sentinel now, so that the collector
+-- finds it (rule 7: the runtime can notify the objects it has seen).
 function lifetime.of(obj)
     local t = type(obj)
     if t ~= "table" then
@@ -1053,7 +1300,10 @@ function lifetime.of(obj)
     if is_value(obj) then
         error("bad argument #1 to 'lifetime.of' (object expected, got lifetime)", 2)
     end
-    new_state(obj)
+    st = new_state(obj)
+    if has_destroy(obj, getmetatable(obj)) then
+        st.reachable = new_sentinel(obj)
+    end
     return REACHABLE
 end
 
@@ -1117,7 +1367,8 @@ end
 -- anchors render through `tostring`, so a dead anchor in a snapshot
 -- renders as `dead <name>`." A hook renders as itself: "`hook cleanup`
 -- for a named hook and `hook` for an anonymous one"; a scope record as
--- `scope`. Tokens are task 004's.
+-- `scope`; a token as `token period` ("Tokens": "`lifetime.format` and
+-- the tombstone's message use the same text" as `tostring`).
 function lifetime.format(v)
     if type(v) ~= "table" then
         error("bad argument #1 to 'lifetime.format' (lifetime expected, got " .. type(v) .. ")", 2)
@@ -1126,6 +1377,8 @@ function lifetime.format(v)
     if mt == HOOK_MT then
         local name = rawget(v, STATE).name
         return name and "hook " .. tostring(name) or "hook"
+    elseif mt == TOKEN_MT then
+        return token_name(v, rawget(v, STATE))
     elseif mt == SCOPE_MT then
         return "scope"
     elseif mt == MARKER_MT then
@@ -1162,7 +1415,9 @@ end
 -- named hook, `nil` otherwise). It is attached pinned to its anchors and
 -- linked into each anchor's `strong` list, never into `dependents`, so
 -- the anchor holds it strongly; it never carries a sentinel. Its body
--- calls `f(reason)`."
+-- calls `f(reason)`." Except, since docs/05-decisions.md, "A hook
+-- anchored to `lifetime.reachable` alone runs when collected": a hook
+-- whose formula is the term alone carries one (`attach_general`).
 --
 -- The hook's record is an ordinary state record plus `fn`, with `name`
 -- holding the name it was created with, and without `deps` (a hook is
@@ -1206,14 +1461,114 @@ function lifetime.hook(f, name, ...)
         local a = ...
         local ast = type(a) == "table" and rawget(a, STATE)
         if ast and not ast.phase then
+            busy = busy + 1
             st[1] = a
             st[2] = link(a, ast, h, true)
             st.n = 1
+            busy = busy - 1
+            if busy == 0 and queue_tail ~= 0 then
+                drain()
+            end
             return h
         end
     end
     local result = attach_general("lifetime.hook", h, true, count, ...)
     return result
+end
+
+------------------------------------------------------------------------
+-- Tokens, pin, alive
+------------------------------------------------------------------------
+
+-- docs/02-semantics.md, "Tokens: `lifetime.token`": "`lifetime.token([name])`
+-- returns a fresh one, on the default lifetime like any new object ... A
+-- name that is not a string is `bad argument #1 to 'lifetime.token'
+-- (string expected, got number)`." docs/03-runtime.md, "Tokens": "a table
+-- with a state record, the metatable `"token"`, and the name (or `nil`)
+-- for `tostring` and `lifetime.format`. It starts on the default
+-- lifetime; ... it gets a sentinel under the same rule as a table": a
+-- token has no `__destroy`, so it gets one with its first dependent or
+-- hook (`link`), or when anchored with the term while it has some.
+function lifetime.token(name)
+    if name ~= nil and type(name) ~= "string" then
+        error("bad argument #1 to 'lifetime.token' (string expected, got " .. type(name) .. ")", 2)
+    end
+    local t = {}
+    t[STATE] = {
+        false,
+        false,
+        n = 0,
+        reachable = true,
+        deps = false,
+        phase = false,
+        phase_id = phase_id,
+        name = name or false,
+        where = false,
+        reason = false,
+        token = true
+    }
+    return setmetatable(t, TOKEN_MT)
+end
+
+-- docs/02-semantics.md, "The implicit `reachable` term and
+-- `lifetime.pin`": "`lifetime.pin(a1, …, an)` returns a lifetime value
+-- over the listed anchors **without** the term ... `lifetime.pin` strips
+-- the term from its arguments. `lifetime.pin()` with no arguments, and
+-- `lifetime.pin` of nothing but `lifetime.reachable`, are errors (`bad
+-- argument #1 to 'lifetime.pin' (anchor expected, got no value)` and
+-- `attempt to pin an empty lifetime`)". Each argument is checked as an
+-- element after `@` is ("Acquiring a lifetime", step 2), and a lifetime
+-- value is spliced: its anchors, without its term. The value is a
+-- snapshot like any other ("The `lifetime` table").
+function lifetime.pin(...)
+    local count = select("#", ...)
+    if count == 0 then
+        error("bad argument #1 to 'lifetime.pin' (anchor expected, got no value)", 2)
+    end
+    for i = 1, count do
+        check_anchor((select(i, ...)), 3)
+    end
+    local v = new_value(0, false)
+    local n = 0
+    for i = 1, count do
+        local a = select(i, ...)
+        if rawget(a, STATE) == nil and is_value(a) then
+            for j = 1, a.n do
+                n = n + 1
+                v[n] = a[j]
+            end
+        else
+            n = n + 1
+            v[n] = a
+        end
+    end
+    if n == 0 then
+        error("attempt to pin an empty lifetime", 2)
+    end
+    v.n = n
+    return v
+end
+
+-- docs/02-semantics.md, "Tombstones and `lifetime.alive`": "`true` for an
+-- object that is alive or dying, `false` for a tombstone and for `nil` or
+-- `false`; a value that is not an object is `bad argument #1 to
+-- 'lifetime.alive' (object expected, got number)`." A function,
+-- coroutine or userdata is alive: the runtime cannot destroy one yet
+-- (docs/06-open-questions.md, "Non-table dependents after death"; task
+-- 012).
+function lifetime.alive(x)
+    if type(x) == "table" then
+        local st = rawget(x, STATE)
+        return not st or st.phase ~= "dead"
+    end
+    if not x then
+        return false
+    end
+    local t = type(x)
+    if t == "function" or t == "thread" or t == "userdata" then
+        return true
+    end
+    error("bad argument #1 to 'lifetime.alive' (object expected, got " .. t .. ")", 2)
 end
 
 ------------------------------------------------------------------------
@@ -1325,6 +1680,14 @@ local function scope_cascade(rec, where)
         end
         rec.deps = false
         rec.strong = false
+        -- Only a record on a coroutine's stack that got dependents has a
+        -- sentinel (`link`); the main thread's records never read more
+        -- than this missing field.
+        local p = rec.sentinel
+        if p then
+            rec.sentinel = false
+            drop_sentinel(p)
+        end
     end
     rec.phase = "dead"
 end
@@ -1389,16 +1752,19 @@ end
 -- cascade (docs/02-semantics.md, "Errors in destructors": it "propagates
 -- to the statement that caused the death: ... the block exit"). A record
 -- nothing was ever attached to has no `deps` and needs no cascade: nothing
--- else can name it.
+-- else can name it. `rec.deps` is read before the pop, so that a call
+-- with no record on an empty stack (`s[0] == nil`) raises before it
+-- changes anything (task 003, review finding F1).
 function lifetime.exit(rec, line)
     local s = stack
     local n = s.n
     if s[n] ~= rec then
         return exit_unwinding(s, rec, line)
     end
+    local deps = rec.deps
     s[n] = nil
     s.n = n - 1
-    if rec.deps then
+    if deps then
         local outer_held, outer_error = held, held_error
         held, held_error = false, nil
         scope_cascade(rec, line)
@@ -1429,6 +1795,119 @@ unwind = function(s, depth)
         scope_cascade(rec, rec.line)
     end
     held, held_error = outer_held, outer_error
+end
+
+------------------------------------------------------------------------
+-- The finalizer
+------------------------------------------------------------------------
+
+-- docs/03-runtime.md, "Program end": "`lifetime run` sets an exit flag
+-- after the main chunk has returned and its scope epilogue has run; from
+-- then on the sentinel finalizers that the closing state runs report
+-- `"exit"`." Task 007's `lifetime run` sets it; how an embedding host
+-- sets it is open (docs/06-open-questions.md, "How an embedding host
+-- announces program end"), so the name is the runtime's own for now.
+local exiting = false
+
+function lifetime.set_exiting(flag)
+    exiting = flag and true or false
+end
+
+-- docs/02-semantics.md, "Coroutines": "A coroutine the collector finds
+-- unreachable cannot run its pending epilogues ...: the runtime destroys
+-- its scope records from the finalizer, innermost first". The record dies
+-- with every record above it on its stack, innermost first, whichever
+-- record's sentinel the collector runs first (a record without
+-- dependents has none), so the order does not depend on the order in
+-- which the records got their sentinels. Every destructor error goes to
+-- `destroyerror` ("Errors in destructors": the finalizer's rule); the
+-- dependents die with reason `"anchor"` at `collector`.
+local function collect_record(rec)
+    local outer_held, outer_error = held, held_error
+    held = true
+    local s, depth = rec.stack, rec.depth
+    if s[depth] == rec then
+        while s.n >= depth do
+            local n = s.n
+            local top = s[n]
+            s[n] = nil
+            s.n = n - 1
+            scope_cascade(top, "collector")
+        end
+    else
+        scope_cascade(rec, "collector")
+    end
+    held, held_error = outer_held, outer_error
+end
+
+-- docs/03-runtime.md, "The sentinel": "The finalizer runs `cascade(obj,
+-- "unreachable", "collector")` in protected mode, routing every error of
+-- the cascade to `destroyerror` ..., if the object is still
+-- `"dying"`-eligible (not already dead through an earlier walk of the
+-- same collection ...), with the exit flag of "Program end" turning the
+-- reason into `"exit"`." An object that a running cascade has decided
+-- dying is skipped too: that cascade destroys it. The spent sentinel is
+-- taken off its owner first, so a later `@` that needs one makes a new
+-- one.
+local function run_finalizer(p)
+    local mt = getmetatable(p)
+    local owner = mt.owner
+    if owner == nil then
+        return
+    end
+    mt.owner = nil
+    local st = rawget(owner, STATE)
+    if st == owner then
+        if owner.sentinel == p then
+            owner.sentinel = false
+        end
+        if not owner.phase then
+            local depth = stack.n
+            local ok, err = pcall(collect_record, owner)
+            if not ok then
+                if stack.n > depth then
+                    unwind(stack, depth)
+                end
+                call_destroyerror(owner, err)
+            end
+        end
+        return
+    end
+    if st.reachable == p then
+        st.reachable = true
+    end
+    if st.phase then
+        return
+    end
+    local depth = stack.n
+    local ok, err = pcall(cascade, owner, st, exiting and "exit" or "unreachable", "collector", false, true)
+    if not ok then
+        if stack.n > depth then
+            unwind(stack, depth)
+        end
+        call_destroyerror(owner, err)
+    end
+end
+
+-- The sentinels the collector finalized while the runtime was `busy`, in
+-- the collector's order.
+drain = function()
+    while queue_head <= queue_tail do
+        local p = queue[queue_head]
+        queue[queue_head] = nil
+        queue_head = queue_head + 1
+        run_finalizer(p)
+    end
+    queue_head, queue_tail = 1, 0
+end
+
+finalize = function(p)
+    if busy > 0 then
+        queue_tail = queue_tail + 1
+        queue[queue_tail] = p
+        return
+    end
+    run_finalizer(p)
 end
 
 ------------------------------------------------------------------------
