@@ -1,9 +1,9 @@
 ---
 id: 011
 title: Benchmark harness: bake the two-run rule into `make bench BASE=`, base exit status, README noise range
-status: todo
+status: in-progress
 depends: [010]
-branch:
+branch: task/011-bench-two-run-rule
 pr:
 commits:
 review:
