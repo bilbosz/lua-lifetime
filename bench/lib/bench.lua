@@ -26,16 +26,18 @@
 --
 --   name<TAB>ns/op<TAB>ratio          (ratio is "-" without a baseline)
 --
--- and, comparing a branch with a base (bench/compare.lua):
+-- and, comparing a branch with a base over two pairings of alternating
+-- runs, branch base branch base (bench/compare.lua, `make bench BASE=`):
 --
---   name<TAB>branch ns/op<TAB>base ns/op<TAB>branch/base<TAB>mark
+--   name<TAB>branch ns/op<TAB>base ns/op<TAB>pairing 1<TAB>pairing 2<TAB>branch/base<TAB>mark
 local bench = {}
 
 bench.RUNS = 5
 bench.DEFAULT_TIME = 0.5
--- bench/README.md: a benchmark is a finding when it is more than 10%
--- slower than base on both of two consecutive runs. One comparison marks
--- each benchmark beyond THRESHOLD; the reader applies the two-run rule.
+-- bench/README.md, "The threshold": a benchmark is a finding when it is
+-- more than 10% slower than base in both of two pairings of alternating
+-- runs. bench.compare applies the rule: SLOWER only when every pairing's
+-- branch/base exceeds THRESHOLD.
 bench.THRESHOLD = 1.10
 bench.SLOWER = "SLOWER"
 
@@ -217,28 +219,75 @@ local function index_lines(text)
     return names, ns_of
 end
 
--- Compare a branch's output with a base's, both in bench.run's format.
--- Returns an array of lines, in the branch's order:
+local function format_ns(ns)
+    return ns and format("%.1f", ns) or "-"
+end
+
+local function format_ratio(ratio)
+    return ratio and format("%.3f", ratio) or "-"
+end
+
+-- Compare a branch with a base over `pairings`, an array of
+-- `{branch_text, base_text}` in bench.run's format, one per pair of
+-- alternating runs (`make bench BASE=` makes two: branch, base, branch,
+-- base; task 011, "the noise is between processes, not within one, so
+-- the lever is alternation"). Returns an array of lines, one per
+-- benchmark the branch ran, in the order the branch first printed them:
 --
---   name<TAB>branch ns/op<TAB>base ns/op<TAB>branch/base<TAB>mark
+--   name<TAB>branch ns/op<TAB>base ns/op<TAB>pairing 1<TAB>...<TAB>pairing N<TAB>branch/base<TAB>mark
 --
--- where mark is bench.SLOWER when branch/base exceeds `threshold`
--- (default bench.THRESHOLD) and empty otherwise. A benchmark that has no
--- base line (the base could not run it) gets "-" for base and ratio.
-function bench.compare(branch_text, base_text, threshold)
+-- `branch ns/op` and `base ns/op` are the medians of each side's runs
+-- that produced the benchmark; `pairing k` is branch/base within pairing
+-- k; `branch/base` is the ratio of the two medians. A side missing from
+-- a pairing (the base could not run the benchmark) makes that pairing
+-- "-", and `branch/base` "-" unless every pairing has both sides. `mark`
+-- is bench.SLOWER when every pairing's ratio exceeds `threshold`
+-- (default bench.THRESHOLD; bench/README.md, "The threshold"), empty
+-- otherwise; a pairing with "-" is never over it.
+function bench.compare(pairings, threshold)
     threshold = threshold or bench.THRESHOLD
-    local names, branch_ns = index_lines(branch_text)
-    local _, base_ns = index_lines(base_text)
+    assert(#pairings > 0, "bench.compare: no pairings")
+    local names, seen = {}, {}
+    local branch_of, base_of = {}, {}
+    for k = 1, #pairings do
+        local branch_names, branch_ns = index_lines(pairings[k][1])
+        local _, base_ns = index_lines(pairings[k][2])
+        for i = 1, #branch_names do
+            local name = branch_names[i]
+            if not seen[name] then
+                seen[name] = true
+                names[#names + 1] = name
+            end
+        end
+        branch_of[k], base_of[k] = branch_ns, base_ns
+    end
     local lines = {}
     for i = 1, #names do
         local name = names[i]
-        local mine, theirs = branch_ns[name], base_ns[name]
-        if theirs then
-            local ratio = mine / theirs
-            lines[i] = format("%s\t%.1f\t%.1f\t%.3f\t%s", name, mine, theirs, ratio, ratio > threshold and bench.SLOWER or "")
-        else
-            lines[i] = format("%s\t%.1f\t-\t-\t", name, mine)
+        local mine, theirs, ratios = {}, {}, {}
+        local complete, slower = true, true
+        for k = 1, #pairings do
+            local b, a = branch_of[k][name], base_of[k][name]
+            mine[#mine + 1] = b
+            theirs[#theirs + 1] = a
+            local ratio = b and a and b / a
+            ratios[k] = format_ratio(ratio)
+            if not ratio then
+                complete, slower = false, false
+            elseif ratio <= threshold then
+                slower = false
+            end
         end
+        local branch_median = #mine > 0 and bench.median(mine) or nil
+        local base_median = #theirs > 0 and bench.median(theirs) or nil
+        lines[i] = table.concat({
+            name,
+            format_ns(branch_median),
+            format_ns(base_median),
+            table.concat(ratios, "\t"),
+            format_ratio(complete and branch_median / base_median or nil),
+            slower and bench.SLOWER or ""
+        }, "\t")
     end
     return lines
 end
