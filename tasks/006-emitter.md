@@ -1,12 +1,12 @@
 ---
 id: 006
 title: Emitter: `@` and lists, hooks (`!@`), block epilogues on every exit path
-status: in-progress
+status: review
 depends: [003, 005]
 branch: task/006-emitter
 pr:
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -207,3 +207,10 @@ each says what the code does and why, for the reviewer and the human.
    line with `lifetime.alive` can be added once task 004 is merged.
 
 ## Review log
+
+### Round 1: APPROVE
+
+Suite on `485dbe7`: unit 222/222 under lua5.1 and luajit, conformance 17/17 under both, lint clean (28 files). `make bench BASE=master` twice: nothing marked; `plain/transpiled`, `emit/unscoped-loop` and `emit/calls` at 1.0 within noise; `emit/scoped-loop` reads the same as `scope/loop-one-object`, so the generated code adds nothing over the runtime calls. `-jv`: the generated scoped loop with a stand-in runtime is one trace plus a side trace; with the real runtime the abort is the runtime's tombstone loop. Traced by hand: a function defined inside a scoped block gets no record and its `return` no epilogue; `repeat` with `goto continue` to a label before `until` (no epilogue at the jump, condition in scope); multi-line `return` with trailing `nil`; `break` from an inner `repeat` with a record; a backward `goto` leaving a scoped inner block; `goto` into a scoped block (the compile error) and into an invisible label (LuaJIT's own error); a named hook created on `a` and moved to `b`; `lifetime = require("lifetime")` assigning the header's local; `@ lifetime.scope` in a constructor at chunk level.
+
+- F1 (non-blocking): the restart optimisation's comment in `lifetime/emit.lua` (emit plain Lua in one pass, restart with the analysis at the first `lifetime.scope`) names no benchmark; name `build/plain.lt`, `build/generated-5000`, `build/lifetime-largest`. Carried into task 007, which touches the build path and adds a `build` benchmark on a file that uses the extension (the double emission is unmeasured).
+- Rulings on the seven spec issues as recorded above; `docs/04` gets the four wording additions in the done chore. The pass-through `return` alternative stays recorded for a later decision; `emit/return-fixed` and `emit/return-call` need a baseline that does the same observable work under LuaJIT (follow-up with the benchmark row above).
