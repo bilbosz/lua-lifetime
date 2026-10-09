@@ -26,6 +26,17 @@ local function collect()
     collectgarbage("collect")
 end
 
+-- Runs `make` on a coroutine of its own and lets the coroutine go: what
+-- `make` created and did not hand out is then referenced by nothing, not
+-- even by a stale slot of the test's own stack, which LuaJIT may still
+-- scan (seen under an eager collector).
+local function run_dropped(make)
+    local ok, err = coroutine.resume(coroutine.create(make))
+    if not ok then
+        error(err, 0)
+    end
+end
+
 -- A logging object: `__tostring` gives `name`, `__destroy` appends
 -- `name (reason)` to `log`, and `extra(self, reason)` runs inside the body
 -- when given.
@@ -65,7 +76,9 @@ end
 -- implemented, the record's `reachable` holds the proxy's metatable when
 -- the object has one, a scope record's `sentinel` field does). Returns
 -- the proxy, or nil. The test of a sentinel is the proxy itself: a
--- `newproxy` userdata whose own metatable holds the owner.
+-- `newproxy` userdata whose own metatable holds the owner. A test never
+-- keeps a proxy beyond its checks: once its owner dies the runtime may
+-- hand it to a later owner, which the kept proxy would then keep alive.
 local function sentinel_of(t)
     local st = state_of(t)
     if not st then
@@ -248,7 +261,7 @@ test.case("case 2: a pinned dependent survives a collection unreferenced and die
         local x = attach(new_logged(log, "x"), false, pin(a))
         probe[x] = true
     end
-    make()
+    run_dropped(make)
     collect()
     collect()
     test.assert_deep_eq(log, {}, "nothing died at the collection")
@@ -355,15 +368,15 @@ test.case("a scope record carries one only on a coroutine's stack, with its firs
     local seen = {}
     local co = coroutine.create(function()
         local r = enter("t.lt:2")
-        seen[1] = sentinel_of(r)
+        seen[1] = sentinel_of(r) ~= nil
         local y = attach({}, false, r)
-        seen[2] = sentinel_of(r)
+        seen[2] = sentinel_of(r) ~= nil
         exit(r, "t.lt:2")
         seen[3] = y
     end)
     assert(coroutine.resume(co))
-    test.assert_eq(seen[1], nil, "no dependent yet")
-    test.assert_true(seen[2] ~= nil, "a record with a dependent on a coroutine's stack")
+    test.assert_false(seen[1], "no dependent yet")
+    test.assert_true(seen[2], "a record with a dependent on a coroutine's stack")
     test.assert_eq(getmetatable(x), "dead")
 end)
 
@@ -399,7 +412,7 @@ test.case("the cascade takes the dependents with reason anchor, at collector, be
         parent.child = child
         hook(logger(log, "hook"), nil, parent)
     end
-    make()
+    run_dropped(make)
     test.assert_deep_eq(log, {})
     collect()
     test.assert_deep_eq(log, {"parent (unreachable)", "hook (anchor)", "child (anchor)"}, "before collectgarbage returned")
@@ -425,7 +438,7 @@ test.case("case 3: a subtree held only by itself; the newer dependent's sentinel
         local child = attach(new_logged(log, "child"), false, parent)
         child.parent = parent
     end
-    make()
+    run_dropped(make)
     collect()
     test.assert_deep_eq(log, {"child (unreachable)", "parent (unreachable)"})
 end)
@@ -443,7 +456,7 @@ test.case("a dependent with the term and nothing to run carries no sentinel and 
         child.parent = parent
         parent.child = child
     end
-    make()
+    run_dropped(make)
     collect()
     test.assert_deep_eq(log, {"parent (unreachable)"})
     test.assert_true(seen.alive, "alive inside the parent's body")
@@ -459,7 +472,7 @@ test.case("case 4: two unrelated objects in one collection die newest first", fu
         local b = attach(new_logged(log, "b"), false, lifetime.reachable)
         return a ~= b
     end
-    make()
+    run_dropped(make)
     collect()
     test.assert_deep_eq(log, {"b (unreachable)", "a (unreachable)"})
 end)
@@ -472,7 +485,7 @@ test.case("newest first is the order of the @ that gave each its sentinel", func
         attach(newer, false, lifetime.reachable)
         attach(older, false, lifetime.reachable)
     end
-    make()
+    run_dropped(make)
     collect()
     test.assert_deep_eq(log, {"created first (unreachable)", "created second (unreachable)"})
 end)
@@ -485,7 +498,7 @@ test.case("the older one's walk skips the younger one if it was its dependent", 
         local other = attach(new_logged(log, "other"), false, older)
         older.kids = {younger, other}
     end
-    make()
+    run_dropped(make)
     collect()
     test.assert_deep_eq(log, {"other (unreachable)", "younger (unreachable)", "older (unreachable)"})
 end)
@@ -499,7 +512,7 @@ test.case("the walk of a newer anchor takes an older dependent; its own finalize
         attach(older, false, anchor)
         anchor.older = older
     end
-    make()
+    run_dropped(make)
     collect()
     test.assert_deep_eq(log, {"anchor (unreachable)", "older (anchor)"})
 end)
@@ -511,7 +524,7 @@ test.case("registration: x @ lifetime.reachable runs __destroy at collection; ne
         local silent = new_logged(log, "silent")
         silent.x = 1
     end
-    make()
+    run_dropped(make)
     collect()
     test.assert_deep_eq(log, {"registered (unreachable)"})
 end)
@@ -521,7 +534,7 @@ test.case("lifetime.of registers too", function()
     local function make()
         lifetime.of(new_logged(log, "seen"))
     end
-    make()
+    run_dropped(make)
     collect()
     test.assert_deep_eq(log, {"seen (unreachable)"})
 end)
@@ -533,7 +546,7 @@ test.case("case 5: a weak table clears one collection after the finalizer", func
         local x = attach(new_logged(log, "x"), false, lifetime.reachable)
         w[x] = true
     end
-    make()
+    run_dropped(make)
     collect()
     test.assert_deep_eq(log, {"x (unreachable)"})
     -- After one collection `next(w)` may still be `x`, now a tombstone:
@@ -560,7 +573,7 @@ test.case("case 8: a metatable made in the same statement as its instance still 
             end
         }), false, lifetime.reachable)
     end
-    make()
+    run_dropped(make)
     collect()
     test.assert_deep_eq(log, {"inline (unreachable)"})
 end)
@@ -591,10 +604,38 @@ test.case("a disarmed proxy is reused by the next owner, and newest first still 
         proxies[3], proxies[4] = nil, nil
         return x1 ~= nil
     end
-    make()
+    run_dropped(make)
     test.assert_deep_eq(log, {"x2 (destroy)", "x4 (destroy)", "x3 (destroy)"})
     collect()
     test.assert_deep_eq(log, {"x2 (destroy)", "x4 (destroy)", "x3 (destroy)", "y2 (unreachable)", "y1 (unreachable)", "x1 (unreachable)"})
+end)
+
+test.case("a proxy disarmed below holes is kept as the newest; the kept ones move down over the holes", function()
+    -- x3 dies below the last slot (a hole), x4 from the last slot (kept),
+    -- then x2, below the hole x3 left: every slot above it is a hole, so
+    -- it is the newest armed proxy and is kept, x4's moving down next to
+    -- it. y1 and y2 take x2's and x4's proxies, in creation order.
+    local log = {}
+    local proxies = {}
+    local function make()
+        local x1 = attach(new_logged(log, "x1"), false, lifetime.reachable)
+        local x2 = attach(new_logged(log, "x2"), false, lifetime.reachable)
+        local x3 = attach(new_logged(log, "x3"), false, lifetime.reachable)
+        local x4 = attach(new_logged(log, "x4"), false, lifetime.reachable)
+        proxies[2], proxies[4] = sentinel_of(x2), sentinel_of(x4)
+        destroy(x3)
+        destroy(x4)
+        destroy(x2)
+        local y1 = attach(new_logged(log, "y1"), false, lifetime.reachable)
+        local y2 = attach(new_logged(log, "y2"), false, lifetime.reachable)
+        test.assert_true(rawequal(sentinel_of(y1), proxies[2]), "y1 took x2's proxy")
+        test.assert_true(rawequal(sentinel_of(y2), proxies[4]), "y2 took x4's proxy")
+        proxies[2], proxies[4] = nil, nil
+        return x1 ~= nil
+    end
+    run_dropped(make)
+    collect()
+    test.assert_deep_eq(log, {"x3 (destroy)", "x4 (destroy)", "x2 (destroy)", "y2 (unreachable)", "y1 (unreachable)", "x1 (unreachable)"})
 end)
 
 test.case("a proxy whose finalizer is pending is not handed to another owner", function()
@@ -617,7 +658,7 @@ test.case("a proxy whose finalizer is pending is not handed to another owner", f
             W[2] = attach(new_logged(log, "W2"), false, lifetime.reachable)
         end
     end
-    make()
+    run_dropped(make)
     collect()
     test.assert_deep_eq(log, {"A (destroy)", "X (anchor)"})
     collect()
@@ -635,7 +676,7 @@ test.case("an object already dead is skipped by its finalizer; its sentinel is d
         test.assert_eq(rawget(getmetatable(p), "owner"), nil, "disarmed")
         test.assert_eq(sentinel_of(x), nil)
     end
-    make()
+    run_dropped(make)
     test.assert_deep_eq(log, {"x (destroy)"})
     collect()
     collect()
@@ -661,7 +702,7 @@ test.case("a hook anchored to lifetime.reachable alone runs with unreachable whe
     local function make()
         hook(logger(log, "dropped"), nil, lifetime.reachable)
     end
-    make()
+    run_dropped(make)
     collect()
     test.assert_deep_eq(log, {"dropped (unreachable)"})
     test.assert_true(alive(held))
@@ -684,7 +725,7 @@ test.case("an unreferenced token's cascade kills its dependents with reason anch
         test.assert_true(sentinel_of(period) ~= nil)
         return menu ~= nil
     end
-    make()
+    run_dropped(make)
     collect()
     test.assert_deep_eq(log, {"hook (anchor)", "menu (anchor)"})
     test.assert_eq(getmetatable(saved), "dead")
@@ -705,7 +746,7 @@ test.case("errors of a finalizer-run cascade all go to destroyerror, the first i
     with_handler(function(obj, e)
         routed[#routed + 1] = {tostring(obj), e}
     end, function()
-        make()
+        run_dropped(make)
         -- Called directly, as the other cases do: a `pcall` here would put
         -- its frame where `make`'s was and leave a stale slot holding `x`
         -- on LuaJIT. An error escaping the collection would fail the case.
@@ -737,7 +778,7 @@ test.case("a finalizer that runs inside attach waits until attach has linked, th
             destroy(a)
         end), false, lifetime.reachable)
     end
-    make()
+    run_dropped(make)
     test.assert_true(sentinel_of(holder[1]) ~= nil, "U is registered and held")
     local busy_index
     for i = 1, math.huge do

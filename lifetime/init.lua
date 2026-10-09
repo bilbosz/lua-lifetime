@@ -138,15 +138,16 @@ local unwind
 -- kept proxies therefore fill the slots just above `armed_n`, in the
 -- order they were made, and the next owner takes the one in slot
 -- `armed_n + 1` where it lies, without a write to `armed` or to its
--- `slot`. A fresh proxy is made only when that slot keeps none, which is
+-- `slot`. Fresh proxies are made only when that slot keeps none, which is
 -- when none is kept at all. A cascade tombstones its objects newest
 -- first, so a scope exit or a `destroy` gives back every proxy its
 -- objects had, and the next ones reuse them: a loop body that owns
--- objects allocates no proxy after its first iteration. A proxy disarmed
+-- objects allocates no proxy after its first iterations. A proxy disarmed
 -- below the last slot leaves a hole and loses its `__gc`, so the
--- collector frees it without a finalizer call; when `armed_n` steps down
--- onto a hole it steps over every hole below, and the kept proxies move
--- down with it so that they stay just above it (`close_holes`).
+-- collector frees it without a finalizer call; slots at or below
+-- `armed_n` are armed or holes, and the holes are stepped over only when
+-- the proxy below them is disarmed (`drop_sentinel`), off the common
+-- path.
 --
 -- `armed` is weak-valued: it keeps no proxy alive, and a proxy the
 -- collector has scheduled for finalization is cleared from it (a
@@ -183,45 +184,38 @@ local function new_sentinel(owner)
     return mt
 end
 
--- `armed_n` has stepped down onto a hole at `slot`: step over every hole
--- below, and move the kept proxies, which start at `slot + 1`, down to
--- just above the new `armed_n`, in order. Off the common path: holes come
--- from objects the collector found and from disarms below the last slot.
-local function close_holes(slot)
-    local to = slot - 1
-    while to > 0 and armed[to] == nil do
-        to = to - 1
-    end
-    armed_n = to
-    local from = slot + 1
-    local mt = kept[from]
-    while mt do
-        to = to + 1
-        kept[from] = nil
-        armed[from] = nil
-        kept[to] = mt
-        armed[to] = mt.proxy
-        mt.slot = to
-        from = from + 1
-        mt = kept[from]
-    end
-end
-
--- Disarm the sentinel of an owner that died by a cascade.
+-- Disarm the sentinel of an owner that died by a cascade. The common case
+-- (the last slot, its proxy not taken by the collector) is inlined where
+-- a cascade tombstones an object. Below the last slot the proxy leaves a
+-- hole, unless every slot above it up to `armed_n` is a hole already: it
+-- is then the newest armed proxy, so the kept proxies move down over the
+-- holes to just above it and it is kept as if it were in the last slot.
+-- A proxy the collector has taken (`armed` no longer refers to it) is
+-- never kept.
 local function drop_sentinel(mt)
     mt.owner = nil
     local slot = mt.slot
     if armed[slot] == mt.proxy then
-        if slot == armed_n then
-            kept[slot] = mt
-            slot = slot - 1
-            armed_n = slot
-            if slot > 0 and armed[slot] == nil then
-                close_holes(slot)
+        local top = armed_n
+        while top > slot and armed[top] == nil do
+            top = top - 1
+        end
+        if top == slot then
+            local from, to = armed_n + 1, slot + 1
+            local k = from ~= to and kept[from]
+            while k do
+                kept[from] = nil
+                armed[from] = nil
+                kept[to] = k
+                armed[to] = k.proxy
+                k.slot = to
+                from, to = from + 1, to + 1
+                k = kept[from]
             end
+            kept[slot] = mt
+            armed_n = slot - 1
             return
         end
-        -- Below the last slot: a hole.
         armed[slot] = nil
     end
     mt.__gc = nil
@@ -923,11 +917,7 @@ local function destroy_object(obj, st, reason, where, skip_body)
         if slot == armed_n and armed[slot] == term.proxy then
             term.owner = nil
             kept[slot] = term
-            slot = slot - 1
-            armed_n = slot
-            if slot > 0 and armed[slot] == nil then
-                close_holes(slot)
-            end
+            armed_n = slot - 1
         else
             drop_sentinel(term)
         end
