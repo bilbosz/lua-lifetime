@@ -53,15 +53,6 @@ A dead function, coroutine or userdata cannot be emptied. The runtime
 remembers the death in a weak-keyed set so that `lifetime.alive` and `@`
 see it; calls and other uses are not caught. *Leaning:* accept; document.
 
-### The hidden field is visible
-
-Decision 3 puts the state record in a hidden field of the object. `pairs`,
-`next` and serializers see it: Treflove's `table.to_string` would write it
-into `save.lua`, and `next(t) == nil` is no longer "empty" for a table the
-runtime has seen. *Leaning:* a private table as the key, which no
-serializer can mistake for data, and a documented `lifetime.is_state(k)`
-rule for skipping it; to be settled by task 002 with the human.
-
 ### Teal and `!@`
 
 The hook operator `!@` was chosen partly because Teal is believed not to

@@ -25,6 +25,7 @@ documents are derived from `xd/docs/10-lua-lifetime-decisions.md` in the
 | `lifetime/` | The runtime (`init.lua`) and the transpiler (`lexer.lua`, `parser.lua`, `emit.lua`, `cli.lua`). |
 | `bin/lifetime` | The command: `lifetime build FILE -o OUT`, `lifetime run FILE`. |
 | `tests/` | The unit suite (`run.lua`, `lib/test.lua`) and the conformance runner (`conformance.lua`). |
+| `bench/` | The benchmark harness (`lib/bench.lua`, `run.lua`, `compare.lua`), the benchmarks (`bench-*.lua`) and `bench/README.md` with the threshold; `make bench [BASE=master]`. |
 
 ## How work happens here
 
@@ -185,4 +186,7 @@ Skills, invoked with `/name`:
   lifetime and the receiver anchors it (`local x = f() @ lifetime.scope`).
 - A plain table the runtime never saw is collected silently, `__destroy`
   or not; `x @ lifetime.reachable` registers it.
+- A table the runtime has seen carries its state record in one extra
+  field under a private table key; `pairs` and `next` show it, so a
+  serializer or an emptiness check skips it with `lifetime.is_state(k)`.
 - `return x` from a block where `x @ lifetime.scope` hands the caller a tombstone.
