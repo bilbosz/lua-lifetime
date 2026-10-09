@@ -4,7 +4,7 @@ title: Benchmark harness: `make bench`, comparison with plain Lua and with `mast
 status: review
 depends: [001]
 branch: task/010-benchmark-harness
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/9
 commits:
 review: APPROVE (round 1)
 ---
