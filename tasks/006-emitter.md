@@ -1,9 +1,9 @@
 ---
 id: 006
 title: Emitter: `@` and lists, hooks (`!@`), block epilogues on every exit path
-status: todo
+status: in-progress
 depends: [003, 005]
-branch:
+branch: task/006-emitter
 pr:
 commits:
 review:
