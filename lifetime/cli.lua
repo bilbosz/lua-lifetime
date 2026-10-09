@@ -19,7 +19,7 @@ local function build(source, chunkname)
     -- Deferred lexing: a malformed token is reported when the parser
     -- reaches it, so errors come in the order Lua reports them.
     local tokens = lexer.tokenize(source, chunkname, true)
-    return emit.emit(parser.parse(tokens, chunkname))
+    return emit.emit(parser.parse(tokens, chunkname), chunkname)
 end
 
 -- docs/04-transpiler.md, "Pipeline": `build(source, chunkname)`, lexer ->
