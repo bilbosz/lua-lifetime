@@ -1,9 +1,11 @@
 -- lifetime/lexer.lua: the lexer.
 --
--- Lua 5.1 tokens (the reference manual's §2.1, `llex.c`) plus, from task
--- 005, `@` and `!@` of docs/04-transpiler.md, "Grammar". Exports
--- `tokenize(source, chunkname [, deferred])`, returning an array of tokens
--- and ending with one token of type "eof".
+-- Lua 5.1 tokens (the reference manual's §2.1, `llex.c`) plus `@` and `!@`
+-- of docs/04-transpiler.md, "Grammar", LuaJIT's `::` (labels), and the
+-- LuaJIT lexical extensions of docs/05-decisions.md, "The lexer accepts
+-- LuaJIT's lexical extensions". Exports `tokenize(source, chunkname [,
+-- deferred])`, returning an array of tokens and ending with one token of
+-- type "eof".
 --
 -- A token is a table {type, value, line}:
 --
@@ -14,7 +16,11 @@
 --   line    the line the token starts on
 --
 -- Numbers and strings also carry `raw`, their spelling in the source, so
--- that the emitter writes them back exactly as written. A string that
+-- that the emitter writes them back exactly as written. `value` is Lua
+-- 5.1's reading wherever Lua 5.1 accepts the token, and LuaJIT's where
+-- only LuaJIT does (a numeral with an FFI suffix holds the number of its
+-- digits); the output carries `raw`, so each interpreter reads the
+-- token its own way. A string that
 -- spans lines also carries `end_line`, the line it ends on: Lua attaches a
 -- token to the line where the lexer stands after reading it, so syntax
 -- errors near it name `end_line` (the parser uses it).
@@ -27,16 +33,22 @@
 -- reported first, in the order Lua reports them (lua_load reads tokens
 -- lazily).
 --
--- Where Lua 5.1 and LuaJIT disagree at the lexical level and the manual
--- does not decide, the lexer accepts the union and leaves the
--- interpreter to reject what it does not accept when it loads the output,
--- at the same position, since the emitter keeps every token on its line:
--- `[[` inside a level-0 long string (Lua 5.1's LUA_COMPAT_LSTR error) and
--- unknown escapes such as `\q` (LuaJIT's "invalid escape sequence") pass.
+-- Where Lua 5.1 and LuaJIT disagree at the lexical level, the lexer
+-- accepts the union and leaves the interpreter to reject what it does not
+-- accept when it loads the output, at the same position, since the
+-- emitter keeps every token on its line (docs/05-decisions.md, "The lexer
+-- accepts LuaJIT's lexical extensions"): `[[` inside a level-0 long string
+-- (Lua 5.1's LUA_COMPAT_LSTR error) and unknown escapes such as `\q`
+-- (LuaJIT's "invalid escape sequence") pass; so do LuaJIT's extensions,
+-- none of which a valid Lua 5.1 chunk can contain: a UTF-8 byte order
+-- mark and a `#` first line (skipped), bytes >= 128 in names, `\z`
+-- before a line break, binary numerals and the suffixes `LL`, `ULL` and
+-- `i`. `\x41` and `\u{41}` are Lua 5.1 strings already (read as `x41`
+-- and `u{41}`).
 
 local lexer = {}
 
-local byte, char, sub, find, match, gsub, rep = string.byte, string.char, string.sub, string.find, string.match, string.gsub, string.rep
+local byte, char, sub, find, match, gsub, rep, lower = string.byte, string.char, string.sub, string.find, string.match, string.gsub, string.rep, string.lower
 local concat = table.concat
 
 -- The reserved words of Lua 5.1 (manual §2.1). The extension adds none
@@ -87,6 +99,44 @@ local function normalize_newlines(s)
     return (gsub(s, "[\n\r]+", function(run)
         return rep("\n", count_newlines(run))
     end))
+end
+
+-- The value of a binary numeral `0b101` (LuaJIT), or nil. Checked here
+-- rather than left to `tonumber`, which reads binary under LuaJIT and not
+-- under Lua 5.1, so that the lexer accepts the same chunks under both.
+local function binary_number(text)
+    local digits = match(text, "^0[bB]([01]+)$")
+    return digits and tonumber(digits, 2)
+end
+
+-- The integer an `LL` or `ULL` suffix may follow: decimal, hex or binary
+-- digits, no fraction and no exponent (LuaJIT's lj_strscan).
+local function ffi_integer(text)
+    if match(text, "^%d+$") or match(text, "^0[xX]%x+$") then
+        return tonumber(text)
+    end
+    return binary_number(text)
+end
+
+-- The value of a numeral that Lua 5.1 rejects and LuaJIT reads, or nil:
+-- binary (`0b101`), a 64-bit integer (`1LL`, `0x10ULL`, any case, `LLU`
+-- too) or an imaginary number (`1i`, `1.5e3I`). The value is the number
+-- the digits denote; LuaJIT makes cdata of the suffixed ones.
+local function luajit_number(raw)
+    local value = binary_number(raw)
+    if value then
+        return value
+    end
+    local text = lower(raw)
+    local digits = match(text, "^(.-)ull$") or match(text, "^(.-)llu$") or match(text, "^(.-)ll$")
+    if digits then
+        return ffi_integer(digits)
+    end
+    digits = match(text, "^(.-)i$")
+    if digits then
+        return binary_number(digits) or tonumber(digits)
+    end
+    return nil
 end
 
 -- Raised in deferred mode once the error token is in place.
@@ -171,6 +221,17 @@ local function scan(source, chunkname, tokens, deferred)
                 local f = byte(source, p + 2)
                 i = p + (((f == NL or f == CR) and f ~= e) and 3 or 2)
                 line = line + 1
+            elseif e == 122 and match(source, "^[ \t\v\f]*[\n\r]", p + 2) then
+                -- `\z` before a line break: Lua 5.1 reads `z` and then
+                -- fails at the line break, LuaJIT skips the white space
+                -- that follows, line breaks included; the lexer takes
+                -- LuaJIT's reading (docs/05-decisions.md, "The lexer
+                -- accepts LuaJIT's lexical extensions"). Elsewhere `\z`
+                -- is Lua 5.1's `z`, below.
+                local _, last = find(source, "^[ \t\v\f\n\r]*", p + 2)
+                parts[np] = ""
+                line = line + count_newlines(sub(source, p + 2, last))
+                i = last + 1
             elseif e >= 48 and e <= 57 then
                 local digits = match(source, "^%d%d?%d?", p + 1)
                 local code = tonumber(digits)
@@ -211,10 +272,23 @@ local function scan(source, chunkname, tokens, deferred)
         local raw = sub(source, pos, e)
         local value = tonumber(raw)
         if not value then
-            fail("malformed number", raw)
+            value = luajit_number(raw)
+            if not value then
+                fail("malformed number", raw)
+            end
         end
         push("number", value, raw)
         pos = e + 1
+    end
+
+    -- LuaJIT skips a UTF-8 byte order mark and then a first line starting
+    -- with `#` in every chunk; Lua 5.1 skips the `#` line in a file
+    -- (luaL_loadfile). The line break stays, so lines keep their numbers.
+    if byte(source, 1) == 239 and sub(source, 1, 3) == "\239\187\191" then
+        pos = 4
+    end
+    if byte(source, pos) == 35 then
+        pos = find(source, "[\n\r]", pos) or #source + 1
     end
 
     while true do
@@ -228,8 +302,10 @@ local function scan(source, chunkname, tokens, deferred)
         elseif c == 32 or c == 9 or c == 11 or c == 12 then
             local _, e = find(source, "^[ \t\v\f]+", pos)
             pos = e + 1
-        elseif (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or c == 95 then
-            local _, e = find(source, "^[A-Za-z0-9_]*", pos + 1)
+        elseif (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or c == 95 or c >= 128 then
+            -- A name; LuaJIT allows bytes >= 128 in names, Lua 5.1 (in
+            -- the C locale) nowhere outside strings and comments.
+            local _, e = find(source, "^[A-Za-z0-9_\128-\255]*", pos + 1)
             local word = sub(source, pos, e)
             push(KEYWORDS[word] and "keyword" or "name", word)
             pos = e + 1
@@ -291,10 +367,30 @@ local function scan(source, chunkname, tokens, deferred)
                 push("symbol", ".")
                 pos = pos + 1
             end
+        elseif c == 33 then -- `!`
+            -- docs/04-transpiler.md, "Grammar": "The lexer produces `!@` as
+            -- one token when `!` is immediately followed by `@`; a lone
+            -- `!` is a syntax error, and `!=` is reported as `unexpected
+            -- symbol near '!' (use '~=' for inequality)`". A lone `!` is a
+            -- symbol the parser rejects in Lua's words; `!=` is a
+            -- malformed token, reported wherever it stands.
+            local d = byte(source, pos + 1)
+            if d == 64 then
+                push("symbol", "!@")
+                pos = pos + 2
+            elseif d == 61 then
+                fail("unexpected symbol near '!' (use '~=' for inequality)")
+            else
+                push("symbol", "!")
+                pos = pos + 1
+            end
+        elseif c == 58 and byte(source, pos + 1) == 58 then -- `::`, LuaJIT's label delimiter
+            push("symbol", "::")
+            pos = pos + 2
         else
             -- Every other character is a token of its own, as in llex.c:
-            -- the operators and punctuation of §8, and anything else (such
-            -- as `@` and `!`), which the parser reports as unexpected.
+            -- the operators and punctuation of §8 and `@`, and anything
+            -- else, which the parser reports as unexpected.
             push("symbol", char(c))
             pos = pos + 1
         end

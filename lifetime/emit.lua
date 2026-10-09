@@ -15,8 +15,10 @@
 -- current one, separated by a space where readability or the lexer wants
 -- one. Comments are not kept. Since the token sequence and the line of
 -- every token are those of the source, Lua compiles the output to the same
--- code with the same line information as the input. Task 006 adds the
--- extension.
+-- code with the same line information as the input. LuaJIT's `goto` and
+-- labels are written as they came. Task 006 adds the extension; until
+-- then its nodes (Anchor, Hook, ScopeAnchor, AnchorStat, HookStat; task
+-- 005) are written back in their source spelling.
 
 local count_newlines = require("lifetime.lexer").count_newlines
 
@@ -284,6 +286,39 @@ EXPR.UnOp = function(st, e)
     emit_expr(st, e.operand)
 end
 
+-- Until task 006 generates code for them, the extension's nodes are
+-- written back as they were spelled, every token on its line: the output
+-- of a chunk that uses the extension is then the chunk itself, which Lua
+-- does not load, and every other chunk is untouched.
+local function emit_anchor(st, e, op)
+    local lines = e.lines
+    emit_expr(st, e.expr)
+    put(st, op, lines and lines[1])
+    local anchors = e.anchors
+    if not e.list then
+        emit_expr(st, anchors[1])
+        return
+    end
+    put(st, "(", lines and lines[2], false, true)
+    local k = emit_explist(st, anchors, e, 2)
+    put(st, ")", lines and lines[k + 1], true)
+end
+
+EXPR.Anchor = function(st, e)
+    emit_anchor(st, e, "@")
+end
+
+EXPR.Hook = function(st, e)
+    emit_anchor(st, e, "!@")
+end
+
+EXPR.ScopeAnchor = function(st, e)
+    local lines = e.lines
+    put(st, "lifetime", lines and lines[1])
+    put(st, ".", lines and lines[2], true, true)
+    put(st, "scope", lines and lines[3])
+end
+
 function emit_expr(st, e)
     local f = EXPR[e.tag]
     if not f then
@@ -417,6 +452,29 @@ end
 STAT.Break = function(st, s)
     put(st, "break", s.lines and s.lines[1])
 end
+
+-- LuaJIT's `goto` and labels, as written (CLAUDE.md, "Technical
+-- decisions": "LuaJIT's `goto` is honoured by the transpiler when it
+-- appears in the input").
+STAT.Goto = function(st, s)
+    local lines = s.lines
+    put(st, "goto", lines and lines[1])
+    put(st, s.name, lines and lines[2])
+end
+
+STAT.Label = function(st, s)
+    local lines = s.lines
+    put(st, "::", lines and lines[1], false, true)
+    put(st, s.name, lines and lines[2])
+    put(st, "::", lines and lines[3], true)
+end
+
+-- The statement forms of `@` and `!@` (see emit_anchor).
+STAT.AnchorStat = function(st, s)
+    emit_expr(st, s.expr)
+end
+
+STAT.HookStat = STAT.AnchorStat
 
 local function emit_statement(st, s)
     local f = STAT[s.tag]

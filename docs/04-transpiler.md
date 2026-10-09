@@ -11,7 +11,9 @@ design follows decisions 5, 6, 10 and 11 of
 source (.lt)  →  lexer  →  parser (AST)  →  emit  →  Lua 5.1 source
 ```
 
-- `lifetime/lexer.lua`: Lua 5.1 tokens plus `@` and `!@`.
+- `lifetime/lexer.lua`: Lua 5.1 tokens plus `@` and `!@`, LuaJIT's `::`,
+  and LuaJIT's lexical extensions ([05-decisions.md](05-decisions.md),
+  "The lexer accepts LuaJIT's lexical extensions").
 - `lifetime/parser.lua`: a recursive-descent parser for the grammar
   below, producing a plain table AST that records the line of every node
   and, on nodes that own tokens, the lines of those tokens (`lines`), so
@@ -60,9 +62,18 @@ scopeanchor ::= 'lifetime' '.' 'scope'
   `lifetime` names at that point; anywhere else `lifetime.scope` is an
   ordinary `prefixexp` and `lifetime.scope.x` or `lifetime.scope()` are
   ordinary expressions. `@()` is a syntax error. Lists do not nest.
+  A one-element parenthesised item followed by a suffix (`x @
+  (lifetime.scope).f`, `x @ (t).owner`) is Lua's parenthesised
+  `prefixexp`, not a list, so the inner `lifetime.scope` is the ordinary
+  marker.
 - Reserved words: none added. `defer`, `token`, `scope` and `caller` are
   ordinary names ([05-decisions.md](05-decisions.md), "The scope anchor is
   spelled `lifetime.scope`").
+- LuaJIT's `stat ::= 'goto' Name | '::' Name '::'` is accepted in the
+  input; as in LuaJIT, `goto` starts a statement only when a Name follows
+  it, and is an ordinary name everywhere else
+  ([05-decisions.md](05-decisions.md), "The lexer accepts LuaJIT's
+  lexical extensions").
 
 ## The generated chunk header
 
