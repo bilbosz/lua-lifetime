@@ -177,7 +177,11 @@ common), with the exit flag of "Program end" turning the reason into
 - a scope record, so that the records of a collected suspended coroutine
   are destroyed (decision 2);
 - a token with the `reachable` term;
-- never a hook (pinned by its anchor) and never a pinned object.
+- a hook only when its formula is `lifetime.reachable` alone (`f !@
+  lifetime.reachable`): it has no anchor to die with, so the collector
+  runs it with reason `"unreachable"` (02, "Hooks": "may run `f` at any
+  later time"); any other hook is pinned by its anchor and never carries
+  one, and never a pinned object.
 
 Allocating a proxy per anchored object is the cost of reachable-only
 destructors; a program that pins everything pays nothing. The proxy is
@@ -222,15 +226,23 @@ call and, when the call returns `false`, unwind every record above that
 depth, innermost first, with the error counted as propagating (02,
 "Errors in destructors": destructor errors go to `destroyerror`), then
 return what the original returned. `coroutine.resume` swaps `S.stack` to
-the target coroutine's stack (created on first resume, held in a
-weak-keyed table by coroutine whose values never refer to the key) for
-the duration of the call and restores it after, which covers the yield
+the target coroutine's stack (created on first resume, held in a table
+weak in both keys and values, keyed by coroutine; each record holds its
+stack, so a stack lives exactly while its coroutine is running or has an
+active record, and a hook that closes over its own coroutine cannot keep
+the coroutine alive through the table, which Lua 5.1's lack of
+ephemerons would otherwise allow) for the duration of the call and
+restores it after, which covers the yield
 path without wrapping `coroutine.yield`; when the original returns
 `false` the coroutine is dead and its whole stack is unwound.
 `coroutine.wrap` creates through the original and returns a function
 that resumes the same way and re-raises as Lua's does. The wrappers pass
-varargs through and allocate nothing: a `pcall` costs one field read
-before and one compare after. `coroutine.running`, `coroutine.status`,
+varargs through and allocate nothing. Each is a wrapper and its
+continuation, two Lua vararg frames, since a single frame cannot inspect
+the first result without packing the rest; the measured cost is in
+"Performance". Records a hidden catch left behind in a suspended
+coroutine with no active record above them are collected with their
+stack and die through their sentinels, not at a later exit. `coroutine.running`, `coroutine.status`,
 `coroutine.create`, `coroutine.yield` and `error` are untouched.
 
 A coroutine the collector finds unreachable drops its stack with it; the
@@ -300,8 +312,16 @@ only where the spec asks for them:
 - the scope record and its push and pop, per entry into a block that
   anchors to `lifetime.scope`. Nothing the transpiler emits creates a
   closure or a `pcall`, so a loop whose body owns something stays
-  compilable by LuaJIT; the benchmark of task 006 that runs such a loop
-  against hand-written cleanup is the number.
+  compilable by LuaJIT; measured (task 003, ns per 10 operations, Lua
+  5.1 / LuaJIT): a loop body owning one object 27 600 / 4 300, an empty
+  `enter`/`exit` 4 500 / 920, a hook on a scope 24 500 / 3 850;
+- the four replacements for `pcall`, `xpcall`, `coroutine.resume` and
+  `coroutine.wrap`, two Lua frames each where the host had a C function;
+  measured (task 003): on Lua 5.1 `pcall` of an empty function 120 vs 53
+  ns, `pcall` with an error 216 vs 123 ns, `resume`/`yield` 176 vs 75 ns;
+  on LuaJIT 2.6 vs 2.1 ns, parity, 64 vs 48 ns. `make bench` marks them
+  `SLOWER` against a base without the runtime; that mark is the design's,
+  not a regression.
 
 Rules the implementation follows on hot paths: runtime functions are
 locals of the module, and the generated chunk binds the ones it calls to

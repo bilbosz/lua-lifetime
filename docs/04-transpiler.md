@@ -124,14 +124,17 @@ blocks get code; every
 other block is emitted verbatim. For a block that needs one:
 
 ```lua
-do local __s1 = lifetime.enter(<line of end>)
+do local __s1 = lifetime.enter("<chunk>:<line of end>")
   …
-lifetime.exit(__s1, <line>) end
+lifetime.exit(__s1, "<chunk>:<line>") end
 ```
 
-The line passed to `enter` is the line of the block's `end`, which the
-runtime reports for an object the error path unwinds; the line passed to
-`exit` is the line of the exit that runs it.
+The position passed to `enter` is that of the block's `end`, which the
+runtime reports for an object the error path unwinds; the position passed
+to `exit` is that of the exit that runs it. Both are constant
+`"chunk:line"` strings the emitter writes, since the runtime may not read
+`debug.*` on a per-block path and cannot learn the chunk name otherwise;
+the runtime stores and renders them as given.
 
 - **Fall-through**: the epilogue at the end of the block.
 - **`return explist`** inside the block (at any nesting below it that is
