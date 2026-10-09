@@ -240,6 +240,11 @@ test.case("the error position is the attach call's", function()
         attach(5, false, {})
     end, "attempt to anchor a number value")
     test.assert_eq(err:sub(1, #THIS_FILE), THIS_FILE)
+    local line = debug.getinfo(1, "l").currentline
+    err = test.assert_error(function()
+        attach({}, false, {}, nil)
+    end, "attempt to anchor to a nil value")
+    test.assert_eq(err:sub(1, #THIS_FILE + 1 + #tostring(line + 2)), THIS_FILE .. ":" .. (line + 2))
 end)
 
 test.case("anchoring to a dying object raises; a fresh object anchored elsewhere during the phase works", function()

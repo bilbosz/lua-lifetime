@@ -129,4 +129,73 @@ state of an object").
 
 ## Spec issues found
 
+Found by the implementer, round 1. None changes the semantics; each says
+what the code does and why, for the reviewer and the human to decide.
+
+1. **`destroy` on a dying object inside a body.** `docs/02-semantics.md`,
+   "Explicit destruction", says "`destroy` on a dead or dying object is a
+   no-op, so a destructor body may destroy its own dependents by hand,
+   early, and the runtime's later pass skips them". With decide-then-destroy
+   ("Cascading death", step 1) every dependent is already *dying* when the
+   anchor's body runs (the Vocabulary's definition), so read literally the
+   by-hand `destroy` would do nothing and nothing would happen early.
+   Test case 3 of this task and "What a destructor may assume" ("It may
+   also see dependents it destroyed by hand already torn down") need the
+   early destruction. Implemented: `destroy`/`discard` is a no-op on a dead
+   object and on a dying one whose destruction has begun; a dependent
+   decided dying and not yet reached is destroyed now, as a cascade of its
+   own (reason `"destroy"`, `<where>` the by-hand call), with the subtree
+   the running cascade decided. Suggested wording: "`destroy` on a dead
+   object, or on one whose destruction has already begun, is a no-op".
+2. **A tombstone is not empty under `next`.** 02, "Tombstones", says
+   `rawget`, `next`, `pairs`, `#` "see an empty table"; `docs/03-runtime.md`,
+   "The tombstone" and "The cascade", keep the state record, reduced, in
+   the tombstone ("record `reason` and `where`"), and the private-key
+   decision makes that field visible to `next`. Implemented as 03 says:
+   every user field is cleared, the record stays under the private key, so
+   `next(dead)` returns that key and `lifetime.is_state` skips it. 02 could
+   say "an empty table apart from the state record".
+3. **`<where>` for a bare table.** 03, "The cascade", reads
+   `debug.getinfo(2, "Sl")` "only when the object it destroys has
+   dependents or a destructor"; 02, "Tombstones", puts `<where>` in every
+   tombstone's message, including a `destroy`ed table with neither.
+   Implemented as 02: `destroy`/`discard` of a live object always read the
+   caller's position (once per call, not per object).
+4. **Pinned dependents and the weak list.** 02, "Summary": `@
+   lifetime.pin(a)` is kept alive by `a`. 03 makes `dependents`
+   weak-valued and only `hooks` strong, and says nothing about where the
+   strong reference to a pinned dependent lives. Here `attach(x, true, a)`
+   records a formula without the term but links `x` weakly like any
+   dependent, so an unreferenced pinned table is collected. Task 004
+   (`lifetime.pin`) has to decide where pinned dependents are held.
+5. **Two messages for moving a dying object.** 02, step 3: "If `e` is
+   dying, error: `attempt to move a dying table`"; "No moves during
+   destruction": moving an older anchored object, "the dying object
+   included, is `attempt to move an anchored table during destruction`".
+   Implemented step 3 first: any dying object gives `attempt to move a
+   dying table`; an older, explicitly anchored live object during a phase
+   gives the destruction message (tests cover both).
+6. **Texts the spec does not give**, chosen to follow its patterns:
+   `attach` on a dead object and `lifetime.of`/`lifetime.format` of one
+   raise the tombstone's own message with the verb `index` ("the dead
+   metatable raises first"); `attach` of a lifetime value is `attempt to
+   anchor a lifetime value`; `destroy`/`discard`/`lifetime.of` of a
+   lifetime value is `bad argument #1 to '…' (object expected, got
+   lifetime)`; `lifetime.format(5)` is `bad argument #1 to
+   'lifetime.format' (lifetime expected, got number)`; `attach(x, false)`
+   with no anchor is `bad argument #3 to 'lifetime.attach' (anchor
+   expected, got no value)`.
+7. **Smaller choices.** No global `destroyerror` is installed: when the
+   global is `nil` the default handler runs; "not callable" applies to any
+   other non-callable value. A `__tostring` that raises while the name is
+   captured falls back to the raw `table: 0x…` name. The tombstone of a
+   `discard`ed root records reason `"destroy"`. `==` on lifetime values
+   compares the term and the set of anchors, order ignored (a
+   conjunction). `<name>` is captured in the decide step, as 03 says
+   ("captured when the object starts dying"), which 02's "just before the
+   object died" reads loosely.
+8. **Non-table dependents** (out of scope here): `attach`, `destroy`,
+   `discard` and `lifetime.of` on a function, coroutine or userdata raise
+   `lifetime: … is not implemented yet` rather than guessing.
+
 ## Review log
