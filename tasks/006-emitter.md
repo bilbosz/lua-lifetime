@@ -170,15 +170,28 @@ each says what the code does and why, for the reviewer and the human.
    = __lt_select("#", ...), ...} end` once in its header, beside
    `__lt_unpack` and `__lt_select` bound to `unpack` and `select`. The cost
    is one table per such `return` (`emit/return-call`); LuaJIT stitches
-   around `unpack`.
+   around `unpack`. A cheaper spelling exists and observes the same
+   values, order and trailing `nil`s: a header helper `local function
+   __lt_ret(rec, pos, ...) __lt_exit(rec, pos); return ... end` and
+   `return __lt_ret(__s1, "c:7", g(x))`, nested once per epilogue (the
+   innermost record's call innermost), with no table. Measured with the
+   real runtime on one function owning one object (`return g(x.v)`, two
+   values): about 1020 ns per call packed against 850 with the helper and 815 for
+   `return a, x.v` under LuaJIT, 3040 against 2750 and 2700 under Lua
+   5.1. It is not used, because 04, "Blocks", prescribes the mechanism
+   ("packing with `select("#", …)` and unpacking with `unpack(t, 1,
+   n)`") and the helper's call is a tail call, so a traceback taken in a
+   destructor run by that epilogue shows the helper's frame in place of
+   the returning function's. Question: may 04 describe the guarantee
+   (trailing `nil`s survive) and leave the mechanism to the emitter?
 6. **A loop that owns an object is not one LuaJIT trace with the current
    runtime.** 04, "The error path", says "A loop whose body owns something
    is still one trace for LuaJIT". Nothing the emitter writes stops the
    trace: with a loop-free stand-in of `attach`, `enter` and `exit`, `luajit
    -jv` records the generated loop as one trace (`[TRACE 1 scoped.lt:3
    loop]`, with one side trace back into it, as the hand-written loop
-   with the destructor called by hand). With the real runtime the root trace aborts with `inner loop in
-   root trace at init.lua:691`, the tombstone's `for k in next, obj` that
+   with the destructor called by hand). With the real runtime the root
+   trace aborts with `inner loop in root trace at init.lua:691`, the tombstone's `for k in next, obj` that
    clears the dying object's fields (task 002), and the loop runs in the
    interpreter with the cascade's own traces linked in. This is the
    runtime's, not a change to the semantics; recorded for the runtime and
