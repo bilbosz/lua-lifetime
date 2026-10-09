@@ -31,6 +31,11 @@
 --                        `unpack(t, 1, n)`; against the same by hand with
 --                        two locals (the emitter cannot know the count)
 --
+-- In both return benchmarks the destructor publishes its object
+-- (PUBLISHED_MT), so that under LuaJIT the baseline allocates the object
+-- and calls the destructor as the built code does, rather than sinking
+-- the allocation and folding the call away (task 007).
+--
 -- A source that does not build (a base whose emitter predates task 006)
 -- gives a benchmark that raises, which the harness reports while the
 -- other benchmarks of the file still run (bench/README.md); the built
@@ -44,6 +49,18 @@ local MT = {
         closed = closed + 1
     end
 }
+
+-- The metatable of emit/return-fixed and emit/return-call: the destructor
+-- publishes the object it closes, so the baseline's object escapes as the
+-- built code's does (into the runtime's tables) and its allocation and
+-- its destructor call are work LuaJIT must do. With MT, LuaJIT sank the
+-- baseline's allocation and folded its inlined destructor call to an
+-- upvalue increment, about 1 ns per iteration against which no runtime
+-- could be measured (task 006's review, F1; task 007).
+local PUBLISHED_MT = {}
+function PUBLISHED_MT.__destroy(self, reason)
+    PUBLISHED_MT.last = self
+end
 
 -- The function a chunk built from `.lt` source by cli.build returns when
 -- called with `...`; when the build fails (a base without task 006), a
@@ -148,7 +165,7 @@ return function()
         f(i)
     end
 end
-]], MT), direct("return-fixed.lua", [[
+]], PUBLISHED_MT), direct("return-fixed.lua", [[
 local MT = ...
 local destroy = MT.__destroy
 local function f(a)
@@ -162,7 +179,7 @@ return function()
         f(i)
     end
 end
-]], MT))
+]], PUBLISHED_MT))
 
 -- emit/return-call
 add("emit/return-call", built("return-call.lt", [[
@@ -179,7 +196,7 @@ return function()
         f(i)
     end
 end
-]], MT), direct("return-call.lua", [[
+]], PUBLISHED_MT), direct("return-call.lua", [[
 local MT = ...
 local destroy = MT.__destroy
 local function g(a)
@@ -196,4 +213,4 @@ return function()
         f(i)
     end
 end
-]], MT))
+]], PUBLISHED_MT))

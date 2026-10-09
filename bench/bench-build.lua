@@ -17,6 +17,20 @@
 --                           is `loadstring` of the same file with the
 --                           extension left out (task 005). A base that
 --                           predates the extension cannot run it.
+--   build/extension-5000    `cli.build` end to end on the same file (task
+--                           007, from task 006's review, F1): its first
+--                           `lifetime.scope` is on line 3, so the emission
+--                           without the analysis stops at once and the
+--                           chunk is analysed and emitted again; same
+--                           baseline as parse/extension-5000
+--   build/scope-at-end-5000 `cli.build` on build/generated-5000's file
+--                           with `local last = {} @ lifetime.scope` added
+--                           as its last line: the worst case of the
+--                           emitter's restart, a whole emission thrown
+--                           away, then the analysis and the emission
+--                           again; the baseline is `loadstring` of the
+--                           same file with the anchor left out, so the
+--                           ratio reads against build/generated-5000's
 --
 -- Input files are read relative to the current directory, so under `make
 -- bench BASE=<ref>` the base's transpiler gets the same text as the
@@ -135,4 +149,20 @@ add_parse("parse/lifetime-largest", largest_source, largest, largest_source)
 -- file still run.
 local plain_5000 = generate_extended(5000, false)
 assert(loadstring(plain_5000, "=extension-5000.lt"))
-add_parse("parse/extension-5000", generate_extended(5000, true), "extension-5000.lt", plain_5000)
+local extended_5000 = generate_extended(5000, true)
+add_parse("parse/extension-5000", extended_5000, "extension-5000.lt", plain_5000)
+-- `cli.build` on a file that uses the extension, against `loadstring` of
+-- `plain`; no build up front, as above.
+local function add_extension_build(name, source, chunkname, plain)
+    bench.add(name, function()
+        assert(cli.build(source, chunkname))
+    end, {
+        baseline = function()
+            loadstring(plain, "=" .. chunkname)
+        end
+    })
+end
+add_extension_build("build/extension-5000", extended_5000, "extension-5000.lt", plain_5000)
+local generated_5000 = generate_plain_lua(5000)
+assert(loadstring(generated_5000 .. "local last = {}\n", "=scope-at-end-5000.lt"))
+add_extension_build("build/scope-at-end-5000", generated_5000 .. "local last = {} @ lifetime.scope\n", "scope-at-end-5000.lt", generated_5000 .. "local last = {}\n")

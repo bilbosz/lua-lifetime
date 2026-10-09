@@ -48,7 +48,13 @@
 -- after it), so a chunk that uses `lifetime.scope` is analysed first
 -- (`analyse`). A chunk that does not is emitted in one pass: emission
 -- starts without the analysis and starts over with it at the first
--- `lifetime.scope` it meets, so plain Lua pays no second walk.
+-- `lifetime.scope` it meets, so plain Lua pays no second walk. The
+-- one-pass case is measured by `build/plain.lt`, `build/generated-5000`
+-- and `build/lifetime-largest` in bench/bench-build.lua (`make bench`);
+-- the restart by `build/extension-5000` (a `lifetime.scope` on line 3)
+-- and `build/scope-at-end-5000` (on the last line: a whole emission
+-- thrown away, about 15% more than `build/generated-5000` on the same
+-- file, task 007).
 
 local count_newlines = require("lifetime.lexer").count_newlines
 

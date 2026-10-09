@@ -177,6 +177,8 @@ comparable with either: it depends on the files before it.
 | `build/lifetime-largest` | `bench-build.lua` | `cli.build` on the largest file under `lifetime/` (today `lifetime/parser.lua`); cited by the `jit.off` comments in `lifetime/parser.lua` and `lifetime/emit.lua` | `loadstring` of the same text |
 | `parse/lifetime-largest` | `bench-build.lua` | the lexer and the parser alone on the same file as `build/lifetime-largest` (task 005) | `loadstring` of the same text |
 | `parse/extension-5000` | `bench-build.lua` | the lexer and the parser on a generated 5 000-line file that uses `@`, the list form, `!@` and `lifetime.scope` on most lines (task 005); a base without the extension cannot run it | `loadstring` of the same file with the extension left out |
+| `build/extension-5000` | `bench-build.lua` | `cli.build` end to end on the file of `parse/extension-5000`, whose first `lifetime.scope` is on line 3: the emitter's restart with the analysis (task 007) | `loadstring` of the same file with the extension left out |
+| `build/scope-at-end-5000` | `bench-build.lua` | `cli.build` on the file of `build/generated-5000` plus a last line `local last = {} @ lifetime.scope`: the restart's worst case, a whole emission thrown away (task 007) | `loadstring` of the same file with the anchor left out |
 | `plain/transpiled` | `bench-plain.lua` | running the transpiled output of `bench/plain/workload.lua` | running the same source loaded directly; ratio 1.0 within noise |
 | `runtime/attach-destroy-100` | `bench-runtime.lua` | an anchor, 100 dependents with a `__destroy` attached, then `destroy(anchor)` | an array of the same 100 children and an explicit close loop, newest first |
 | `runtime/move` | `bench-runtime.lua` | one move of an object between two anchors | moving it between two sets |
@@ -192,8 +194,9 @@ comparable with either: it depends on the files before it.
 | `emit/scoped-loop` | `bench-emit.lua` | 10 iterations of a loop body owning one object with a `__destroy` (`local x = setmetatable({}, MT) @ lifetime.scope`), built by `cli.build`: record, push, attach, pop, epilogue (task 006) | the same loop calling the destructor by hand at the end of each iteration |
 | `emit/unscoped-loop` | `bench-emit.lua` | the same loop without the anchor, built by `cli.build` in a chunk whose other function has a scope record | the same source loaded directly; ratio 1.0 within noise |
 | `emit/calls` | `bench-emit.lua` | 65 calls of two small non-recursive functions, built by `cli.build` in a chunk with a scope record elsewhere | the same source loaded directly; ratio 1.0 within noise |
-| `emit/return-fixed` | `bench-emit.lua` | 10 calls of a function that owns one object and returns `a, x.v` through its body's epilogue | the destructor called by hand between computing the values and returning them |
-| `emit/return-call` | `bench-emit.lua` | the same with `return g(x.v)`: the values packed with `select("#", …)` and unpacked with `unpack(t, 1, n)` | the same by hand with two locals |
+| `emit/return-fixed` | `bench-emit.lua` | 10 calls of a function that owns one object and returns `a, x.v` through its body's epilogue; the destructor publishes its object | the destructor called by hand between computing the values and returning them; publishing the object keeps LuaJIT from sinking it and folding the call (task 007) |
+| `emit/return-call` | `bench-emit.lua` | the same with `return g(x.v)`: the values packed with `select("#", …)` and unpacked with `unpack(t, 1, n)` | the same by hand with two locals, the object published as above |
+| `run/plain.lt` | `bench-run.lua` | the startup of `lifetime run examples/plain.lt` in its process: the command's modules loaded from their files, the build, the load, the runtime, the call through the runtime's `xpcall` (task 007) | reading, loading and calling the generated file, as `lua5.1 FILE` or `luajit FILE` does; the ratio is a fixed cost per run, not per call |
 
 ## Adding a benchmark
 
