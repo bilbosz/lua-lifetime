@@ -91,7 +91,9 @@ a field lookup. The header names only what the chunk uses; a chunk that
 uses no extension syntax and names no lifetime builtin gets no header
 and is its input unchanged. `destroyerror` is not bound: the runtime reads
 it raw from `_G` (02, "Errors in destructors"). A source file that shadows
-these names gets what it wrote.
+these names gets what it wrote. An assignment to the global `lifetime` in a transpiled chunk assigns
+the header's local (an assignment target counts as naming the builtin); a
+program that wants the global sets `_G.lifetime`.
 
 ## What `@` expands to
 
@@ -108,7 +110,9 @@ these names gets what it wrote.
 | `local h = f !@ a`, `h = f !@ a`, `t.h = f !@ a` | `… = lifetime.hook(f, "h", a)`: the name of the binding target ([02-semantics.md](02-semantics.md), "Named hooks") |
 
 `attach` returns its first argument, so the expression form keeps its
-value. `lifetime.token("t")` is an ordinary call and is emitted as
+value. A call or `...` as the last item of a list is parenthesised in the
+generated call, so an anchor item is always one value (02, "Acquiring a
+lifetime", step 2). `lifetime.token("t")` is an ordinary call and is emitted as
 written; `lifetime.token("t") @ a` is the `@` row. The rows below that still read `lifetime.x` are bound to a local in
 the header the same way when the chunk uses them; the table shows the
 runtime entry point, not the spelling. The implicit `reachable` term is the runtime's business
@@ -134,7 +138,8 @@ runtime reports for an object the error path unwinds; the position passed
 to `exit` is that of the exit that runs it. Both are constant
 `"chunk:line"` strings the emitter writes, since the runtime may not read
 `debug.*` on a per-block path and cannot learn the chunk name otherwise;
-the runtime stores and renders them as given.
+the runtime stores and renders them as given. For a block closed by `elseif`, `else` or `until` the position is that
+token's; for the main chunk it is the line of `<eof>`.
 
 - **Fall-through**: the epilogue at the end of the block.
 - **`return explist`** inside the block (at any nesting below it that is
@@ -147,7 +152,9 @@ the runtime stores and renders them as given.
 - **`break`**: the epilogues of the blocks between the `break` and the
   loop body it leaves, innermost first, then the `break`.
 - **`goto` (LuaJIT)**: the epilogues of the blocks the jump leaves,
-  innermost first. A `goto` into a block that needs a record is a compile
+  innermost first. A `goto` to a label at the end of a block (the `continue` idiom) runs
+  that block's epilogue before the jump, with the position of the block's
+  `end`, as fall-through would. A `goto` into a block that needs a record is a compile
   error ("jumps into the scope of a lifetime").
 - **A loop body** is a block: the record is created and destroyed once per
   iteration.
