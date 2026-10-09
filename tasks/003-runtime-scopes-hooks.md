@@ -1,9 +1,9 @@
 ---
 id: 003
 title: Runtime: scope records, hooks
-status: todo
+status: in-progress
 depends: [002]
-branch:
+branch: task/003-runtime-scopes-hooks
 pr:
 commits:
 review:
