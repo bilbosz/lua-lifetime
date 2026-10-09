@@ -122,4 +122,66 @@ of `docs/05-decisions.md`, "Scopes unwind at the catch site".
 
 ## Spec issues found
 
+Found by the implementer, round 1. None changes what a program observes;
+each says what the code does and why, for the reviewer and the human.
+
+1. **`e @ lifetime.pin(a, b)` comes out as `__lt_attach(e, false,
+   (lifetime.pin(a, b)))`.** The row of `docs/04-transpiler.md`, "What `@`
+   expands to", shows no parentheses, while task 005's note for this task
+   (from 02, "Acquiring a lifetime": "Evaluate each element") asks for a
+   call or `...` as the last anchor item to be truncated to one value. The
+   emitter cannot tell `lifetime.pin` from any other call (`lifetime` is an
+   ordinary name), so every call in that position is parenthesised;
+   `lifetime.pin` returns one value, so nothing differs at run time. 04's
+   table could say "a call or `...` as the last item is parenthesised".
+2. **A `goto` to a label at the end of a block with a record.** LuaJIT
+   lets a `goto` jump over a local only to a label at the end of its block
+   (the `continue` idiom: `goto continue` ... `local y` ... `::continue::
+   end`). An epilogue written after that label would make it no longer the
+   last statement and LuaJIT would refuse the jump ("jumps into the scope
+   of local"). The emitter writes the epilogue before a block's trailing
+   labels and runs it before every `goto` to one of them, with the
+   position of the block's `end`, which is what jumping to the label and
+   falling through to `end` does. 04, "Blocks", says only "the epilogues of
+   the blocks the jump leaves"; the reading is that a jump to a trailing
+   label leaves the block as falling through does. No such treatment in a
+   `repeat` body: LuaJIT never counts a label before `until` as the end.
+3. **"Names a lifetime builtin."** Read as: the chunk refers to one of the
+   global names `lifetime`, `destroy`, `discard` (an Id not shadowed by a
+   local, parameter or loop variable in scope), as an expression or as an
+   assignment target. A plain chunk that assigns the global (`lifetime =
+   require("lifetime")`) therefore gets the header and assigns its local
+   instead of the global. 04 says "A source file that shadows these names
+   gets what it wrote" for the opposite case. Question, current choice:
+   targets count.
+4. **The positions given to `enter`.** "The line of the block's `end`":
+   for a block closed by another token the emitter uses that token's line
+   (`elseif`, `else` for an `if` branch, `until` for a `repeat` body), and
+   for the main chunk the line of `<eof>`; the fall-through epilogue passes
+   the same position.
+5. **`return` with a call or `...` last packs through a helper in the
+   header.** Lua 5.1 has no `table.pack`, the values of a call can only be
+   counted inside a vararg function, and the runtime exports no packer, so
+   a chunk that needs it defines `local function __lt_pack(...) return {n
+   = __lt_select("#", ...), ...} end` once in its header, beside
+   `__lt_unpack` and `__lt_select` bound to `unpack` and `select`. The cost
+   is one table per such `return` (`emit/return-call`); LuaJIT stitches
+   around `unpack`.
+6. **A loop that owns an object is not one LuaJIT trace with the current
+   runtime.** 04, "The error path", says "A loop whose body owns something
+   is still one trace for LuaJIT". Nothing the emitter writes stops the
+   trace: with a loop-free stand-in of `attach`, `enter` and `exit`, `luajit
+   -jv` records the generated loop as one trace (`[TRACE 4 scoped.lt:3
+   loop]`). With the real runtime the root trace aborts with `inner loop in
+   root trace at init.lua:691`, the tombstone's `for k in next, obj` that
+   clears the dying object's fields (task 002), and the loop runs in the
+   interpreter with the cascade's own traces linked in. This is the
+   runtime's (task 004 is working in `lifetime/init.lua`), not a change to
+   the semantics; recorded for the runtime and for 03, "Performance".
+7. **`lifetime.alive` is not on master yet** (task 004). Test case 1a
+   prints `lifetime.alive(hook)`; `examples/named_hook.lt` shows the dead
+   hook through `tostring` (`dead hook hook`) and `getmetatable`
+   (`dead`) instead, both from 02, "Tombstones and `lifetime.alive`". A
+   line with `lifetime.alive` can be added once task 004 is merged.
+
 ## Review log
