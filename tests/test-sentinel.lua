@@ -822,6 +822,66 @@ test.case("a finalizer that runs inside attach waits until attach has linked, th
     test.assert_eq(getmetatable(obj), "dead")
 end)
 
+test.case("a foreign __gc that raises inside attach does not stop later deaths by the collector", function()
+    -- Task 004, review round 1, F2. A plain proxy whose `__gc` raises is
+    -- collected inside `attach`, while the runtime's flag `busy` is set;
+    -- on Lua 5.1 the error leaves `attach` through the allocation, before
+    -- the flag is cleared. The next operation sets and clears the flag
+    -- again, so a later registered object still dies at the next
+    -- collection. Only the recovery is asserted: whether the error
+    -- reaches `attach` depends on the host. LuaJIT does not propagate an
+    -- error from a finalizer; it writes "ERROR in finalizer" to stderr
+    -- itself, so there the `__gc` does not raise, to keep the suite's
+    -- output clean, and the case checks the same recovery.
+    local raises = not rawget(_G, "jit")
+    local busy_index
+    for i = 1, math.huge do
+        local name = debug.getupvalue(attach, i)
+        if name == nil then
+            break
+        elseif name == "busy" then
+            busy_index = i
+        end
+    end
+    test.assert_true(busy_index ~= nil, "attach has the upvalue busy")
+    local anchor = {}
+    local fired = false
+    local function on_line()
+        if not fired and select(2, debug.getupvalue(attach, busy_index)) ~= 0 then
+            fired = true
+            collect()
+        end
+    end
+    local jit_on = rawget(_G, "jit") and jit.status()
+    if jit_on then
+        jit.off()
+        jit.flush()
+    end
+    collectgarbage("stop")
+    run_dropped(function()
+        local q = newproxy(true)
+        getmetatable(q).__gc = function()
+            if raises then
+                error("foreign __gc", 0)
+            end
+        end
+    end)
+    debug.sethook(on_line, "l")
+    pcall(attach, {}, false, anchor)
+    debug.sethook()
+    collectgarbage("restart")
+    if jit_on then
+        jit.on()
+    end
+    test.assert_true(fired, "the collection ran inside attach")
+    local log = {}
+    run_dropped(function()
+        attach(new_logged(log, "later"), false, lifetime.reachable)
+    end)
+    collect()
+    test.assert_deep_eq(log, {"later (unreachable)"})
+end)
+
 ------------------------------------------------------------------------
 test.suite("sentinel: program end")
 

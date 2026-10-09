@@ -227,11 +227,17 @@ end
 -- own allocations: `attach` validates its anchors, then allocates (a
 -- state record, a dependents list, a proxy) and links. A cascade run in
 -- between could kill an anchor already validated and leave the object
--- linked to a tombstone. `busy` counts the runtime operations that
--- validate and then mutate across an allocation; while it is not 0 the
--- finalizer queues its proxy (holding it, and so its owner, for that
--- moment), and the operation drains the queue when it ends, so the
--- cascade runs as if the collector had found the object just after it.
+-- linked to a tombstone. `busy` is 1 while a runtime operation that
+-- validates and then mutates across an allocation runs, 0 otherwise;
+-- while it is 1 the finalizer queues its proxy (holding it, and so its
+-- owner, for that moment), and the operation drains the queue when it
+-- ends, so the cascade runs as if the collector had found the object
+-- just after it. It is a flag written by assignment, not a counter: the
+-- regions never nest and run no user code of their own, and a foreign
+-- `__gc` that raises out of one (Lua 5.1 propagates it through the
+-- allocation) leaves the flag set only until the next operation sets and
+-- clears it again, where a counter would stay above 0 and silently stop
+-- every later death by the collector (task 004, review round 1, F2).
 local busy = 0
 local queue, queue_head, queue_tail = {}, 1, 0
 
@@ -1184,7 +1190,7 @@ local function attach_general(fname, obj, pin, count, ...)
 
     -- Everything is valid; from here on the collector's finalizers wait
     -- ("Sentinels": `busy`).
-    busy = busy + 1
+    busy = 1
     if st == nil then
         st = new_state(obj)
     end
@@ -1237,7 +1243,7 @@ local function attach_general(fname, obj, pin, count, ...)
         end
         st.reachable = false
     end
-    busy = busy - 1
+    busy = 0
     if busy == 0 and queue_tail ~= 0 then
         drain()
     end
@@ -1273,7 +1279,7 @@ function lifetime.attach(obj, pin, ...)
             if st == nil then
                 local mt = debug_getmetatable(obj)
                 if mt ~= VALUE_MT then
-                    busy = busy + 1
+                    busy = 1
                     -- `new_state`, inlined, with the formula filled in.
                     st = {
                         a,
@@ -1317,28 +1323,21 @@ function lifetime.attach(obj, pin, ...)
                             st.reachable = new_sentinel(obj)
                         end
                     end
-                    busy = busy - 1
+                    busy = 0
                     if busy == 0 and queue_tail ~= 0 then
                         drain()
                     end
                     return obj
                 end
             elseif not st.phase and st.n == 1 and st.reachable and not pin then
-                -- An anchor that has its dependents list already gets an
-                -- unpinned link without an allocation (a table store that
-                -- grows a table runs no collector step on either host), so
-                -- no finalizer can run in between and `busy` is not needed.
-                if ast.deps then
-                    unlink(st[1][STATE], st[2], false)
-                    st[1] = a
-                    st[2] = link(a, ast, obj, false)
-                    return obj
-                end
-                busy = busy + 1
+                -- The ordinary move. It runs in a `busy` region like every
+                -- other operation: even a store that allocates nothing can
+                -- meet a debug hook that does (task 004, review round 1).
+                busy = 1
                 unlink(st[1][STATE], st[2], false)
                 st[1] = a
                 st[2] = link(a, ast, obj, false)
-                busy = busy - 1
+                busy = 0
                 if busy == 0 and queue_tail ~= 0 then
                     drain()
                 end
@@ -1402,9 +1401,9 @@ function lifetime.of(obj)
     end
     st = new_state(obj)
     if has_destroy(debug_getmetatable(obj)) then
-        busy = busy + 1
+        busy = 1
         st.reachable = new_sentinel(obj)
-        busy = busy - 1
+        busy = 0
         if busy == 0 and queue_tail ~= 0 then
             drain()
         end
@@ -1566,11 +1565,11 @@ function lifetime.hook(f, name, ...)
         local a = ...
         local ast = type(a) == "table" and rawget(a, STATE)
         if ast and not ast.phase then
-            busy = busy + 1
+            busy = 1
             st[1] = a
             st[2] = link(a, ast, h, true)
             st.n = 1
-            busy = busy - 1
+            busy = 0
             if busy == 0 and queue_tail ~= 0 then
                 drain()
             end
@@ -2007,7 +2006,7 @@ drain = function()
 end
 
 finalize = function(p)
-    if busy > 0 then
+    if busy ~= 0 then
         queue_tail = queue_tail + 1
         queue[queue_tail] = p
         return
