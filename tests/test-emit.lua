@@ -148,6 +148,18 @@ test.case("tokens that would lex differently when adjacent are kept apart", func
     test.assert_deep_eq(lexer.tokenize(output, "t"), lexer.tokenize(source, "t"))
 end)
 
+test.case("a call after a Name on a new line inside a table constructor round-trips", function()
+    -- Review round 1, F1: Lua accepts `{ f\n(x) }` as a call.
+    local source = "local function f(v) return v end\nlocal x = { f\n(1) }\nlocal t = { f\n\n(2) }\nreturn x[1] + t[1]"
+    local ast = parse(source)
+    local output = emit.emit(ast)
+    test.assert_deep_eq(parse(output), ast)
+    test.assert_deep_eq(lexer.tokenize(output, "t"), lexer.tokenize(source, "t"))
+    local f_source, f_output = assert(loadstring(source, "=t")), assert(loadstring(output, "=t"))
+    test.assert_true(string.dump(f_output) == string.dump(f_source), "bytecode differs")
+    test.assert_eq(f_output(), 3)
+end)
+
 test.case("several statements on one line stay on it", function()
     test.assert_eq(round_trip("local a = 1 local b = 2; a = b\nprint(a)"), "local a = 1 local b = 2; a = b\nprint(a)")
     test.assert_eq(round_trip("x = 1 (f)()"), "x = 1 (f)()")

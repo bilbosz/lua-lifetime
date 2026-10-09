@@ -136,6 +136,9 @@ function parser.parse(tokens, chunkname)
     -- The function being parsed: is it vararg, how many loops enclose the
     -- current statement (lparser.c, FuncState and BlockCnt).
     local fs = {is_vararg = true, loops = 0}
+    -- The index of the token a table constructor looked at after a Name
+    -- that turned out to start an expression (see `constructor`).
+    local looked_ahead
 
     -- Raise a syntax error near the current token, at the line Lua names:
     -- the line where the lexer stands after reading it.
@@ -290,6 +293,13 @@ function parser.parse(tokens, chunkname)
                     advance()
                     field.value = expr()
                 else
+                    -- lparser.c, constructor: luaX_lookahead reads the token
+                    -- after the Name and moves the lexer's line past it, so
+                    -- when the Name is consumed Lua's `lastline` is that
+                    -- token's line. A `(` there is never "ambiguous syntax"
+                    -- (`{ f\n(x) }` is a call); funcargs skips the check
+                    -- for that one position.
+                    looked_ahead = pos + 1
                     field = {tag = "PosField", value = expr()}
                     field.line = field.value.line
                 end
@@ -322,7 +332,7 @@ function parser.parse(tokens, chunkname)
         if is("(") then
             local line = tok.line
             local previous = tokens[pos - 1]
-            if line ~= (previous.end_line or previous.line) then
+            if line ~= (previous.end_line or previous.line) and pos ~= looked_ahead then
                 raise("ambiguous syntax (function call x new statement)")
             end
             lines[#lines + 1] = line

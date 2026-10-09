@@ -313,12 +313,29 @@ local ERRORS = {
     {"x = \0", "t:1: unexpected symbol"},
     {"x = \1", "t:1: unexpected symbol near 'char(1)'"},
     {"x = [[a\nb]] + +", "t:2: unexpected symbol near '+'"},
+    -- The lookahead of a table constructor exempts only the token right
+    -- after a Name that starts a field (review round 1, F1).
+    {"x = { f\n(x) = 1 }", "t:2: '}' expected (to close '{' at line 1) near '='"},
+    {"x = { f.g\n(x) }", "t:2: ambiguous syntax (function call x new statement) near '('"},
+    {"x = { a = f\n(x) }", "t:2: ambiguous syntax (function call x new statement) near '('"},
+    {"x = { f\n(x)\n(y) }", "t:3: ambiguous syntax (function call x new statement) near '('"},
     -- A malformed token is reported when the parser reaches it, so an
     -- earlier syntax error wins, as in Lua (deferred lexing).
     {"x = = \"abc", "t:1: unexpected symbol near '='"},
     {"x = 1 .. 0x", "t:1: malformed number near '0x'"},
     {"\"abc", "t:1: unfinished string near '<eof>'"}
 }
+
+test.case("a Name in a table constructor followed by `(` on a later line is a call", function()
+    -- lparser.c, constructor: luaX_lookahead moves Lua's line past the
+    -- token after the Name, so funcargs sees no new line there. Lua 5.1
+    -- and LuaJIT both accept these chunks.
+    test.assert_eq(expression("{ f\n(x) }"), "{f(x)}")
+    test.assert_eq(expression("{ f\n\n(1) }"), "{f(1)}")
+    test.assert_eq(expression("{ f\n(x), g\n(y) }"), "{f(x), g(y)}")
+    test.assert_eq(expression("{ 1, f\n(x) }"), "{1, f(x)}")
+    test.assert_eq(show(parse("t = { f\n\n(1) }")[1].exprs[1]), "{f(1)}")
+end)
 
 test.case("syntax errors in Lua 5.1's wording, at Lua's line", function()
     for _, case in ipairs(ERRORS) do
