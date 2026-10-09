@@ -11,13 +11,16 @@ measures against plain Lua doing the same work by hand.
 
 ```
 make bench                         # every benchmark, every interpreter found
-make bench BASE=master             # the same, plus the comparison with master
+make bench BASE=master             # branch and master alternately, compared
 BENCH_TIME=0.1 make bench          # shorter runs (noisier); default 0.5 s
 make bench INTERPRETERS=luajit     # one interpreter
+make bench BENCH_FILES=bench/bench-plain.lua   # some benchmark files only
+make bench BENCH_OUT=build/mine    # write the output files there
+make bench BASE=old BASE_DIR=../old-checkout   # an existing tree as base
 ```
 
 `make bench` is not part of `make test`: it is slow (about half a minute
-per interpreter today, twice that with `BASE`) and noisy.
+per interpreter today, four times that with `BASE`) and noisy.
 
 ## How a benchmark is measured
 
@@ -57,40 +60,84 @@ extension costs nothing over plain Lua; that is the target of every
 benchmark of the "free" list.
 
 `make bench BASE=<ref>` checks `<ref>` out into `build/base/` with `git
-worktree` (detached, recreated on every run), runs the **branch's**
-benchmark files and input files on the **base's** `lifetime/` (so a
-benchmark the branch adds still gets a base number), writes
-`build/bench-base-<interpreter>.txt`, and prints, and writes to
+worktree` (detached, recreated on every run) and runs the **branch's**
+benchmark files and input files on the **base's** `lifetime/` too (so a
+benchmark the branch adds still gets a base number). Per interpreter it
+runs four `bench/run.lua` processes in alternation, branch, base, branch,
+base, so a slow stretch of the machine falls on both sides; each
+branch-then-base pair is a *pairing*. The runs write
+`build/bench-<interpreter>-1.txt`, `build/bench-base-<interpreter>-1.txt`,
+`build/bench-<interpreter>-2.txt` and `build/bench-base-<interpreter>-2.txt`
+(in the format above; `build/bench-<interpreter>.txt` is only written
+without `BASE`), and `bench/compare.lua` prints, and writes to
 `build/bench-compare-<interpreter>.txt`:
 
 ```
-name<TAB>branch ns/op<TAB>base ns/op<TAB>branch/base<TAB>mark
+name<TAB>branch ns/op<TAB>base ns/op<TAB>pairing 1<TAB>pairing 2<TAB>branch/base<TAB>mark
 ```
 
-`branch/base` above 1.0 means the branch is slower. `mark` is `SLOWER`
-when the ratio is beyond the threshold below. A benchmark the base cannot
-run (it uses something the base's runtime does not have) is reported on
-standard error and gets `-` for base and ratio.
+`branch ns/op` and `base ns/op` are the medians of each side's two runs;
+`pairing 1` and `pairing 2` are branch/base within each pairing;
+`branch/base` is the ratio of the two medians. Above 1.0 means the branch
+is slower. `mark` is `SLOWER` when **both** pairings are beyond the
+threshold below. A benchmark the base cannot run (it uses something the
+base's runtime does not have) is reported on standard error by the base
+run and gets `-` for that pairing, and `-` for `branch/base` unless both
+pairings have it; it is never marked.
+
+`BASE_DIR=<dir>` compares with a tree that already exists instead of
+checking `BASE` out (the tree is used as it is and never removed; `BASE`
+then only names it). `BENCH_FILES` restricts every run to the given
+benchmark files; `BENCH_OUT` puts the output files in another directory
+(the tests use both).
+
+The exit status of `make bench` is 1 when a branch run fails (a benchmark
+file or a benchmark raised), when a base run prints no benchmark line at
+all (the base's `lifetime/` is missing or cannot load anything; the
+message names the interpreter and the pairing, and that interpreter's
+comparison is skipped), or when `bench/compare.lua` fails. A base run that
+fails only some benchmark files passes: those benchmarks get `-` as above
+and the base run's errors stay on standard error.
 
 ## The threshold
 
-A benchmark is a **finding** when it is more than 10% slower than base
-(`branch/base` above 1.10, marked `SLOWER`) **on both of two consecutive
-runs** of `make bench BASE=master` on the same machine. One `SLOWER` mark
-alone is noise until the second run confirms it. The reviewer applies this
-rule (`.claude/skills/review/SKILL.md`, "Performance"); the threshold is
+`make bench BASE=master` marks a benchmark `SLOWER` when it is more than
+10% slower than base **in both pairings** of the invocation: `pairing 1`
+and `pairing 2` both above 1.10. `bench/compare.lua` applies this two-run
+rule; a benchmark with one pairing above 1.10 and the other not is noise
+and is not marked, even when `branch/base` is above 1.10.
+
+A mark is a finding to confirm, not yet a finding: a benchmark is a
+**finding** when it is marked `SLOWER` in **two consecutive invocations**
+of `make bench BASE=master` on the same machine. A mark in one invocation
+of two is noise: both pairings above 1.10 on identical code is rare, but
+at about a percent per benchmark per invocation it is not rare enough to
+count alone. The reviewer applies this rule
+(`.claude/skills/review/SKILL.md`, "Performance"); the threshold is
 `bench.THRESHOLD` in `bench/lib/bench.lua`.
 
 Beyond the threshold, the plain-Lua benchmarks (`plain/*`) must also keep
 their `ratio` at 1.0 within noise: code that does not use the extension
-pays nothing.
+pays nothing. Read that `ratio` in `build/bench-<interpreter>*.txt`, not
+`branch/base`: it compares the transpiled chunk with plain Lua inside one
+process, timed runs interleaved, and is the trustworthy number for the
+"free" benchmarks.
 
-How large the noise is: on the machine where task 010 was written, a
-branch whose `lifetime/` differed from `master` only in comments read
-`branch/base` between 0.93 and 1.10 over three runs of `make bench
-BASE=master`, none beyond the threshold, and six alternating runs of
-`build/generated-5000` (about 2 operations per timed run) spread over
-±5%. A single reading near 1.10 says nothing; two in a row do.
+How large the noise is. It is between processes, not within one: on the
+machine where tasks 010 and 011 were written, `branch/base` for
+**identical** code (a branch whose `lifetime/` matched `master` up to
+comments) ranged from **0.90 to 1.10** across separate `bench/run.lua`
+processes (task 010's review), while the in-process interleaved `ratio`
+of `plain/transpiled` stayed **within 3%** of 1.0, **with occasional
+outliers to 0.94**. Task 011's invocations of `make bench BASE=master` on
+identical `lifetime/` (two by the implementer and two by the reviewer,
+eight processes each) agree: one pairing of `build/generated-5000` under luajit
+read 1.143 while the other pairing of the same invocation read 0.988 (not
+marked), the other pairings spanned 0.903 to 1.089, and the
+`plain/transpiled` `ratio` spanned 0.941 to 1.020. That is why `make
+bench BASE=` alternates processes and asks both pairings to agree rather
+than timing more runs in one process: a single pairing beyond 1.10 says
+nothing, two make a mark, and a mark twice in a row makes a finding.
 
 ## The benchmarks
 
