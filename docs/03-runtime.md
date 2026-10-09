@@ -240,7 +240,7 @@ pinned, and it gets a sentinel under the same rule as a table.
 `lifetime.hook(f, name, a1, …)` creates a hook: a table with a state
 record, the metatable `"hook"`, the function, and the name (a constant
 string the emitter passes for a named hook, `nil` otherwise). It is
-attached pinned to its anchors and linked into each anchor's `hooks`
+attached pinned to its anchors and linked into each anchor's `strong`
 list, never into `dependents`, so the anchor holds it strongly; it never
 carries a sentinel. Its body calls `f(reason)`. Naming costs one string
 constant per creation site and nothing per call.
