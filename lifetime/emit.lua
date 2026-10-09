@@ -124,6 +124,7 @@ local function new_state(info)
         last_number = false,
         glue = false,
         info = info,
+        open_end = 0,
         scope = nil,
         shadow = {lifetime = 0, destroy = 0, discard = 0},
         declared = {},
@@ -724,6 +725,7 @@ local function emit_anchor(st, e, hook)
         end
     end
     put(st, ")", list and lines[n + 2], true)
+    st.open_end = st.n
 end
 
 EXPR.Anchor = function(st, e)
@@ -985,6 +987,33 @@ local function emit_statement(st, s)
     end
 end
 
+-- Does the statement's output start with `(`? A Set or a call statement
+-- whose leftmost prefixexp is parenthesised; the forms of `@` and `!@`
+-- start with the name of a runtime function.
+local function starts_with_paren(s)
+    local tag = s.tag
+    local e
+    if tag == "CallStat" then
+        e = s.call
+    elseif tag == "Set" then
+        e = s.targets[1]
+    else
+        return false
+    end
+    while true do
+        tag = e.tag
+        if tag == "Paren" then
+            return true
+        elseif tag == "Call" then
+            e = e.func
+        elseif tag == "Invoke" or tag == "Member" or tag == "Index" then
+            e = e.obj
+        else
+            return false
+        end
+    end
+end
+
 -- The epilogue of a block on fall-through, at `line`.
 local function put_epilogue(st, bi, line)
     st.continued = false
@@ -1020,6 +1049,13 @@ local function emit_scope(st, b, close, repeat_stat, indent)
     local trailing = record and bi.trailing
     for i = 1, (trailing or n + 1) - 1 do
         emit_statement(st, b[i])
+        -- Generated code that ends a statement with a call's `)` or a
+        -- name, before a statement starting with `(` on a later line,
+        -- would be Lua 5.1's "ambiguous syntax (function call x new
+        -- statement)": a `;` keeps them apart.
+        if st.open_end == st.n and i < n and starts_with_paren(b[i + 1]) then
+            put(st, ";", nil, true)
+        end
     end
     local last = b[n]
     local falls = not (last and (last.tag == "Return" or last.tag == "Break"))
@@ -1039,6 +1075,7 @@ local function emit_scope(st, b, close, repeat_stat, indent)
             st.continued = true
             emit_expr(st, repeat_stat.cond)
             put(st, "; __lt_exit(" .. record .. ", " .. bi.pos .. "); until __u", nil, true)
+            st.open_end = st.n
         else
             put(st, "until", line)
             st.continued = true

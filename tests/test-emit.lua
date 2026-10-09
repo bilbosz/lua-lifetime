@@ -642,3 +642,23 @@ test.case("every example builds to a chunk that loads, with its lines", function
     p:close()
     test.assert_true(n >= 7, n .. " examples")
 end)
+
+test.case("generated code never runs into a following statement that starts with (", function()
+    -- Lua 5.1 refuses a call's `)` or a name at the end of a line followed
+    -- by `(` ("ambiguous syntax (function call x new statement)"); the
+    -- parser takes `x @ (a, b)` and `until n >= 2` as whole, so the
+    -- generated `)` and `until __u` must be kept apart from a next line
+    -- starting with `(`, and nothing else gets a `;`.
+    local sources = {
+        "local a, b = {}, {}\nlocal x = {} @ (a, b)\n(print)(1)",
+        "local a = {}\nlocal f = function() end !@ (a, a)\n(print)(2)",
+        "local n = 0\nrepeat\n    n = n + 1\n    local r = {} @ lifetime.scope\nuntil n >= 2\n(print)(3)"
+    }
+    for _, source in ipairs(sources) do
+        local output = build(source)
+        test.assert_true(loadstring(output, "=c.lt"), output)
+        test.assert_eq(count_lines(output), count_lines(source))
+    end
+    test.assert_eq(build("local a = {}\nx = {} @ (a, a)\n(f)()"), ATTACH .. " local a = {}\nx = __lt_attach({}, false, a, a);\n(f)()")
+    test.assert_eq(build("local a = {}\nx = {} @ (a, a)\nf()"), ATTACH .. " local a = {}\nx = __lt_attach({}, false, a, a)\nf()")
+end)
