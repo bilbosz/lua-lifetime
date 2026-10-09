@@ -41,10 +41,14 @@ print("session destroyed")
 --> dead hook cancelled
 --> session destroyed
 
--- `@` moves a hook; it runs when its new anchor dies and stays pinned.
+-- `@` moves a hook; it runs when its new anchor dies and stays pinned:
+-- dropping the handle and collecting does not take it.
 local first, second = {}, {}
 local moved = function(r) print("moved ran " .. r) end !@ first
 moved @ second
+moved = nil
+collectgarbage("collect")
+collectgarbage("collect")
 destroy(first)
 print("first destroyed")
 destroy(second)

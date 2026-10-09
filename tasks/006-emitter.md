@@ -146,6 +146,10 @@ each says what the code does and why, for the reviewer and the human.
    the blocks the jump leaves"; the reading is that a jump to a trailing
    label leaves the block as falling through does. No such treatment in a
    `repeat` body: LuaJIT never counts a label before `until` as the end.
+   The other reading of "the position passed to `exit` is that of the
+   exit that runs it", the `goto`'s own line as for `break`, would be a
+   one-line change in `analyse`; the current choice reports what the
+   program observes when it reaches the label and falls through.
 3. **"Names a lifetime builtin."** Read as: the chunk refers to one of the
    global names `lifetime`, `destroy`, `discard` (an Id not shadowed by a
    local, parameter or loop variable in scope), as an expression or as an
