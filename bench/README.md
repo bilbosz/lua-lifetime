@@ -189,6 +189,11 @@ comparable with either: it depends on the files before it.
 | `scope/pcall-empty` | `bench-scopes.lua` | 10 `pcall`s of an empty function through the runtime's `pcall` | the original `pcall` (on a base without the replacement, both are the original) |
 | `scope/pcall-error` | `bench-scopes.lua` | 10 `pcall`s of a function that raises through no scoped block | the original `pcall` |
 | `scope/resume-yield` | `bench-scopes.lua` | 10 resumes of a coroutine that yields, through the runtime's `coroutine.resume` | the original `coroutine.resume` |
+| `emit/scoped-loop` | `bench-emit.lua` | 10 iterations of a loop body owning one object with a `__destroy` (`local x = setmetatable({}, MT) @ lifetime.scope`), built by `cli.build`: record, push, attach, pop, epilogue (task 006) | the same loop calling the destructor by hand at the end of each iteration |
+| `emit/unscoped-loop` | `bench-emit.lua` | the same loop without the anchor, built by `cli.build` in a chunk whose other function has a scope record | the same source loaded directly; ratio 1.0 within noise |
+| `emit/calls` | `bench-emit.lua` | 65 calls of two small non-recursive functions, built by `cli.build` in a chunk with a scope record elsewhere | the same source loaded directly; ratio 1.0 within noise |
+| `emit/return-fixed` | `bench-emit.lua` | 10 calls of a function that owns one object and returns `a, x.v` through its body's epilogue | the destructor called by hand between computing the values and returning them |
+| `emit/return-call` | `bench-emit.lua` | the same with `return g(x.v)`: the values packed with `select("#", …)` and unpacked with `unpack(t, 1, n)` | the same by hand with two locals |
 
 ## Adding a benchmark
 

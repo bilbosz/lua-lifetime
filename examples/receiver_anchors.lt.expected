@@ -1,0 +1,11 @@
+writing to first
+close first (anchor)
+after the first block	dead
+writing to second
+after the second receiver	second	true
+after collectgarbage	nil
+close wrong (anchor)
+the caller got	dead log wrong
+anchored to the session	third
+close third (anchor)
+session destroyed	dead

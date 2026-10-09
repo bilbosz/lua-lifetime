@@ -1,0 +1,14 @@
+hook hook
+ran destroy
+after the first destroy
+after the second destroy
+dead hook hook	dead
+false	examples/named_hook.lt:10: attempt to index a dead table (hook hook, died at examples/named_hook.lt:18, destroy)
+owner destroyed
+dead hook cancelled
+session destroyed
+first destroyed
+moved ran anchor
+second destroyed
+hook h1	hook h2	hook on_close	hook chained
+true

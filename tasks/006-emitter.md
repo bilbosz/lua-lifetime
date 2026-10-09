@@ -1,12 +1,12 @@
 ---
 id: 006
 title: Emitter: `@` and lists, hooks (`!@`), block epilogues on every exit path
-status: todo
+status: review
 depends: [003, 005]
-branch:
-pr:
+branch: task/006-emitter
+pr: https://github.com/bilbosz/lua-lifetime/pull/24
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -122,4 +122,95 @@ of `docs/05-decisions.md`, "Scopes unwind at the catch site".
 
 ## Spec issues found
 
+Found by the implementer, round 1. None changes what a program observes;
+each says what the code does and why, for the reviewer and the human.
+
+1. **`e @ lifetime.pin(a, b)` comes out as `__lt_attach(e, false,
+   (lifetime.pin(a, b)))`.** The row of `docs/04-transpiler.md`, "What `@`
+   expands to", shows no parentheses, while task 005's note for this task
+   (from 02, "Acquiring a lifetime": "Evaluate each element") asks for a
+   call or `...` as the last anchor item to be truncated to one value. The
+   emitter cannot tell `lifetime.pin` from any other call (`lifetime` is an
+   ordinary name), so every call in that position is parenthesised;
+   `lifetime.pin` returns one value, so nothing differs at run time. 04's
+   table could say "a call or `...` as the last item is parenthesised".
+2. **A `goto` to a label at the end of a block with a record.** LuaJIT
+   lets a `goto` jump over a local only to a label at the end of its block
+   (the `continue` idiom: `goto continue` ... `local y` ... `::continue::
+   end`). An epilogue written after that label would make it no longer the
+   last statement and LuaJIT would refuse the jump ("jumps into the scope
+   of local"). The emitter writes the epilogue before a block's trailing
+   labels and runs it before every `goto` to one of them, with the
+   position of the block's `end`, which is what jumping to the label and
+   falling through to `end` does. 04, "Blocks", says only "the epilogues of
+   the blocks the jump leaves"; the reading is that a jump to a trailing
+   label leaves the block as falling through does. No such treatment in a
+   `repeat` body: LuaJIT never counts a label before `until` as the end.
+   The other reading of "the position passed to `exit` is that of the
+   exit that runs it", the `goto`'s own line as for `break`, would be a
+   one-line change in `analyse`; the current choice reports what the
+   program observes when it reaches the label and falls through.
+3. **"Names a lifetime builtin."** Read as: the chunk refers to one of the
+   global names `lifetime`, `destroy`, `discard` (an Id not shadowed by a
+   local, parameter or loop variable in scope), as an expression or as an
+   assignment target. A plain chunk that assigns the global (`lifetime =
+   require("lifetime")`) therefore gets the header and assigns its local
+   instead of the global. 04 says "A source file that shadows these names
+   gets what it wrote" for the opposite case. Question, current choice:
+   targets count.
+4. **The positions given to `enter`.** "The line of the block's `end`":
+   for a block closed by another token the emitter uses that token's line
+   (`elseif`, `else` for an `if` branch, `until` for a `repeat` body), and
+   for the main chunk the line of `<eof>`; the fall-through epilogue passes
+   the same position.
+5. **`return` with a call or `...` last packs through a helper in the
+   header.** Lua 5.1 has no `table.pack`, the values of a call can only be
+   counted inside a vararg function, and the runtime exports no packer, so
+   a chunk that needs it defines `local function __lt_pack(...) return {n
+   = __lt_select("#", ...), ...} end` once in its header, beside
+   `__lt_unpack` and `__lt_select` bound to `unpack` and `select`. The cost
+   is one table per such `return` (`emit/return-call`); LuaJIT stitches
+   around `unpack`. A cheaper spelling exists and observes the same
+   values, order and trailing `nil`s: a header helper `local function
+   __lt_ret(rec, pos, ...) __lt_exit(rec, pos); return ... end` and
+   `return __lt_ret(__s1, "c:7", g(x))`, nested once per epilogue (the
+   innermost record's call innermost), with no table. Measured with the
+   real runtime on one function owning one object (`return g(x.v)`, two
+   values): about 1020 ns per call packed against 850 with the helper and 815 for
+   `return a, x.v` under LuaJIT, 3040 against 2750 and 2700 under Lua
+   5.1. It is not used, because 04, "Blocks", prescribes the mechanism
+   ("packing with `select("#", …)` and unpacking with `unpack(t, 1,
+   n)`") and the helper's call is a tail call, so a traceback taken in a
+   destructor run by that epilogue shows the helper's frame in place of
+   the returning function's. Question: may 04 describe the guarantee
+   (trailing `nil`s survive) and leave the mechanism to the emitter?
+6. **A loop that owns an object is not one LuaJIT trace with the current
+   runtime.** 04, "The error path", says "A loop whose body owns something
+   is still one trace for LuaJIT". Nothing the emitter writes stops the
+   trace: with a loop-free stand-in of `attach`, `enter` and `exit`, `luajit
+   -jv` records the generated loop as one trace (`[TRACE 1 scoped.lt:3
+   loop]`, with one side trace back into it, as the hand-written loop
+   with the destructor called by hand). With the real runtime the root
+   trace aborts with `inner loop in root trace at init.lua:691`, the tombstone's `for k in next, obj` that
+   clears the dying object's fields (task 002), and the loop runs in the
+   interpreter with the cascade's own traces linked in. This is the
+   runtime's, not a change to the semantics; recorded for the runtime and
+   for 03, "Performance". Re-checked after the restart on master
+   (a8ceb7f) and on task 004's branch head (0a89c29, the same loop at its
+   `init.lua:860`): the same abort on both. The cost the benchmarks show is the runtime's:
+   `emit/scoped-loop` (generated code) and `scope/loop-one-object` (the
+   same runtime calls written by hand, task 003) read the same.
+7. **`lifetime.alive` is not on master yet** (task 004). Test case 1a
+   prints `lifetime.alive(hook)`; `examples/named_hook.lt` shows the dead
+   hook through `tostring` (`dead hook hook`) and `getmetatable`
+   (`dead`) instead, both from 02, "Tombstones and `lifetime.alive`". A
+   line with `lifetime.alive` can be added once task 004 is merged.
+
 ## Review log
+
+### Round 1: APPROVE
+
+Suite on `485dbe7`: unit 222/222 under lua5.1 and luajit, conformance 17/17 under both, lint clean (28 files). `make bench BASE=master` twice: nothing marked; `plain/transpiled`, `emit/unscoped-loop` and `emit/calls` at 1.0 within noise; `emit/scoped-loop` reads the same as `scope/loop-one-object`, so the generated code adds nothing over the runtime calls. `-jv`: the generated scoped loop with a stand-in runtime is one trace plus a side trace; with the real runtime the abort is the runtime's tombstone loop. Traced by hand: a function defined inside a scoped block gets no record and its `return` no epilogue; `repeat` with `goto continue` to a label before `until` (no epilogue at the jump, condition in scope); multi-line `return` with trailing `nil`; `break` from an inner `repeat` with a record; a backward `goto` leaving a scoped inner block; `goto` into a scoped block (the compile error) and into an invisible label (LuaJIT's own error); a named hook created on `a` and moved to `b`; `lifetime = require("lifetime")` assigning the header's local; `@ lifetime.scope` in a constructor at chunk level.
+
+- F1 (non-blocking): the restart optimisation's comment in `lifetime/emit.lua` (emit plain Lua in one pass, restart with the analysis at the first `lifetime.scope`) names no benchmark; name `build/plain.lt`, `build/generated-5000`, `build/lifetime-largest`. Carried into task 007, which touches the build path and adds a `build` benchmark on a file that uses the extension (the double emission is unmeasured).
+- Rulings on the seven spec issues as recorded above; `docs/04` gets the four wording additions in the done chore. The pass-through `return` alternative stays recorded for a later decision; `emit/return-fixed` and `emit/return-call` need a baseline that does the same observable work under LuaJIT (follow-up with the benchmark row above).

@@ -1,0 +1,23 @@
+last statement of the block	a	b
+destroy b (anchor)
+hook
+destroy a (anchor)
+after the block
+false	examples/scope_exit.lt:24: attempt to index a dead table (res a, died at examples/scope_exit.lt:36, anchor)
+bodies in the order c, d, a, hook, b	b	d
+destroy c (anchor)
+destroy d (anchor)
+destroy a (anchor)
+hook on a
+destroy b (anchor)
+helper's body
+helper's hook
+after helper
+inner's body
+inner's hook
+after inner	e
+destroy e (anchor)
+after the second block
+after a block without a record	f
+destroy owner (destroy)
+destroy f (anchor)
