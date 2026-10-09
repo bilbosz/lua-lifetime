@@ -165,6 +165,45 @@ test.case("several statements on one line stay on it", function()
     test.assert_eq(round_trip("x = 1 (f)()"), "x = 1 (f)()")
 end)
 
+test.case("the extension's nodes come back in their spelling, every token on its line", function()
+    -- Task 005: until task 006 generates code, the emitter writes `@`,
+    -- `!@`, `lifetime.scope`, `goto` and labels back as written; the round
+    -- trip proves that the parser records the line of every token.
+    local ast = parse(chunks.EXTENDED)
+    local output = emit.emit(ast)
+    test.assert_deep_eq(parse(output), ast)
+    test.assert_deep_eq(lexer.tokenize(output, "t"), lexer.tokenize(chunks.EXTENDED, "t"))
+    test.assert_eq(round_trip("local h = f !@ ( a ,lifetime.scope ) @ b\nx @ (t) .owner"), "local h = f !@ (a, lifetime.scope) @ b\nx @ (t).owner")
+end)
+
+test.case("LuaJIT's syntax round-trips; under LuaJIT, to the same bytecode", function()
+    -- docs/05-decisions.md, "The lexer accepts LuaJIT's lexical
+    -- extensions": a byte order mark, a `#` first line, bytes >= 128 in
+    -- names, `\z` before a line break, the FFI suffixes; and `goto`.
+    local source = table.concat({
+        "\239\187\191#!/usr/bin/env luajit", -- 1
+        "local caf\195\169 = 0x10ULL + 2LL", -- 2
+        "local s = \"a\\z", -- 3
+        "    b\" .. 'c\\z d'", -- 4
+        "for i = 1, 3 do", -- 5
+        "    if i == 2 then goto skip end", -- 6
+        "    s = s .. i", -- 7
+        "    ::skip::", -- 8
+        "end", -- 9
+        "return s, 1i, 0b101, caf\195\169" -- 10
+    }, "\n")
+    local output = round_trip(source, "j.lt")
+    test.assert_eq(output:sub(1, 1), "\n")
+    test.assert_deep_eq(lexer.tokenize(output, "j.lt"), lexer.tokenize(source, "j.lt"))
+    if jit then
+        local f_source = assert(loadstring(source, "=j.lt"))
+        local f_output = assert(loadstring(output, "=j.lt"))
+        test.assert_true(string.dump(f_output) == string.dump(f_source), "bytecode differs")
+        -- LuaJIT reads `\z` its own way wherever it stands.
+        test.assert_eq(select(1, f_output()), "abcd13")
+    end
+end)
+
 test.case("a node without token lines is written at its statement's line", function()
     -- Later stages build nodes that carry `line` but no `lines`, and values
     -- without a source spelling.

@@ -1,12 +1,13 @@
 -- lifetime/parser.lua: the parser.
 --
 -- A recursive-descent parser for the grammar of docs/04-transpiler.md,
--- "Grammar": Lua 5.1 as in `lparser.c` and the manual's §8; task 005 adds
--- `@` with the list form, the hook operator `!@`, and `lifetime.scope` as
--- an anchor. Exports `parse(tokens, chunkname)`, taking the tokens of
--- lifetime/lexer.lua and returning the AST of the chunk, a Block. A syntax
--- error raises `chunkname:line: <message> near '<token>'` in the wording of
--- Lua 5.1's `lparser.c`, at the line Lua names.
+-- "Grammar": Lua 5.1 as in `lparser.c` and the manual's §8, plus `@` with
+-- the list form, the hook operator `!@`, `lifetime.scope` as an anchor,
+-- and LuaJIT's `goto` and labels. Exports `parse(tokens, chunkname)`,
+-- taking the tokens of lifetime/lexer.lua and returning the AST of the
+-- chunk, a Block. A syntax error raises `chunkname:line: <message> near
+-- '<token>'` in the wording of Lua 5.1's `lparser.c`, at the line Lua
+-- names; the extension's own errors take the same shape.
 --
 -- The AST is plain tables. Every node has `tag` and `line`, the line its
 -- first token starts on. Every node that owns tokens of its own (keywords,
@@ -36,6 +37,10 @@
 --   GenericFor   vars = {Id}, exprs, body                 for , in , do end
 --   Return       exprs                                    return ,
 --   Break                                                 break
+--   AnchorStat   expr = Anchor                            (none)
+--   HookStat     expr = Hook                              (none)
+--   Goto         name                                     goto name
+--   Label        name                                     :: name ::
 --
 --   Nil True False Vararg                                 (the token: `line`)
 --   Number       value, raw                               (the token)
@@ -54,6 +59,19 @@
 --   Paren        expr                                     ( )
 --   BinOp        op, left, right                          op
 --   UnOp         op, operand                              op
+--   Anchor       expr, anchors = {item}, list|nil         @ [( , )]
+--   Hook         expr, anchors = {item}, list|nil, name|nil
+--                                                         !@ [( , )]
+--     ScopeAnchor                                         lifetime . scope
+--
+-- `e @ a` and `e !@ a` (docs/04-transpiler.md, "Grammar"): `expr` is the
+-- operand on the left, `anchors` the anchor items in source order, each an
+-- expression or a ScopeAnchor, the spelling `lifetime.scope` in anchor
+-- position. `list` marks the parenthesised list form, whose `(`, commas
+-- and `)` are the node's own tokens; a one-element list holds its item
+-- (`x @ (a)` is `x @ a`, docs/02-semantics.md, "Acquiring a lifetime"). A
+-- Hook bound to a name carries it in `name` (docs/02-semantics.md, "Named
+-- hooks").
 --
 -- `sugar` marks a call whose single argument is a string or a table
 -- constructor written without parentheses (`f"x"`, `f{...}`). A statement
@@ -179,6 +197,12 @@ function parser.parse(tokens, chunkname)
         return tok.value == s and tok.type ~= "string"
     end
 
+    -- Is the current token the operator `@` or `!@`? Returns its text.
+    local function anchor_operator()
+        local v = tok.value
+        return (v == "@" or v == "!@") and tok.type == "symbol" and v
+    end
+
     -- Consume the keyword or symbol `s`, record its line in `lines`.
     local function check_next(s, lines)
         if not is(s) then
@@ -226,7 +250,7 @@ function parser.parse(tokens, chunkname)
         return t.type == "eof"
     end
 
-    local block, expr, primaryexp
+    local block, expr, primaryexp, suffixedexp
 
     -- explist1: expr {',' expr}; the commas go into `lines`.
     local function explist(lines)
@@ -369,9 +393,9 @@ function parser.parse(tokens, chunkname)
         raise("unexpected symbol")
     end
 
-    -- primaryexp: prefixexp { '.' NAME | '[' exp ']' | ':' NAME funcargs | funcargs }.
-    function primaryexp()
-        local e = prefixexp()
+    -- The suffixes of a primaryexp after its prefixexp `e`:
+    -- { '.' NAME | '[' exp ']' | ':' NAME funcargs | funcargs }.
+    function suffixedexp(e)
         while true do
             local t = tok
             if t.type == "string" then
@@ -400,6 +424,115 @@ function parser.parse(tokens, chunkname)
                 return e
             end
         end
+    end
+
+    -- primaryexp: prefixexp { '.' NAME | '[' exp ']' | ':' NAME funcargs | funcargs }.
+    function primaryexp()
+        return suffixedexp(prefixexp())
+    end
+
+    -- Would the token `t` continue a prefixexp: `.`, `[`, `:`, `(`, `{`
+    -- or a string argument?
+    local function continues_prefixexp(t)
+        local ty = t.type
+        if ty == "string" then
+            return true
+        end
+        local v = t.value
+        return ty == "symbol" and (v == "." or v == "[" or v == ":" or v == "(" or v == "{")
+    end
+
+    -- scopeanchor: the spelling `lifetime.scope` at the current token,
+    -- tried before prefixexp where `anchor` and `anchoritem` name it
+    -- (docs/04-transpiler.md, "Grammar": "the two Names `lifetime` and
+    -- `scope` joined by `.`, with nothing after them that would continue
+    -- a `prefixexp` ... matches by spelling, whatever `lifetime` names at
+    -- that point"). Consumes it and returns a ScopeAnchor, or consumes
+    -- nothing and returns nil.
+    local function scopeanchor()
+        if tok.value ~= "lifetime" or tok.type ~= "name" then
+            return nil
+        end
+        -- The token after a Name exists, since the array ends with <eof>
+        -- or an error token, and so does the one after a second Name.
+        local dot = tokens[pos + 1]
+        if dot.value ~= "." or dot.type ~= "symbol" then
+            return nil
+        end
+        local name = tokens[pos + 2]
+        if name.value ~= "scope" or name.type ~= "name" or continues_prefixexp(tokens[pos + 3]) then
+            return nil
+        end
+        local node = {tag = "ScopeAnchor", line = tok.line, lines = {tok.line, dot.line, name.line}}
+        advance()
+        advance()
+        advance()
+        return node
+    end
+
+    -- A ScopeAnchor read as the ordinary expression it spells, the field
+    -- `scope` of `lifetime` (docs/02-semantics.md, "Scopes:
+    -- `lifetime.scope`": "Anywhere else `lifetime.scope` is an ordinary
+    -- expression"). Used for `x @ (lifetime.scope).f`, where the
+    -- parentheses turn out to start a prefixexp.
+    local function scope_as_expression(item)
+        local lines = item.lines
+        return {tag = "Member", line = item.line, lines = {lines[2], lines[3]}, obj = {tag = "Id", name = "lifetime", line = lines[1]}, name = "scope"}
+    end
+
+    -- anchoritem: scopeanchor | exp.
+    local function anchoritem()
+        return scopeanchor() or expr()
+    end
+
+    -- The operator `@` or `!@` at the current token applied to `e`:
+    -- exp '@' anchor | exp '!@' anchor, where
+    -- anchor ::= scopeanchor | prefixexp | '(' anchorlist ')'
+    -- (docs/04-transpiler.md, "Grammar"). Returns the Anchor or Hook node.
+    local function apply_anchor(e)
+        local node = {tag = tok.value == "@" and "Anchor" or "Hook", line = e.line, lines = {tok.line}, expr = e}
+        advance()
+        local item = scopeanchor()
+        if item then
+            node.anchors = {item}
+            return node
+        end
+        if not is("(") then
+            node.anchors = {primaryexp()}
+            return node
+        end
+        -- A list, or a parenthesised expression that a suffix continues
+        -- into a prefixexp (`x @ (t).owner`): the two agree up to `)`.
+        local open = tok.line
+        advance()
+        if is(")") then
+            -- docs/02-semantics.md, "Acquiring a lifetime": "An empty list
+            -- `@()` is a syntax error."
+            raise("empty anchor list")
+        end
+        local lines = node.lines
+        lines[2] = open
+        local items = {anchoritem()}
+        while is(",") do
+            lines[#lines + 1] = tok.line
+            advance()
+            -- "Lists do not nest": an item is an exp, and a `(` in it opens
+            -- Lua's parenthesised expression, which holds no comma.
+            items[#items + 1] = anchoritem()
+        end
+        check_match(")", "(", open, lines)
+        if #items == 1 and continues_prefixexp(tok) then
+            local inner = items[1]
+            if inner.tag == "ScopeAnchor" then
+                inner = scope_as_expression(inner)
+            end
+            local paren = {tag = "Paren", line = open, lines = {open, lines[3]}, expr = inner}
+            lines[2], lines[3] = nil, nil
+            node.anchors = {suffixedexp(paren)}
+            return node
+        end
+        node.anchors, node.list = items, true
+        return node
     end
 
     -- simpleexp: NUMBER | STRING | nil | true | false | '...' | constructor
@@ -466,8 +599,35 @@ function parser.parse(tokens, chunkname)
         end
     end
 
+    -- exp: subexpr { '@' anchor | '!@' anchor }. `@` and `!@` are postfix,
+    -- of the lowest precedence of any operator, and associate to the left
+    -- (docs/04-transpiler.md, "Grammar"; docs/02-semantics.md, "Hooks: the
+    -- `!@` operator": "`f !@ a @ b` creates the hook on `a` and then moves
+    -- it to `b`"): they apply to the whole expression on their left, and
+    -- the expression they end is no operand of a binary operator.
     function expr()
-        return subexpr(0)
+        local e = subexpr(0)
+        while anchor_operator() do
+            e = apply_anchor(e)
+        end
+        return e
+    end
+
+    -- docs/02-semantics.md, "Named hooks": "A hook created as the value
+    -- bound to a name carries that name: `local NAME = f !@ …`, `NAME = f
+    -- !@ …` and `t.NAME = f !@ …`". The value of `e @ a` and of `(e)` is
+    -- the value of `e`, so the hook is found through them.
+    local function name_hook(e, name)
+        while true do
+            local tag = e.tag
+            if tag == "Hook" then
+                e.name = name
+                return
+            elseif tag ~= "Anchor" and tag ~= "Paren" then
+                return
+            end
+            e = e.expr
+        end
     end
 
     -- A loop body: a block inside which `break` is allowed.
@@ -571,6 +731,18 @@ function parser.parse(tokens, chunkname)
     end
 
     statement_by_keyword["function"] = function(line)
+        local ahead = tokens[pos + 1]
+        if ahead.value == "(" and ahead.type == "symbol" then
+            -- docs/04-transpiler.md, "Grammar": "A statement may start with
+            -- `function (`, an anonymous function, which must then be
+            -- followed by `!@`" (stat ::= functiondef '!@' anchor).
+            advance()
+            local func = body({tag = "Function", line = line, lines = {line}}, tok.line)
+            if anchor_operator() ~= "!@" then
+                raise_expected("!@")
+            end
+            return {tag = "HookStat", line = line, expr = apply_anchor(func)}
+        end
         local func = {tag = "Function", line = line, lines = {line}}
         local node = {tag = "FunctionStat", line = line, func = func}
         advance()
@@ -613,7 +785,11 @@ function parser.parse(tokens, chunkname)
         if is("=") then
             lines[#lines + 1] = tok.line
             advance()
-            node.exprs = explist(lines)
+            local exprs, names = explist(lines), node.names
+            node.exprs = exprs
+            for i = 1, #exprs < #names and #exprs or #names do
+                name_hook(exprs[i], names[i].name)
+            end
         end
         return node
     end
@@ -637,9 +813,16 @@ function parser.parse(tokens, chunkname)
         return {tag = "Break", line = line, lines = {line}}, true
     end
 
-    -- exprstat: func | assignment.
+    -- exprstat: func | assignment | prefixexp '@' anchor | prefixexp '!@'
+    -- anchor (docs/04-transpiler.md, "Grammar"; docs/02-semantics.md,
+    -- "Acquiring a lifetime": "The left side must be a `prefixexp`"). One
+    -- operator, as the grammar has it: `x @ a @ b` is no statement.
     local function exprstat(line)
         local e = primaryexp()
+        local op = anchor_operator()
+        if op then
+            return {tag = op == "@" and "AnchorStat" or "HookStat", line = line, expr = apply_anchor(e)}
+        end
         if e.tag == "Call" or e.tag == "Invoke" then
             return {tag = "CallStat", line = line, call = e}
         end
@@ -657,15 +840,53 @@ function parser.parse(tokens, chunkname)
             targets[#targets + 1] = primaryexp()
         end
         check_next("=", lines)
-        node.exprs = explist(lines)
+        local exprs = explist(lines)
+        node.exprs = exprs
+        for i = 1, #exprs < #targets and #exprs or #targets do
+            local target = targets[i]
+            -- `NAME =` (an Id) and `t.NAME =` (a Member) name a hook,
+            -- `t[k] =` (an Index) does not.
+            if target.tag ~= "Index" then
+                name_hook(exprs[i], target.name)
+            end
+        end
+        return node
+    end
+
+    -- LuaJIT's `goto NAME`, which the transpiler honours in the input
+    -- (CLAUDE.md, "Technical decisions"; docs/04-transpiler.md, "Blocks").
+    -- As in LuaJIT, `goto` starts one only when a Name follows it, so it
+    -- stays an ordinary name wherever a Lua 5.1 chunk can use one.
+    local function goto_statement(line)
+        advance()
+        local name_line = tok.line
+        return {tag = "Goto", line = line, lines = {line, name_line}, name = check_name()}
+    end
+
+    -- LuaJIT's label, `::NAME::`.
+    local function label_statement(line)
+        local node = {tag = "Label", line = line, lines = {line}}
+        advance()
+        node.lines[2] = tok.line
+        node.name = check_name()
+        check_next("::", node.lines)
         return node
     end
 
     local function statement()
-        local line = tok.line
-        local handler = tok.type == "keyword" and statement_by_keyword[tok.value]
-        if handler then
-            return handler(line)
+        local t = tok
+        local line, ty = t.line, t.type
+        if ty == "keyword" then
+            local handler = statement_by_keyword[t.value]
+            if handler then
+                return handler(line)
+            end
+        elseif ty == "name" then
+            if t.value == "goto" and tokens[pos + 1].type == "name" then
+                return goto_statement(line)
+            end
+        elseif t.value == "::" and ty == "symbol" then
+            return label_statement(line)
         end
         return exprstat(line)
     end

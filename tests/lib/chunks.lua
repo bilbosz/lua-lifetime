@@ -65,4 +65,50 @@ for line = 1, 41 do
 end
 chunks.EVERY_FORM_STATEMENT_LINES[42] = 50
 
+-- Every form the extension adds (docs/04-transpiler.md, "Grammar") and
+-- LuaJIT's `goto` and labels, one statement per line from line 1 to line
+-- 18, then one statement spread over lines 19 to 30 with a token on every
+-- line. Not loadable Lua: task 005 parses it, task 006 generates code.
+chunks.EXTENDED = table.concat({
+    "local a = {} @ lifetime.scope", -- 1  Anchor, ScopeAnchor
+    "local b = {} @ (a, lifetime.scope)", -- 2  the list form
+    "local c = Buffer.new(4096) @ a", -- 3  a call on the left
+    "local d = {} @ lifetime.pin(a, b)", -- 4  an ordinary prefixexp anchor
+    "local e = {} @ (cond and a or b)", -- 5  a one-element list
+    "b @ a", -- 6  AnchorStat
+    "obj.close !@ obj", -- 7  HookStat
+    "function() print(1) end !@ lifetime.scope", -- 8  HookStat on a function
+    "local h = function(reason) end !@ (a, b)", -- 9  a named Hook
+    "self.on_close, t[1] = f !@ self, g !@ self", -- 10 named by a Member, not by an Index
+    "local p = lifetime.token(\"p\") @ self", -- 11 a token is an ordinary call
+    "local x, y = {} @ (a, b), {} @ c", -- 12 commas inside and outside a list
+    "local m = f !@ a @ b", -- 13 a hook moved
+    "x @ (t).owner", -- 14 parentheses that start a prefixexp
+    "goto done", -- 15 LuaJIT
+    "::done::", -- 16 LuaJIT
+    "local scope, caller, defer, token = 1, 2, 3, 4", -- 17 ordinary names
+    "y = x @ lifetime.scope.x", -- 18 lifetime.scope.x is a prefixexp
+    "local z = function()", -- 19 one statement over twelve lines
+    "end", -- 20
+    "  !@", -- 21
+    "  (", -- 22
+    "    lifetime", -- 23
+    "    .", -- 24
+    "    scope", -- 25
+    "    ,", -- 26
+    "    a", -- 27
+    "  )", -- 28
+    "  @", -- 29
+    "  b", -- 30
+    "return z", -- 31
+    ""
+}, "\n")
+
+-- The lines of chunks.EXTENDED on which a statement starts.
+chunks.EXTENDED_STATEMENT_LINES = {}
+for line = 1, 19 do
+    chunks.EXTENDED_STATEMENT_LINES[line] = line
+end
+chunks.EXTENDED_STATEMENT_LINES[20] = 31
+
 return chunks
