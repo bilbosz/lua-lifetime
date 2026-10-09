@@ -67,8 +67,9 @@ labels in the input. The extension adds no reserved word
 - The statement form accepts a `prefixexp` on the left; `{} @ lifetime.scope`
   alone is `unexpected symbol near '{'` or Lua's equivalent wording.
 - `@()` raises a syntax error naming the empty list; `@ (a, (b, c))`
-  raises `unexpected symbol near ','` (a nested list is not a list, it is
-  Lua's parenthesised expression, which cannot hold a comma).
+  raises `')' expected near ','` (a nested list is not a list, it is
+  Lua's parenthesised expression, which cannot hold a comma; Lua's
+  wording for `x = (b, c)`).
 - `f !@ a`, `f !@ lifetime.scope`, `f !@ (a, b)`, `a or b !@ s` (hooking `a or
   b`), `local h = function() … end !@ lifetime.scope` parse to `Hook` nodes with
   the same anchor items as `@`; `5 !@ a` is accepted by the parser (the
@@ -173,3 +174,12 @@ numbers in the handoff.
   had assigned to task 007's command.
 
 ## Review log
+
+### Round 1: APPROVE
+
+Suite on `cc0e598`: unit 85/85 under lua5.1 and luajit, conformance 5/5 under both, lint clean (23 files). `make bench BASE=master` (base `c57b6e2`): no benchmark SLOWER on two consecutive runs; `parse/lifetime-largest` marked in alternate luajit runs only, 1.018 with a 2 s budget; plain-path benchmarks unchanged. Bytecode identity of `cli.build` output for 24 repository files under both interpreters; 3200-chunk differential against `loadstring` under both: 0 mismatches. Every claim of the decision "The lexer accepts LuaJIT's lexical extensions" checked against both interpreters and confirmed; the rule applied consistently. Precedence, error texts, `lifetime.scope` by spelling (including across lines and after `local lifetime = t`), named hooks through `@` and parentheses, `goto`/labels: all as specified. Master's decision entries intact after the merge.
+
+- F1 (non-blocking): the decision's "Not accepted" paragraph says accepting `0x1p-4` and `0x1.8` "would change a valid Lua 5.1 chunk"; neither appears in a valid 5.1 chunk (both are errors there); only `0x1..8` is the valid-chunk case. Reword: hex floats and binary exponents are not accepted because they would need a numeral delimiter that differs from Lua 5.1's, and `0x1..8` is the valid chunk that delimiter must keep.
+- Orchestrator's settled items: nested-list wording follows Lua (task text corrected); statement chaining and `{` are the spec change on master (round 2 implements chaining); naming a hook through `@` and parentheses is correct.
+- Reading fixed for `x @ (lifetime.scope).f`: a one-element parenthesised item followed by a suffix is Lua's parenthesised prefixexp (so the inner `lifetime.scope` is the ordinary marker, as `x @ (t).owner` is); stated in `docs/04`, "Grammar" (round 2, wording only).
+- For task 006: `x @ (a)` (`list = true`) and `x @ a` emit identically, and a one-element `(lifetime.scope)` item the same as the bare one; a call or `...` as the last anchor item is truncated to one value. For task 007: the `#` first line is the lexer's; `lifetime build` output has an empty first line in that case.
