@@ -4,7 +4,7 @@ title: CLI `lifetime build` and `lifetime run`; the rockspec installs and runs
 status: review
 depends: [006]
 branch: task/007-cli-and-rockspec
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/26
 commits:
 review: APPROVE (round 2)
 ---
