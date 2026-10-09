@@ -5,17 +5,36 @@
 -- `main(argv)` is the command of docs/04-transpiler.md, "The command":
 -- `lifetime build FILE -o OUT` and `lifetime run FILE [ARGS]`.
 --
--- Bootstrap skeleton. `build` is a placeholder that returns the source
--- unchanged so that the conformance runner has something to run on
--- examples/plain.lt; task 001 replaces it with the real round trip through
--- lexer, parser and emitter. `main` is task 007.
+-- `main` is task 007.
+
+local lexer = require("lifetime.lexer")
+local parser = require("lifetime.parser")
+local emit = require("lifetime.emit")
 
 local cli = {}
 
--- Placeholder (bootstrap): pass the source through. Task 001 replaces this
--- body with lexer -> parser -> emit.
-function cli.build(source, chunkname) -- luacheck: no unused args
-    return source
+local find = string.find
+
+local function build(source, chunkname)
+    -- Deferred lexing: a malformed token is reported when the parser
+    -- reaches it, so errors come in the order Lua reports them.
+    local tokens = lexer.tokenize(source, chunkname, true)
+    return emit.emit(parser.parse(tokens, chunkname))
+end
+
+-- docs/04-transpiler.md, "Pipeline": `build(source, chunkname)`, lexer ->
+-- parser -> emit. Returns the generated source, or nil and the message
+-- `chunkname:line: <message>` on a syntax error. Any other error is a bug
+-- in the transpiler and propagates.
+function cli.build(source, chunkname)
+    local ok, result = pcall(build, source, chunkname)
+    if ok then
+        return result
+    end
+    if type(result) == "string" and find(result, chunkname .. ":", 1, true) == 1 then
+        return nil, result
+    end
+    error(result, 0)
 end
 
 function cli.main(argv) -- luacheck: no unused args
