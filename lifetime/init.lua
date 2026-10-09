@@ -595,22 +595,6 @@ local function body_failed(obj, err, depth)
     route(obj, err)
 end
 
--- Clear every field of `obj` from the key `k` on in traversal order,
--- except the state record (docs/03-runtime.md, "The tombstone": "Clearing
--- the table ..., legal in Lua while iterating"). A proper tail call per
--- field: no loop for LuaJIT to make a trace of its own (see the tombstone
--- step below), and no stack growth on either host.
-local function clear_from(obj, k)
-    if k == nil then
-        return
-    end
-    local after = next(obj, k)
-    if k ~= STATE then
-        obj[k] = nil
-    end
-    return clear_from(obj, after)
-end
-
 -- docs/02-semantics.md, "Cascading death", step 2, **Destroy**, for one
 -- object: (1) its own body, with every dependent alive; (2) its
 -- dependents, most recently attached first, each by this same rule,
@@ -682,13 +666,16 @@ local function destroy_object(obj, st, reason, where, skip_body)
     -- from the anchors' lists, clear every field, set the dead metatable,
     -- reduce the record to what the message needs.
     --
-    -- The common cases run no loop: one anchor, and the fields cleared by
-    -- `clear_from` rather than a `for` over `next`. A loop that runs once
-    -- or twice per destruction becomes hot before the user's loop around
-    -- it, and LuaJIT then aborts the user's trace on it ("inner loop in
-    -- root trace") until side traces cover it; without the loop the
-    -- user's loop body compiles at once (bench/README.md,
-    -- `scope/loop-one-object`).
+    -- One anchor, the common case, is unlinked without a loop. The fields
+    -- are cleared by the `for` over `next` of task 002. A loop that runs
+    -- once or twice per destruction becomes hot before a user's loop that
+    -- destroys an object per iteration, and LuaJIT aborts the user's trace
+    -- on it ("inner loop in root trace") during warm-up, until side traces
+    -- cover it; the loop then runs compiled. A clear without a loop (a
+    -- tail-recursive one) avoided those aborts but made `runtime/move`
+    -- about 1.8 times as slow on LuaJIT after `runtime/attach-destroy-100`
+    -- in the same process, whatever the load path (task file, "Spec
+    -- issues found").
     local n, pinned = st.n, not st.reachable
     if n == 1 then
         unlink(rawget(st[1], STATE), st[2], pinned)
@@ -701,12 +688,10 @@ local function destroy_object(obj, st, reason, where, skip_body)
             st[j + 1] = nil
         end
     end
-    local field = next(obj)
-    if field == STATE then
-        field = next(obj, field)
-    end
-    if field ~= nil then
-        clear_from(obj, field)
+    for k in next, obj do
+        if k ~= STATE then
+            obj[k] = nil
+        end
     end
     debug_setmetatable(obj, DEAD_MT)
     st.n = 0

@@ -236,3 +236,15 @@ what the code does and why, for the reviewer and the human to decide.
   record whose dependent dies `"unreachable"`) is not tested: it needs the
   record's sentinel, which task 004 provides. A comment in
   `tests/test-scopes.lua` marks the place.
+- Implementer, round 1, performance: with `luajit -jv`, the loops of
+  `scope/enter-exit-empty` and `scope/pcall-empty` compile with no trace
+  abort; those of `scope/loop-one-object` and `scope/hook-on-scope` abort
+  about 31 times during warm-up with "inner loop in root trace" at the
+  tombstone's `for k in next, obj` loop (task 002's), then run compiled
+  (`-jp=v`: no interpreted time for the hook loop, 4% for the one-object
+  loop). A loop-free tombstone (a tail-recursive clear) removed those
+  aborts but made `runtime/move` about 1.8 times as slow on LuaJIT after
+  `runtime/attach-destroy-100` in the same process, reproducibly, from
+  every load path tried (45 to 73 ns against master's 25), and was
+  reverted: task 002's benchmarks must stay within the threshold. The
+  scope loop's single entry and the single-anchor unlink stay loop-free.
