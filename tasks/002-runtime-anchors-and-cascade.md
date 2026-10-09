@@ -1,9 +1,9 @@
 ---
 id: 002
 title: Runtime: anchors, dependents inside the anchor, `destroy`, cascade order, tombstones, `destroyerror`
-status: todo
+status: in-progress
 depends: [001, 010]
-branch:
+branch: task/002-runtime-anchors-and-cascade
 pr:
 commits:
 review:
