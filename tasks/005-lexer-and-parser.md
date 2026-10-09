@@ -4,7 +4,7 @@ title: Lexer and parser: Lua 5.1 plus `@`, the list form, the hook operator `!@`
 status: review
 depends: [001, 010]
 branch: task/005-lexer-and-parser
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/18
 commits:
 review: APPROVE (round 2)
 ---
