@@ -186,4 +186,7 @@ Skills, invoked with `/name`:
   lifetime and the receiver anchors it (`local x = f() @ lifetime.scope`).
 - A plain table the runtime never saw is collected silently, `__destroy`
   or not; `x @ lifetime.reachable` registers it.
+- A table the runtime has seen carries its state record in one extra
+  field under a private table key; `pairs` and `next` show it, so a
+  serializer or an emptiness check skips it with `lifetime.is_state(k)`.
 - `return x` from a block where `x @ lifetime.scope` hands the caller a tombstone.

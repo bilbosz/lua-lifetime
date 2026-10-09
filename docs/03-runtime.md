@@ -22,10 +22,15 @@ page is corrected.
 
 An object the runtime has seen (02, "`__destroy` and reasons", rule 7)
 carries a **state record** in a hidden field of the table itself, created
-on first contact. The field's key is a value private to the runtime; it
-is visible to `pairs` and `next` (see
-[06-open-questions.md](06-open-questions.md), "The hidden field is
-visible"). The record holds:
+on first contact. The field's key is one table the runtime creates when
+it is loaded and never hands out, so no user field can collide with it
+and no serializer can mistake it for data; `lifetime.is_state(k)` is
+true for that key and nothing else ([05-decisions.md](05-decisions.md),
+"The state record's key is a private table"). The field is visible to
+`pairs` and `next` as Lua makes it: the runtime sets no `__pairs` (5.1
+has none) and leaves `#`, `next` and `rawequal` alone, so a loop that
+must skip the record writes `if not lifetime.is_state(k)`. The record
+holds:
 
 - `formula`: the anchors (strong references) and whether the `reachable`
   term is present, plus, per anchor, the sequence number under which this

@@ -691,6 +691,7 @@ not close the state, so step 2 does not run after it; LuaJIT's
 
 *From `xd/docs/04-syntax.md`, "The `lifetime` table", reduced by decisions
 5, 7 and 11 to the six names decision 11 lists, plus `lifetime.token`
+and `lifetime.is_state`
 ([05-decisions.md](05-decisions.md), "Tokens are created by
 `lifetime.token`").*
 
@@ -702,6 +703,7 @@ not close the state, so step 2 does not run after it; LuaJIT's
 | `lifetime.pin(a1, …, an)` | A lifetime value over the anchors without the implicit `reachable` term ("The implicit `reachable` term"). |
 | `lifetime.of(obj)` | `obj`'s current formula as a lifetime value, a snapshot: a later move of `obj` does not change it. Error on `nil`, a value, a dead object. |
 | `lifetime.alive(x)` | The liveness check ("Tombstones"). |
+| `lifetime.is_state(k)` | `true` when `k` is the key of the state record the runtime keeps inside every table it has seen ("`__destroy` and reasons", rule 7), `false` for anything else. `pairs` and `next` see that field as Lua shows it; a serializer or an emptiness check skips it with this test ([05-decisions.md](05-decisions.md), "The state record's key is a private table"). |
 | `lifetime.dependents(obj)` | A fresh array of the live objects and hooks whose formula mentions `obj`, in attachment order. |
 | `lifetime.format(v)` | A string rendering of a lifetime value, an object's formula, a token or a hook: `(conn, reachable)`, `conn` (pinned), `reachable`, `token period`, `scope`, `hook cleanup` for a named hook and `hook` for an anonymous one. Object anchors render through `tostring`, so a dead anchor in a snapshot renders as `dead <name>`. |
 
