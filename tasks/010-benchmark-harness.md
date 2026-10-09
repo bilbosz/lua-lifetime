@@ -1,9 +1,9 @@
 ---
 id: 010
 title: Benchmark harness: `make bench`, comparison with plain Lua and with `master`
-status: todo
+status: in-progress
 depends: [001]
-branch:
+branch: task/010-benchmark-harness
 pr:
 commits:
 review:
