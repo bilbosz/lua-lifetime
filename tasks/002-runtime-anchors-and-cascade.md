@@ -1,12 +1,12 @@
 ---
 id: 002
 title: Runtime: anchors, dependents inside the anchor, `destroy`, cascade order, tombstones, `destroyerror`
-status: in-progress
+status: review
 depends: [001, 010]
 branch: task/002-runtime-anchors-and-cascade
 pr:
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -199,3 +199,13 @@ what the code does and why, for the reviewer and the human to decide.
    `lifetime: … is not implemented yet` rather than guessing.
 
 ## Review log
+
+### Round 1: APPROVE
+
+Suite on `07cf1a8`, judged against the spec at `be436b4`: unit 125/125 under lua5.1 and luajit, conformance 5/5 under both, lint clean (25 files). `make bench BASE=master`: no `SLOWER` mark; plain-path ratios at 1.0 within noise. Traced by hand: case 2 (body sees dependents alive), diamond order `root, q, r, p`, by-hand `destroy` of a decided sibling with a subtree, a second anchor destroyed from a live root; a randomized differential of 3 seeds x 4000 attach/move/destroy operations against a reference model under both interpreters: every log and every `lifetime.dependents` order matched. Rule 6 confirmed: the runtime's only strong references to user objects are a dependent's record to its anchors and a lifetime value to its anchors. Technical decisions confirmed line by line; `select("#", ...)` in `attach` measured as free; nothing `debug.*` on any `attach` path; the cascade still compiles under LuaJIT.
+
+- F1 (non-blocking): `docs/03` lists `seq` and `lo` as record fields and names the weak table `dependents`; the code keeps `seq`, `lo`, `limit` in the anchor's weak table `deps` (behaviour identical, the better layout for an object never used as an anchor). Settled: `docs/03` is corrected by the orchestrator in the done chore; task 004 names the strong table `strong` beside `deps`.
+- F2 (non-blocking): comments in `lifetime/init.lua` and items 1 to 3 of *Spec issues found* quote the superseded sentence of "Explicit destruction". Settled: items 1 to 4 below are decided by `docs/05-decisions.md` ("`destroy` by hand inside a destructor", "A tombstone keeps its state record", the `<where>` correction in that entry, "Pinned dependents are held by their anchors"); the code follows them; the comments are updated by the follow-up task that replaces the non-table stub.
+- F3 (non-blocking): the `not implemented` stub positions `destroy(fn)`, `discard(fn)` and `lifetime.of(fn)` errors inside the runtime. Folded into the non-table-dependents follow-up task, which replaces the stub.
+- F4 (non-blocking): `runtime/move` and `runtime/attach-first` read 3 to 4x slower in a full `make bench` than alone under luajit (process state left by the transpiler benchmarks). Follow-up harness task: each `bench-*.lua` in its own process; the handoff's `attach-first` 273 ns (1.0x) did not reproduce (2.0x alone).
+- Questions for a one-line clarification some day: a repeated anchor in the list form (`x @ (a, a)`) links twice; `attach(dead, false, nil)` reports step 2 before step 3.
