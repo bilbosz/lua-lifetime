@@ -22,6 +22,14 @@ local count_newlines = require("lifetime.lexer").count_newlines
 
 local emit = {}
 
+-- Under LuaJIT, run this module in the interpreter: a recursive walk
+-- with a dispatch per node makes the trace compiler abort and flush its
+-- machine code over and over, which made a build several times slower
+-- than with no compiler at all (task 001, handoff). Lua 5.1 has no `jit`.
+if jit then
+    jit.off(true, true)
+end
+
 local byte, rep, format, gsub = string.byte, string.rep, string.format, string.gsub
 local concat = table.concat
 

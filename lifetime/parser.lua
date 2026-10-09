@@ -61,6 +61,14 @@
 
 local parser = {}
 
+-- Under LuaJIT, run this module in the interpreter: a recursive walk
+-- with a dispatch per node makes the trace compiler abort and flush its
+-- machine code over and over, which made a build several times slower
+-- than with no compiler at all (task 001, handoff). Lua 5.1 has no `jit`.
+if jit then
+    jit.off(true, true)
+end
+
 local byte, sub, match, format = string.byte, string.sub, string.match, string.format
 
 -- Binary operator priorities, left and right (lparser.c, `priority`).
