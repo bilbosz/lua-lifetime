@@ -1,11 +1,11 @@
 ---
 id: 005
 title: Lexer and parser: Lua 5.1 plus `@`, the list form, the hook operator `!@`, `lifetime.scope`
-status: review
+status: done
 depends: [001, 010]
 branch: task/005-lexer-and-parser
 pr: https://github.com/bilbosz/lua-lifetime/pull/18
-commits:
+commits: 10afecbbffe6183aa48c1ec204f9e35e6f9d2424
 review: APPROVE (round 2)
 ---
 
