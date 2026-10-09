@@ -25,7 +25,8 @@ per interpreter today, four times that with `BASE`) and noisy.
 ## How a benchmark is measured
 
 A benchmark is a function; one call is one operation. `bench/run.lua`
-loads every `bench/bench-*.lua`, and each registers its benchmarks with
+runs every `bench/bench-*.lua`, each in a process of its own (see "One
+process per benchmark file" below), and each registers its benchmarks with
 `bench.add(name, fn, {baseline = fn2})` (`bench/lib/bench.lua`). For each
 benchmark the harness
 
@@ -138,6 +139,34 @@ marked), the other pairings spanned 0.903 to 1.089, and the
 bench BASE=` alternates processes and asks both pairings to agree rather
 than timing more runs in one process: a single pairing beyond 1.10 says
 nothing, two make a mark, and a mark twice in a row makes a finding.
+
+## One process per benchmark file
+
+`bench/run.lua` starts one child process per benchmark file, in file
+order (task 013): the same interpreter with the same interpreter options
+runs `bench/run.lua --in-process --lifetime DIR FILE`, inherits the
+environment (`BENCH_TIME`) and standard error, and its benchmark lines are
+copied to standard output as they come. A child that exits with a status
+other than 0 is reported on standard error, naming its file, and makes
+the exit status 1; the other files still run. Output lines, the compare
+table and the exit status read as before.
+
+The reason is task 002's review (finding F4): in one LuaJIT process, the
+trace cache and the heap left by the files that ran earlier change what
+later files measure. `runtime/move` read 25 ns with `bench-runtime.lua`
+alone and 93 to 109 ns after the transpiler benchmarks; `runtime/attach-first`
+read a ratio of 2.0 alone and 1.4 in the full run. With one process per
+file, a benchmark's number no longer depends on which files ran before it.
+
+`bench/run.lua --in-process FILE ...` loads every file into one process and
+then runs every benchmark, as `bench/run.lua` did before task 013. It is
+what each child runs, and what a test uses when it needs one process. Which
+number to compare: the default, per-file one. `make bench` and both sides
+of `make bench BASE=` run per file (the harness is always the branch's,
+so a base run is per file too), and `luajit bench/run.lua
+bench/bench-runtime.lua` gives the same number as that file in a full
+`make bench`. A number from `--in-process` with several files is not
+comparable with either: it depends on the files before it.
 
 ## The benchmarks
 

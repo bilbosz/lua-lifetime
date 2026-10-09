@@ -231,6 +231,92 @@ test.case("a module missing under DIR is an error, not the branch's module", fun
     test.assert_true(r.stderr:find("module 'lifetime.cli' not found under " .. FIXTURE .. "/empty/", 1, true), "stderr: " .. r.stderr)
 end)
 
+-- Task 013: one process per benchmark file. bench-first.lua sets a global
+-- that bench-second.lua looks for; bench-env.lua names the interpreter
+-- and the BENCH_TIME it saw; bench-probe2.lua is a second probe of
+-- lifetime.cli; bench-raises.lua raises at load.
+write_file(FIXTURE .. "/bench-first.lua", table.concat({
+    "BENCH_TEST_GLOBAL = \"set by bench-first.lua\"",
+    "require(\"bench.lib.bench\").add(\"probe/first\", function() end)",
+    ""
+}, "\n"))
+write_file(FIXTURE .. "/bench-second.lua", table.concat({
+    "local seen = rawget(_G, \"BENCH_TEST_GLOBAL\") and \"shared\" or \"fresh\"",
+    "require(\"bench.lib.bench\").add(\"probe/second-\" .. seen, function() end)",
+    ""
+}, "\n"))
+write_file(FIXTURE .. "/bench-env.lua", table.concat({
+    "local interpreter = rawget(_G, \"jit\") and \"jit\" or \"puc\"",
+    "require(\"bench.lib.bench\").add(\"probe/env-\" .. interpreter .. \"-\" .. tostring(os.getenv(\"BENCH_TIME\")), function() end)",
+    ""
+}, "\n"))
+write_file(FIXTURE .. "/bench-probe2.lua", table.concat({
+    "local cli = require(\"lifetime.cli\")",
+    "require(\"bench.lib.bench\").add(\"probe2/\" .. (cli.WHO or \"branch\"), function() end)",
+    ""
+}, "\n"))
+write_file(FIXTURE .. "/bench-raises.lua", "error(\"raised at load\", 0)\n")
+
+-- The benchmark names of a run's standard output, in order; nil when a
+-- line is not a benchmark line.
+local function names_of(stdout)
+    local names = {}
+    for line in stdout:gmatch("([^\n]*)\n") do
+        names[#names + 1] = bench.parse_line(line) or ("not a benchmark line: " .. line)
+    end
+    return names
+end
+
+local THIS_INTERPRETER = rawget(_G, "jit") and "jit" or "puc"
+
+test.case("each file in its own process, in file order, same interpreter, BENCH_TIME forwarded", function()
+    local files = " " .. FIXTURE .. "/bench-second.lua " .. FIXTURE .. "/bench-first.lua " .. FIXTURE .. "/bench-second.lua " .. FIXTURE .. "/bench-env.lua"
+    local r = run_bench(files)
+    test.assert_eq(r.stderr, "")
+    test.assert_eq(r.status, 0)
+    -- The global bench-first.lua set is absent in the next file's process.
+    test.assert_deep_eq(names_of(r.stdout), {"probe/second-fresh", "probe/first", "probe/second-fresh", "probe/env-" .. THIS_INTERPRETER .. "-0.001"})
+end)
+
+test.case("--in-process runs every file in one process, as before task 013", function()
+    local r = run_bench("--in-process " .. FIXTURE .. "/bench-second.lua " .. FIXTURE .. "/bench-first.lua " .. FIXTURE .. "/bench-second.lua")
+    test.assert_eq(r.stderr, "")
+    test.assert_eq(r.status, 0)
+    test.assert_deep_eq(names_of(r.stdout), {"probe/second-fresh", "probe/first", "probe/second-shared"})
+end)
+
+test.case("--lifetime DIR reaches every file's process", function()
+    local r = run_bench("--lifetime " .. FIXTURE .. "/fake " .. FIXTURE .. "/bench-probe.lua " .. FIXTURE .. "/bench-first.lua " .. FIXTURE .. "/bench-probe2.lua")
+    test.assert_eq(r.stderr, "")
+    test.assert_eq(r.status, 0)
+    test.assert_deep_eq(names_of(r.stdout), {"probe/fake", "probe/first", "probe2/fake"})
+    r = run_bench(FIXTURE .. "/bench-probe.lua " .. FIXTURE .. "/bench-probe2.lua")
+    test.assert_deep_eq(names_of(r.stdout), {"probe/branch", "probe2/branch"}, "without --lifetime")
+end)
+
+test.case("a file that raises at load: named on stderr, the other files still run, exit 1", function()
+    local r = run_bench(FIXTURE .. "/bench-first.lua " .. FIXTURE .. "/bench-raises.lua " .. FIXTURE .. "/bench-second.lua")
+    test.assert_eq(r.status, 1)
+    test.assert_deep_eq(names_of(r.stdout), {"probe/first", "probe/second-fresh"})
+    -- The child's own message, then the parent's, both naming the file.
+    test.assert_eq(r.stderr, "bench: " .. FIXTURE .. "/bench-raises.lua: raised at load\n" .. "bench: " .. FIXTURE .. "/bench-raises.lua: its process exited with status 1\n")
+    -- In one process the same file fails the same way, without the
+    -- parent's line.
+    r = run_bench("--in-process " .. FIXTURE .. "/bench-first.lua " .. FIXTURE .. "/bench-raises.lua " .. FIXTURE .. "/bench-second.lua")
+    test.assert_eq(r.status, 1)
+    test.assert_deep_eq(names_of(r.stdout), {"probe/first", "probe/second-shared"})
+    test.assert_eq(r.stderr, "bench: " .. FIXTURE .. "/bench-raises.lua: raised at load\n")
+end)
+
+test.case("a file whose process dies without a word is still reported", function()
+    -- os.exit from inside the benchmark file: no bench message, status 3.
+    write_file(FIXTURE .. "/bench-exits.lua", "os.exit(3)\n")
+    local r = run_bench(FIXTURE .. "/bench-exits.lua " .. FIXTURE .. "/bench-first.lua")
+    test.assert_eq(r.status, 1)
+    test.assert_deep_eq(names_of(r.stdout), {"probe/first"})
+    test.assert_eq(r.stderr, "bench: " .. FIXTURE .. "/bench-exits.lua: its process exited with status 3\n")
+end)
+
 test.suite("bench compare")
 
 -- bench/README.md, "The threshold": SLOWER only when both pairings of
