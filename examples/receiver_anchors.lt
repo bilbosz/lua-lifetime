@@ -1,0 +1,74 @@
+-- receiver_anchors.lt: there is no `caller`. A function returns an object
+-- on the default lifetime and the receiver anchors it where it wants it
+-- (docs/02-semantics.md, "Scopes: `lifetime.scope`": "it returns the
+-- object on the default lifetime and the receiver anchors it";
+-- docs/05-decisions.md, "`caller` is removed"). A function body is a
+-- block, so an object it anchors to its own scope is a tombstone by the
+-- time its caller sees it.
+
+local Log = {}
+Log.__index = Log
+function Log.__destroy(self, reason)
+    print("close " .. self.name .. " (" .. reason .. ")")
+end
+function Log.__tostring(self)
+    return "log " .. self.name
+end
+
+local function open_log(name)
+    return setmetatable({name = name}, Log)
+end
+
+-- The receiver anchors it to its block: the block's exit destroys it.
+local first
+do
+    local log = open_log("first") @ lifetime.scope
+    first = log
+    print("writing to " .. log.name)
+end
+print("after the first block", getmetatable(first))
+--> writing to first
+--> close first (anchor)
+--> after the first block	dead
+
+-- A receiver that does not anchor keeps the object as Lua would: nothing
+-- destroys it at the block's end, and the collector takes it once nothing
+-- refers to it. It was never anchored, so the runtime never saw it and it
+-- is collected silently (docs/05-decisions.md, "Registration is `x @
+-- lifetime.reachable`"); the weak table shows when it is gone.
+local seen = setmetatable({}, {__mode = "v"})
+local function second_receiver()
+    local log = open_log("second")
+    seen[1] = log
+    print("writing to " .. log.name)
+end
+second_receiver()
+print("after the second receiver", seen[1].name, getmetatable(seen[1]) == Log)
+collectgarbage("collect")
+collectgarbage("collect")
+print("after collectgarbage", seen[1])
+--> writing to second
+--> after the second receiver	second	true
+--> after collectgarbage	nil
+
+-- Anchoring to the function's own scope and returning the object hands
+-- the caller a tombstone: the `return` runs the epilogue after its value
+-- is evaluated.
+local function wrong()
+    local log = open_log("wrong") @ lifetime.scope
+    return log
+end
+local returned = wrong()
+print("the caller got", tostring(returned))
+--> close wrong (anchor)
+--> the caller got	dead log wrong
+
+-- The receiver may anchor it to anything else too.
+local session = {}
+local third = open_log("third") @ session
+print("anchored to the session", third.name)
+destroy(session)
+print("session destroyed", getmetatable(third))
+--> anchored to the session	third
+--> close third (anchor)
+--> session destroyed	dead

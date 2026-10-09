@@ -1,0 +1,30 @@
+-- exit_order.lt: program end under `lifetime run` (docs/02-semantics.md,
+-- "Program end"; docs/03-runtime.md, "Program end"; docs/04-transpiler.md,
+-- "The command"). First the main scope exits like any block: its
+-- dependents die in reverse attachment order, reason "anchor". Then the
+-- state closes and Lua finalizes what still has a pending finalizer,
+-- newest first; `lifetime run` has set the exit flag, so the two globals
+-- registered through `@` die with reason "exit". The chunk's return
+-- value is ignored and the exit status is 0. The globals die through
+-- their sentinels (task 004), with "exit" because `lifetime run` calls
+-- `lifetime.set_exiting(true)` (task 007).
+
+local Res = {}
+function Res.__destroy(self, reason)
+    print("destroy " .. self.name .. " (" .. reason .. ")")
+end
+local function res(name)
+    return setmetatable({name = name}, Res)
+end
+
+older = res("older global") @ lifetime.reachable
+newer = res("newer global") @ lifetime.reachable
+local first = res("first local") @ lifetime.scope
+local second = res("second local") @ lifetime.scope
+print("end of chunk", older.name, newer.name, first.name, second.name)
+return "ignored"
+--> end of chunk	older global	newer global	first local	second local
+--> destroy second local (anchor)
+--> destroy first local (anchor)
+--> destroy newer global (exit)
+--> destroy older global (exit)

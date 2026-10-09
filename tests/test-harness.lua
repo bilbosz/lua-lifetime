@@ -48,6 +48,15 @@ test.case("error line alone", function()
     test.assert_eq(err, "boom")
 end)
 
+test.case("the reported error is the first line that starts with lifetime: (task 007)", function()
+    test.assert_eq(conformance.reported_error("lifetime: examples/x.lt:3: boom\nstack traceback:\n\t[C]: in function 'error'\n"), "examples/x.lt:3: boom")
+    -- A destructor error routed to destroyerror while the scopes unwind
+    -- is written first.
+    test.assert_eq(conformance.reported_error("destroyerror: examples/x.lt:5: late\nstack traceback:\n\t...\nlifetime: examples/x.lt:3: boom\n"), "examples/x.lt:3: boom")
+    test.assert_eq(conformance.reported_error("lua5.1: examples/x.lt:3: boom\n"), nil)
+    test.assert_eq(conformance.reported_error(""), nil)
+end)
+
 test.case("discover pairs programs with expectations", function()
     local names, errors = conformance.discover("examples")
     test.assert_true(#names >= 1)

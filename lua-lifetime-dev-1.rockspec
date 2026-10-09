@@ -1,6 +1,7 @@
 -- lua-lifetime-dev-1.rockspec: the development rockspec for lua-lifetime.
 -- Module name `lifetime`. Targets Lua 5.1 and LuaJIT (docs/02-semantics.md,
--- "Host"). Task 007 makes `luarocks make` install and run the command.
+-- "Host"). `luarocks make lua-lifetime-dev-1.rockspec` installs the modules
+-- and the command `lifetime` (bin/lifetime; task 007).
 -- No license is declared yet: the human decides (xd has none either).
 -- The teal-lifetime rockspec is a later addition to this repository
 -- (docs/01-overview.md, "Rocks").

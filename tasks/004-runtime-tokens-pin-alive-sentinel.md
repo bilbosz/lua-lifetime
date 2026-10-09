@@ -105,6 +105,10 @@ behave as specified.
 3. Subtree as a cycle: `parent` registered with `@ lifetime.reachable`,
    `child @ parent` with `child.parent = parent`; drop `parent`;
    collect: log `parent (unreachable), child (anchor)` in that order.
+   *(Wrong, ruled by the orchestrator: the child has its own, newer
+   sentinel, so the log is `child (unreachable), parent (unreachable)`,
+   per 02, "Reachability is the collector's"; see "Spec issues found",
+   1.)*
 4. Newest first: `a` then `b` both registered, unrelated, both dropped;
    one collect logs `b, a`.
 5. Weak table: `w = setmetatable({}, {__mode = "k"})`, `w[x] = true`;
@@ -145,7 +149,8 @@ state record).
 Found by the implementer, round 1. None changes the semantics; each says
 what the code does and why, for the reviewer and the human to decide.
 
-1. **Test case 3 contradicts the acceptance criterion and 02.** Case 3
+1. **Test case 3 contradicts the acceptance criterion and 02** (the
+   test case's text was wrong; see the ruling below). Case 3
    expects a collected subtree (`parent @ lifetime.reachable`, `child @
    parent`, `child.parent = parent`, both `__destroy`) to log `parent
    (unreachable), child (anchor)`. But `child` has the term and a
@@ -172,15 +177,19 @@ what the code does and why, for the reviewer and the human to decide.
    set) does nothing and lets the anchor's walk take the object with
    `"anchor"`; that gives case 3's order and keeps the owner-first rule
    for collected subtrees, and changes the meaning of "newest first" to
-   "newest root first". Not done: it is a choice between two readings of
-   02, so it is the human's. Pinned dependents and hooks carry no
+   "newest root first". Not done. **Ruled by the orchestrator:** 02's
+   literal reading stands (the collector finalizes newest first, so a
+   collected child with its own sentinel dies with `"unreachable"` before
+   its parent, and the parent's walk skips it); the task's test case 3
+   text was wrong; one sentence goes into 02 in the done chore. Pinned dependents and hooks carry no
    sentinel, so a subtree of those already dies root first (test "the
    cascade takes the dependents with reason anchor, at collector").
 2. **The exit flag's name.** 03, "Program end", and 04, "The command",
    say `lifetime run` sets "an exit flag"; nothing names it, and 06 leaves
    the embedding host's spelling open. Implemented:
    `lifetime.set_exiting(flag)`, a function on the runtime table (task
-   007 calls it). 03 could name it.
+   007 calls it). **Ruled by the orchestrator:** the name is
+   `lifetime.set_exiting(flag)`.
 3. **`lifetime.alive` of a lifetime value or the `lifetime.scope`
    marker.** 02 says `alive` is `true` for an object alive or dying,
    `false` for a tombstone, `nil` or `false`, and an argument error for a
@@ -188,8 +197,7 @@ what the code does and why, for the reviewer and the human to decide.
    a lifetime value and the marker with `object expected, got lifetime`
    (or `lifetime.scope`). Implemented: `alive` reads any table without a
    tombstone as alive, so both give `true`, with no extra test on the hot
-   path. If they should raise, `alive` needs one more branch on tables
-   without a state record.
+   path. **Ruled by the orchestrator:** accepted.
 4. **Sentinel reuse.** 03 says the proxy is "allocated lazily: on the
    first `@` that makes the object need one ... and never again for the
    same object", and "Performance" counts "one `newproxy(true)` per
@@ -205,7 +213,8 @@ what the code does and why, for the reviewer and the human to decide.
    their number is bounded by the most sentinels ever disarmed newest
    first. Without the reuse a fresh `newproxy` per object made
    `attach`+`destroy` of an object with a sentinel about 600 ns dearer on
-   Lua 5.1 and 400 ns on LuaJIT. 03 could mention it.
+   Lua 5.1 and 400 ns on LuaJIT. **Ruled by the orchestrator:**
+   accepted; it goes into 03 in the done chore.
 5. **More dependents with the term held by nobody.** Besides the eleven
    cases of `tests/test-runtime.lua` that task 003's review named, twenty
    statements in `tests/test-scopes.lua` attached a logging dependent to a
@@ -245,8 +254,11 @@ what the code does and why, for the reviewer and the human to decide.
   runs 2 to 4 (`runtime/attach-destroy-100` 1.08 to 1.09,
   `runtime/cascade-tree` 1.04 to 1.08, `scope/loop-one-object` 1.03 to
   1.09). So `runtime/attach-destroy-100` under LuaJIT is marked in two
-  consecutive invocations (3 and 4): a finding by bench/README.md's rule,
-  for the orchestrator to decide. Every object of
+  consecutive invocations (3 and 4): a finding by bench/README.md's rule.
+  **Ruled by the orchestrator:** the sentinel's forced cost under the
+  current design, to be recorded in 03, "Forced, and measured"; the
+  reviewer judges whether arming and disarming are as cheap as the design
+  allows; no more tuning now. Every object of
   `runtime/attach-destroy-100` and `runtime/cascade-tree` has a
   `__destroy` and the term, so it now needs a sentinel
   (docs/03-runtime.md, "Performance", "Forced, and measured"): arming
