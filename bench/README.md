@@ -152,6 +152,12 @@ nothing, two make a mark, and a mark twice in a row makes a finding.
 | `runtime/cascade-tree` | `bench-runtime.lua` | a three-level tree (1 + 10 + 100) built with `attach` and destroyed from the root | the same tree of arrays closed by a recursive loop |
 | `runtime/dependents-100` | `bench-runtime.lua` | `lifetime.dependents` of an anchor with 100 dependents | copying an array of 100 |
 | `runtime/attach-first` | `bench-runtime.lua` | `attach` of a fresh table to a long-lived anchor, dropped at once (holes and compaction) | storing a fresh table in a weak-valued array |
+| `scope/loop-one-object` | `bench-scopes.lua` | 10 iterations of a loop body owning one object with a `__destroy`, as generated code: `enter`, `attach` to the record, `exit` | the same object closed by hand at the end of each iteration |
+| `scope/enter-exit-empty` | `bench-scopes.lua` | 10 `enter`/`exit` pairs of a record nothing is attached to | 10 empty loop iterations (the ratio is only "how many empty blocks") |
+| `scope/hook-on-scope` | `bench-scopes.lua` | 10 blocks with one hook (`f !@ lifetime.scope`): `enter`, `hook`, `exit` | calling `f` by hand 10 times |
+| `scope/pcall-empty` | `bench-scopes.lua` | 10 `pcall`s of an empty function through the runtime's `pcall` | the original `pcall` (on a base without the replacement, both are the original) |
+| `scope/pcall-error` | `bench-scopes.lua` | 10 `pcall`s of a function that raises through no scoped block | the original `pcall` |
+| `scope/resume-yield` | `bench-scopes.lua` | 10 resumes of a coroutine that yields, through the runtime's `coroutine.resume` | the original `coroutine.resume` |
 
 ## Adding a benchmark
 

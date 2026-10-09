@@ -1455,15 +1455,6 @@ end
 -- too, see "Scope records" above.
 local stacks = setmetatable({}, {__mode = "kv"})
 
-local function stack_of(co)
-    local s = stacks[co]
-    if s == nil then
-        s = {n = 0}
-        stacks[co] = s
-    end
-    return s
-end
-
 -- After a resume: restore the resumer's stack, then, if the coroutine
 -- died of an error, unwind its whole stack in the resumer's context. A
 -- `false` from `resume` on a coroutine that is not dead (running or
@@ -1481,12 +1472,22 @@ end
 -- ... for the duration of the call and restores it after, which covers
 -- the yield path without wrapping `coroutine.yield`; when the original
 -- returns `false` the coroutine is dead and its whole stack is unwound."
+--
+-- The lookup comes first: reading `stacks[co]` is legal for any `co`, and
+-- a coroutine resumed before has its stack there, so the common resume
+-- pays no `type` call. Anything else is passed to the original, which
+-- raises its own argument error.
 local function lifetime_resume(co, ...)
-    if type(co) ~= "thread" then
-        return resume(co, ...)
+    local s = stacks[co]
+    if s == nil then
+        if type(co) ~= "thread" then
+            return resume(co, ...)
+        end
+        s = {n = 0}
+        stacks[co] = s
     end
     local saved = stack
-    stack = stack_of(co)
+    stack = s
     return resumed(co, saved, resume(co, ...))
 end
 
@@ -1541,8 +1542,13 @@ end
 local function lifetime_wrap(f)
     local co = create(f)
     return function(...)
+        local s = stacks[co]
+        if s == nil then
+            s = {n = 0}
+            stacks[co] = s
+        end
         local saved = stack
-        stack = stack_of(co)
+        stack = s
         return wrapped(co, saved, resume(co, ...))
     end
 end
