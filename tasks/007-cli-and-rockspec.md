@@ -38,6 +38,16 @@ returns.
   `cli.build` classifies a syntax error by a marker rather than by the
   chunkname prefix of the message, since this task chooses chunknames.
 
+- `tasks/006-emitter.md`, review round 1, F1: the comment on the
+  emitter's restart optimisation (plain Lua emitted in one pass, restart
+  with the block analysis at the first `lifetime.scope`) names
+  `build/plain.lt`, `build/generated-5000` and `build/lifetime-largest`;
+  this task adds `build/extension-5000` (or similar), `cli.build` on a
+  file that uses the extension, so the double emission is measured; and
+  gives `emit/return-fixed` and `emit/return-call` a LuaJIT baseline that
+  does the same observable work (the hand-written destructor call is
+  folded away today), or drops their ratio column.
+
 ## Acceptance criteria
 
 - `lifetime build FILE -o OUT` writes the transpiled source; `-o -`
