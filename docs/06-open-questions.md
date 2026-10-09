@@ -81,26 +81,6 @@ runtime has seen. *Leaning:* a private table as the key, which no
 serializer can mistake for data, and a documented `lifetime.is_state(k)`
 rule for skipping it; to be settled by task 002 with the human.
 
-### Catch-site unwinding instead of per-block `pcall` wrappers
-
-If the runtime wrapped `pcall`, `xpcall`, `coroutine.resume` and
-`coroutine.wrap` at `require` time, scope records could be kept on a
-per-coroutine stack and unwound at the catching `pcall`,
-which removes the closure rewrite of `return`, `break` and `...`, the lost
-tail calls inside wrapped blocks, and the yield restriction on plain 5.1.
-The observable difference is only where an uncaught error leaves records
-behind. Touches decisions 5 and 10, which name the per-block wrapper; goes
-to the human.
-
-Since performance became a priority ([05-decisions.md](05-decisions.md))
-this is also the largest performance question in the design: the
-per-block wrapper allocates a closure on every entry into a block with a
-scope record, a loop body included, and it is the one cost the
-transpiler adds that grows with how often a block runs rather than with
-how many objects it owns. *Leaning:* catch-site unwinding, decided on the
-numbers of the task 010 benchmark that runs a scoped block in a loop both
-ways.
-
 ### Teal and `!@`
 
 The hook operator `!@` was chosen partly because Teal is believed not to

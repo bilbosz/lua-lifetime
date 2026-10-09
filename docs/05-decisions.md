@@ -311,3 +311,61 @@ listed in "The `lifetime` table" as syntax, not as an eighth function.
 "Acquiring a lifetime: the `@` operator";
 [04-transpiler.md](04-transpiler.md), "Grammar";
 [03-runtime.md](03-runtime.md), "Scope records"
+
+## Scopes unwind at the catch site, not in a per-block `pcall` wrapper
+
+Decided on 2026-10-09 by the human's delegation ("Decide catch-site
+unwinding first"), on the evidence the open question asked for. The
+transpiler no longer wraps a block that anchors to `lifetime.scope` in a
+`pcall` closure. The error path is the runtime's: it keeps a stack of
+the active scope records per coroutine, and its replacements for
+`pcall`, `xpcall`, `coroutine.resume` and `coroutine.wrap` unwind,
+innermost first, every record pushed since the call began, before the
+call returns `false` or re-raises. Ordinary exits (fall-through,
+`return`, `break`, `goto`) keep their generated epilogues.
+
+Why. The per-block wrapper was the one cost the transpiler added that
+grew with how often a block runs, and it was worse than its allocation:
+closure creation is not compiled by LuaJIT 2.1 (`NYI: bytecode FNEW`), so
+every loop containing a scoped block was blacklisted and ran interpreted,
+and so did everything else in that loop. Measured with stand-ins of the
+runtime design on 2026-10-09 (LuaJIT 2.1, a loop whose body owns one
+object):
+
+| Block with a scope record | ns per entry | loop compiled |
+| --- | --- | --- |
+| record only | 134 | yes |
+| record, catch-site unwinding | 209 | yes |
+| record, per-block `pcall` wrapper | 399 | no |
+
+The catch-site design also removes the rewrite of `return`, `break` and
+`...` into and out of a closure, and the rule that a scoped block cannot
+yield on plain Lua 5.1. What it keeps: the lost tail call on a `return
+f(x)` inside a scoped block, since the epilogue must run after `f(x)`.
+
+What a program observes. The same destructors run in the same order,
+innermost block first, each block in reverse attachment order, and the
+error that comes out of `pcall` is the original; an `xpcall` handler runs
+at the raise point first, as in Lua. The only difference is where a
+catch the runtime cannot see leaves records: a `pcall`, `xpcall`,
+`resume` or `wrap` captured into a local before `lifetime` was required.
+Such records die at the next scope exit of the same coroutine that finds
+them above itself, or at program end. The rule that follows is stated in
+02: require `lifetime` before anything captures those four names;
+`lifetime run` does. Making the generated chunk unwind by itself was
+rejected because Lua 5.1 gives it no way to see an error pass without a
+`pcall`, which is the wrapper. Keying the stack by `coroutine.running()`
+at every block entry was rejected because that call is not compiled by
+LuaJIT either; `resume` swaps the stack instead, once per switch, and
+`yield` needs no wrapper because control returns through `resume`.
+
+This departs from decisions 5 and 10 of
+`xd/docs/10-lua-lifetime-decisions.md` where they name the per-block
+`pcall` wrapper as the mechanism; "Every exit path" of decision 10 still
+holds, the mechanism differs. The human carries it back to `xd`. The open
+question "Catch-site unwinding" is closed. Tasks 003, 006 and 007
+updated.
+→ [02-semantics.md](02-semantics.md), "Scopes: `lifetime.scope`" and
+"Coroutines"; [03-runtime.md](03-runtime.md), "The scope stack and the
+error path"; [04-transpiler.md](04-transpiler.md), "The error path:
+unwinding at the catch site"

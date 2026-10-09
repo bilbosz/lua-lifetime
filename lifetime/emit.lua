@@ -2,7 +2,7 @@
 --
 -- Turns the AST into Lua 5.1 source per docs/04-transpiler.md: the chunk
 -- header, what `@` expands to, hooks (`!@`), block prologues and
--- epilogues on every exit path, the `pcall` wrapper for the error path,
+-- epilogues on every exit path (the error path is the runtime's),
 -- nothing per function. Keeps every statement
 -- on its source line. Exports `emit(ast)`.
 --
