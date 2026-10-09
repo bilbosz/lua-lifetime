@@ -1,0 +1,19 @@
+iteration 1
+destroy t1 (anchor)
+iteration 2
+destroy t2 (anchor)
+iteration 3
+destroy t3 (anchor)
+after the numeric for
+hook after u1
+destroy u1 (anchor)
+hook after u2
+destroy u2 (anchor)
+destroy w1 (anchor)
+destroy w2 (anchor)
+after the generic for and the while
+until sees r1
+destroy r1 (anchor)
+until sees r2
+destroy r2 (anchor)
+after the repeat

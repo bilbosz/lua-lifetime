@@ -1,0 +1,65 @@
+-- named_hook.lt: a hook is an object, and a hook bound to a name carries
+-- the name (docs/02-semantics.md, "Hooks: the `!@` operator", "Named
+-- hooks"): run early with `destroy`, cancelled with `discard`, moved with
+-- `@`. `lifetime.alive` is task 004's; until it is on master the
+-- tombstone is checked through `getmetatable` and `tostring`
+-- (docs/02-semantics.md, "Tombstones and `lifetime.alive`").
+
+local function died(obj)
+    local ok, message = pcall(function()
+        return obj.x
+    end)
+    print(ok, message)
+end
+
+local owner = {}
+local hook = function(r) print("ran " .. r) end !@ owner
+print(tostring(hook))
+destroy(hook)
+print("after the first destroy")
+destroy(hook)
+print("after the second destroy")
+print(tostring(hook), getmetatable(hook))
+died(hook)
+destroy(owner)
+print("owner destroyed")
+--> hook hook
+--> ran destroy
+--> after the first destroy
+--> after the second destroy
+--> dead hook hook	dead
+--> false	examples/named_hook.lt:10: attempt to index a dead table (hook hook, died at examples/named_hook.lt:18, destroy)
+--> owner destroyed
+
+-- `discard` cancels a hook: its function never runs.
+local session = {}
+local cancelled = function(r) print("never runs " .. r) end !@ session
+discard(cancelled)
+print(tostring(cancelled))
+destroy(session)
+print("session destroyed")
+--> dead hook cancelled
+--> session destroyed
+
+-- `@` moves a hook; it runs when its new anchor dies and stays pinned.
+local first, second = {}, {}
+local moved = function(r) print("moved ran " .. r) end !@ first
+moved @ second
+destroy(first)
+print("first destroyed")
+destroy(second)
+print("second destroyed")
+--> first destroyed
+--> moved ran anchor
+--> second destroyed
+
+-- Each binding target names its own hook; `t.NAME =` names it, `t[k] =`,
+-- an argument or a statement on its own leave it anonymous.
+local t, third = {}, {}
+local h1, h2 = function() end !@ t, function() end !@ t
+t.on_close, t[1] = function() end !@ t, function() end !@ t
+local chained = function() end !@ t @ third
+print(tostring(h1), tostring(h2), tostring(t.on_close), tostring(chained))
+print(tostring(t[1]):match("^hook: ") ~= nil)
+--> hook h1	hook h2	hook on_close	hook chained
+--> true

@@ -1,0 +1,104 @@
+-- unwind.lt: the error path. The transpiler emits nothing for it; the
+-- runtime's `pcall`, `xpcall`, `coroutine.resume` and `coroutine.wrap`
+-- unwind the scopes of every block between the raise and the catch,
+-- innermost first, each in reverse attachment order, before they return
+-- (docs/04-transpiler.md, "The error path: unwinding at the catch site";
+-- docs/02-semantics.md, "Scopes: `lifetime.scope`", "Coroutines";
+-- docs/05-decisions.md, "Scopes unwind at the catch site"). A scoped
+-- block may yield on both hosts.
+
+local Res = {}
+function Res.__destroy(self, reason)
+    print("destroy " .. self.name .. " (" .. reason .. ")")
+end
+function Res.__tostring(self)
+    return "res " .. self.name
+end
+local function res(name)
+    return setmetatable({name = name}, Res)
+end
+
+local kept
+local function risky()
+    local a = res("a") @ lifetime.scope
+    do
+        local b = res("b") @ lifetime.scope
+        kept = b
+        error("boom")
+    end
+end
+
+-- The dependents die before `pcall` returns, which returns the original
+-- message and position.
+print("pcall returned", pcall(risky))
+print(pcall(function()
+    return kept.name
+end))
+--> destroy b (anchor)
+--> destroy a (anchor)
+--> pcall returned	false	examples/unwind.lt:27: boom
+--> false	examples/unwind.lt:35: attempt to index a dead table (res b, died at examples/unwind.lt:28, anchor)
+
+-- An `xpcall` message handler runs at the raise point, before any
+-- epilogue, as in Lua.
+print("xpcall returned", xpcall(risky, function(message)
+    print("handler", message)
+    return "handled"
+end))
+--> handler	examples/unwind.lt:27: boom
+--> destroy b (anchor)
+--> destroy a (anchor)
+--> xpcall returned	false	handled
+
+-- The same kind of block inside a coroutine yields mid-block; its
+-- dependents die at the block's `end`, after the resume.
+local co = coroutine.create(function()
+    local c = res("c") @ lifetime.scope
+    print("before the yield", c.name)
+    coroutine.yield("yielded")
+    print("after the yield", c.name)
+end)
+print(coroutine.resume(co))
+print("between the resumes")
+print(coroutine.resume(co))
+--> before the yield	c
+--> true	yielded
+--> between the resumes
+--> after the yield	c
+--> destroy c (anchor)
+--> true
+
+-- An error that ends a coroutine unwinds its scopes inside the resume
+-- that catches it, and inside a `coroutine.wrap` function before it
+-- raises again.
+co = coroutine.create(function()
+    local d = res("d") @ lifetime.scope
+    coroutine.yield()
+    error("late")
+end)
+coroutine.resume(co)
+print("resumed once")
+print(coroutine.resume(co))
+local wrapped = coroutine.wrap(function()
+    local e = res("e") @ lifetime.scope
+    coroutine.yield()
+    error("wrapped")
+end)
+wrapped()
+print(pcall(wrapped))
+--> resumed once
+--> destroy d (anchor)
+--> false	examples/unwind.lt:77: late
+--> destroy e (anchor)
+--> false	examples/unwind.lt:85: wrapped
+
+-- The main chunk is a block like any other: an uncaught error unwinds its
+-- scope before the error is reported, when the chunk is called through
+-- the runtime's `pcall` (tests/lib/driver.lua does, as `lifetime run`
+-- will).
+local z = res("z") @ lifetime.scope
+print("last statement", z.name)
+error("uncaught")
+--> last statement	z
+--> destroy z (anchor)
+-- and the error, reported by the interpreter: examples/unwind.lt:101: uncaught

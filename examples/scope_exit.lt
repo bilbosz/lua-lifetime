@@ -1,0 +1,102 @@
+-- scope_exit.lt: a block that anchors to `lifetime.scope` destroys what
+-- it anchored when it falls through its `end`, newest first, with hooks
+-- in their place among the objects (docs/02-semantics.md, "Scopes:
+-- `lifetime.scope`", "Hooks: the `!@` operator", "Cascading death"). A
+-- `!@ lifetime.scope` inside a nested function belongs to that function's
+-- body, not to the block around it (docs/04-transpiler.md, "Blocks": "A
+-- block needs a scope record if it contains, directly (not in a nested
+-- function), `lifetime.scope` as an anchor").
+
+local Res = {}
+function Res.__destroy(self, reason)
+    print("destroy " .. self.name .. " (" .. reason .. ")")
+end
+function Res.__tostring(self)
+    return "res " .. self.name
+end
+local function res(name)
+    return setmetatable({name = name}, Res)
+end
+
+-- The tombstone's message says where its object died.
+local function died(obj)
+    local ok, message = pcall(function()
+        return obj.name
+    end)
+    print(ok, message)
+end
+
+local kept
+do
+    local a = res("a") @ lifetime.scope
+    function() print("hook") end !@ lifetime.scope
+    local b = res("b") @ lifetime.scope
+    kept = a
+    print("last statement of the block", a.name, b.name)
+end
+print("after the block")
+died(kept)
+--> last statement of the block	a	b
+--> destroy b (anchor)
+--> hook
+--> destroy a (anchor)
+--> after the block
+--> false	examples/scope_exit.lt:24: attempt to index a dead table (res a, died at examples/scope_exit.lt:36, anchor)
+
+-- The example of docs/02-semantics.md, "Cascading death": the scope's
+-- dependents are `a` then `c`, so `c` goes first, taking `d`; then `a`,
+-- then its dependents newest first: the hook, `d` (already dead), `b`.
+do
+    local a = res("a") @ lifetime.scope
+    local b = res("b") @ a
+    local c = res("c") @ lifetime.scope
+    local d = res("d") @ (a, c)
+    function() print("hook on a") end !@ a
+    print("bodies in the order c, d, a, hook, b", b.name, d.name)
+end
+--> bodies in the order c, d, a, hook, b	b	d
+--> destroy c (anchor)
+--> destroy d (anchor)
+--> destroy a (anchor)
+--> hook on a
+--> destroy b (anchor)
+
+-- A function body is a block of its own: its hook runs at its `end`,
+-- whether the function is defined outside the calling block or inside it.
+local function helper()
+    function() print("helper's hook") end !@ lifetime.scope
+    print("helper's body")
+end
+do
+    local e = res("e") @ lifetime.scope
+    local function inner()
+        function() print("inner's hook") end !@ lifetime.scope
+        print("inner's body")
+    end
+    helper()
+    print("after helper")
+    inner()
+    print("after inner", e.name)
+end
+print("after the second block")
+--> helper's body
+--> helper's hook
+--> after helper
+--> inner's body
+--> inner's hook
+--> after inner	e
+--> destroy e (anchor)
+--> after the second block
+
+-- A block that does not anchor to `lifetime.scope` destroys nothing when
+-- it ends; what it anchored elsewhere lives on with its anchor.
+local owner = res("owner")
+do
+    local f = res("f") @ owner
+    kept = f
+end
+print("after a block without a record", kept.name)
+destroy(owner)
+--> after a block without a record	f
+--> destroy owner (destroy)
+--> destroy f (anchor)

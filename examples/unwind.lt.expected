@@ -1,0 +1,22 @@
+destroy b (anchor)
+destroy a (anchor)
+pcall returned	false	examples/unwind.lt:27: boom
+false	examples/unwind.lt:35: attempt to index a dead table (res b, died at examples/unwind.lt:28, anchor)
+handler	examples/unwind.lt:27: boom
+destroy b (anchor)
+destroy a (anchor)
+xpcall returned	false	handled
+before the yield	c
+true	yielded
+between the resumes
+after the yield	c
+destroy c (anchor)
+true
+resumed once
+destroy d (anchor)
+false	examples/unwind.lt:77: late
+destroy e (anchor)
+false	examples/unwind.lt:85: wrapped
+last statement	z
+destroy z (anchor)
+!error: examples/unwind.lt:101: uncaught

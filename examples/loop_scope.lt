@@ -1,0 +1,67 @@
+-- loop_scope.lt: a loop body is a fresh scope every iteration
+-- (docs/02-semantics.md, "Scopes: `lifetime.scope`": "A loop body gets a
+-- fresh scope every iteration, so `{} @ lifetime.scope` in a loop body
+-- dies at the end of that iteration"; docs/04-transpiler.md, "Blocks": "A
+-- loop body is a block: the record is created and destroyed once per
+-- iteration").
+
+local Res = {}
+function Res.__destroy(self, reason)
+    print("destroy " .. self.name .. " (" .. reason .. ")")
+end
+local function res(name)
+    return setmetatable({name = name}, Res)
+end
+
+-- Each death comes before the next iteration's first statement.
+for i = 1, 3 do
+    print("iteration " .. i)
+    local t = res("t" .. i) @ lifetime.scope
+end
+print("after the numeric for")
+--> iteration 1
+--> destroy t1 (anchor)
+--> iteration 2
+--> destroy t2 (anchor)
+--> iteration 3
+--> destroy t3 (anchor)
+--> after the numeric for
+
+-- The same in a generic `for` and a `while`, with a hook per iteration
+-- running after the object anchored before it.
+for _, name in ipairs({"u1", "u2"}) do
+    local u = res(name) @ lifetime.scope
+    function() print("hook after " .. u.name) end !@ lifetime.scope
+end
+local i = 0
+while i < 2 do
+    i = i + 1
+    local w = res("w" .. i) @ lifetime.scope
+end
+print("after the generic for and the while")
+--> hook after u1
+--> destroy u1 (anchor)
+--> hook after u2
+--> destroy u2 (anchor)
+--> destroy w1 (anchor)
+--> destroy w2 (anchor)
+--> after the generic for and the while
+
+-- In `repeat`, the condition sees the body's locals (Lua 5.1 manual,
+-- §2.4.4), so it runs while they are alive; the iteration's scope ends
+-- after it.
+local n = 0
+local function check(r)
+    print("until sees " .. r.name)
+    return r.name == "r2"
+end
+repeat
+    n = n + 1
+    local r = res("r" .. n) @ lifetime.scope
+until check(r)
+print("after the repeat")
+--> until sees r1
+--> destroy r1 (anchor)
+--> until sees r2
+--> destroy r2 (anchor)
+--> after the repeat
