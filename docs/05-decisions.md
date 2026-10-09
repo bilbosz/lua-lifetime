@@ -369,3 +369,50 @@ updated.
 "Coroutines"; [03-runtime.md](03-runtime.md), "The scope stack and the
 error path"; [04-transpiler.md](04-transpiler.md), "The error path:
 unwinding at the catch site"
+
+## Errors in finalizer-run destructors go to `destroyerror`
+
+Decided by the human on 2026-10-09, settling the open point of decision 2
+of file 10. A destructor the collector runs (reason `"unreachable"`, or
+`"exit"` at program end) has no statement to raise at, and Lua 5.1 would
+propagate an error raised in `__gc` into whatever allocation happened to
+trigger the collection. The sentinel's finalizer therefore runs the
+cascade in protected mode and routes every error of it, the first
+included, to `destroyerror`, which is what rule 5 of "Errors in
+destructors" already does for an error raised while another propagates.
+Letting it propagate was rejected because the error would surface at an
+unrelated line with no way to catch it where it was caused.
+→ [02-semantics.md](02-semantics.md), "Errors in destructors and
+`destroyerror`"; [03-runtime.md](03-runtime.md), "The sentinel"
+
+## Lifetime values are immutable snapshots
+
+Decided by the human on 2026-10-09. `xd` makes a lifetime value a one-way
+gate: a dead anchor drops out of every value that mentioned it. The
+runtime can only do that for values it can find, which would mean listing
+every value among its anchors' dependents and skipping them in
+`lifetime.dependents`, a cost on every `lifetime.of` and `lifetime.pin`.
+Decided instead: a value never changes after it is made; `@` on a value
+that mentions a dead anchor raises `attempt to anchor to a dead table`
+(or `dead token`), exactly as writing that anchor directly would, and
+`lifetime.format` renders the dead anchor as `dead <name>`. Nothing is
+tracked. The "empty lifetime" of the gate (`attempt to anchor to an empty
+lifetime`) no longer arises; `lifetime.pin()` with nothing to pin keeps
+its own error. This departs from `xd/docs/04-syntax.md`, "The `lifetime`
+table" (the one-way gate); the human carries it back to `xd`.
+→ [02-semantics.md](02-semantics.md), "The `lifetime` table"
+
+## Registration is `x @ lifetime.reachable`
+
+Confirmed by the human on 2026-10-09. Under decision 2 the runtime can
+only notify objects it has seen; a plain table with a `__destroy` that
+was never anchored, hooked, created by `lifetime.token` or passed to
+`destroy`, `discard` or `lifetime.of` is collected silently, as Lua
+collects it, unlike in `xd`, where every object is found. `x @
+lifetime.reachable` is the registration, and a class library registers
+its instances in its constructor (one line in Treflove's
+`utils/class.lua`; task 009 measures it). Finding every object with a
+`__destroy` was rejected because it would need the runtime to see every
+`setmetatable`. This is a consequence of decision 2 that file 10 does not
+state; the human carries it back to `xd`.
+→ [02-semantics.md](02-semantics.md), "`__destroy` and reasons", rule 7

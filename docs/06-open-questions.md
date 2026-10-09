@@ -33,14 +33,6 @@ and a third to `__destroy`; `nil` for `"destroy"`, `"unreachable"` and
 Proposal C of `xd/docs/09-lessons-from-treflove.md`. *Leaning:* a library
 table in the runtime with a hook per member, not a change to arrays.
 
-### Errors in finalizer-run destructors
-
-Decision 2. Lua 5.1 propagates an error raised in `__gc` into whatever
-allocation triggered the collection. *Leaning:* the sentinel's finalizer
-calls the cascade in protected mode and routes every error to
-`destroyerror`, as rule 5's second clause does for an error raised while
-another is propagating; there is no statement to raise at.
-
 ## Found while deriving the spec
 
 ### Non-table anchors
@@ -60,17 +52,6 @@ Decision 8 tombstones a table by emptying it and swapping its metatable.
 A dead function, coroutine or userdata cannot be emptied. The runtime
 remembers the death in a weak-keyed set so that `lifetime.alive` and `@`
 see it; calls and other uses are not caught. *Leaning:* accept; document.
-
-### Registering plain objects
-
-Under decision 2 the runtime can only notify objects it has seen. A plain
-table with a `__destroy` that was never anchored, hooked or destroyed is
-collected silently, unlike in `xd`, where every object is found.
-[02-semantics.md](02-semantics.md), "`__destroy` and reasons", rule 7,
-makes `x @ lifetime.reachable` the registration. *Leaning:* accept; a
-class library registers its instances in its constructor, one line in
-Treflove's `utils/class.lua`. Needs the human's confirmation since it is a
-consequence of decision 2 that file 10 does not state.
 
 ### The hidden field is visible
 
@@ -101,15 +82,6 @@ to be chosen when Treflove needs it (task 009).
 `os.exit` on plain 5.1 never closes the state, so no finalizer runs and
 step 2 of "Program end" is skipped. LuaJIT's `os.exit(code, true)` closes
 it. *Leaning:* document; no wrapper of `os.exit`.
-
-### Lifetime values as a one-way gate
-
-`xd` removes dead anchors from every lifetime value that mentioned them.
-The runtime can only do this for values it can find, so a value would have
-to be listed among its anchors' dependents and skipped by
-`lifetime.dependents`. *Leaning:* list them; alternatively, refuse a value
-with a dead anchor at `@` and keep snapshots immutable. Task 004 decides
-with the human.
 
 ### Iterating dependents without `pairs`
 

@@ -38,10 +38,15 @@ behave as specified.
 - `docs/03-runtime.md`, "The sentinel": the proxy's own metatable holds
   the owner; which objects carry a sentinel; the finalizer skips an object
   already dead.
-- `docs/06-open-questions.md`, "Errors in finalizer-run destructors": the
-  task implements the leaning (route to `destroyerror`) **only if** the
-  human has settled it by then; otherwise it lets the error propagate as
-  5.1 does and records the choice under *Spec issues found*.
+- `docs/02-semantics.md`, "Errors in destructors and `destroyerror`", and
+  `docs/03-runtime.md`, "The sentinel": the finalizer runs the cascade in
+  protected mode and routes every error, the first included, to
+  `destroyerror` (decided: `docs/05-decisions.md`, "Errors in
+  finalizer-run destructors go to `destroyerror`").
+- `docs/02-semantics.md`, "The `lifetime` table": a lifetime value is an
+  immutable snapshot; `@` on a value mentioning a dead anchor raises
+  `attempt to anchor to a dead table` (decided: `docs/05-decisions.md`,
+  "Lifetime values are immutable snapshots").
 
 ## Acceptance criteria
 
@@ -112,9 +117,6 @@ state record).
 - Syntax: tasks 005, 006.
 - `exit` reason and the exit flag: task 007.
 - Program-end behaviour under an embedding host (open question).
-- The one-way gate for lifetime values (open question): snapshots stay
-  immutable in this task; a value with a dead anchor is refused at
-  `attach` with `attempt to anchor to a dead table`.
 
 ## Spec issues found
 

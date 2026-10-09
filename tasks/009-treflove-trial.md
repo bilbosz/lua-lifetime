@@ -33,8 +33,9 @@ repository itself is not modified.
   (form_screen, self)`.
 - `xd/docs/09-lessons-from-treflove.md`, lessons 1 to 5 and 8: what to
   look for; under file 10 lessons 1 and 4 are expected to reverse.
-- `docs/06-open-questions.md`, "Registering plain objects" and "The hidden
-  field is visible": the trial is where both are measured; the handoff
+- `docs/05-decisions.md`, "Registration is `x @ lifetime.reachable`", and
+  `docs/06-open-questions.md`, "The hidden field is visible": the trial
+  is where both are measured; the handoff
   reports what Treflove's `class()` and `table.to_string` needed.
 - `CLAUDE.md`, rule 3: the trial asserts order.
 
@@ -53,7 +54,7 @@ repository itself is not modified.
   and is kept, to show it is redundant, not wrong.
 - The trial runs with Treflove's `utils/class.lua` changed by the one line
   the note describes (`__destroy` forwarding to `release`) plus whatever
-  registration the open question "Registering plain objects" needs; the
+  registration "Registration is `x @ lifetime.reachable`" needs; the
   handoff reports exactly what was needed.
 - `make test` includes `trial/treflove/run.lua` when `luajit` is present
   and skips it with a message otherwise; green; `make lint` clean.
