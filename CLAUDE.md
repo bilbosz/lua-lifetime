@@ -14,9 +14,9 @@ documents are derived from `xd/docs/10-lua-lifetime-decisions.md` in the
 | Path | What |
 | --- | --- |
 | `docs/01-overview.md` | What lua-lifetime is, the one-screen taste, where the semantics come from, the relation to `xd` and `teal-lifetime`. Read once. |
-| `docs/02-semantics.md` | **The spec** of the language extension: `@` and the list form, the implicit `reachable` term and `lifetime.pin`, `scope` and `caller`, hooks and the `!@` operator, tokens, `destroy`, the cascade order, `__destroy`, tombstones, errors, reachability, program end. |
-| `docs/03-runtime.md` | The design of the `lifetime` module: state records inside the anchor, the sentinel, the cascade, scope records and the `caller` counter, tokens. |
-| `docs/04-transpiler.md` | The grammar and the code generation: what `@` expands to, block epilogues on every exit path, the `pcall` wrapper, the function prologue for `caller`, the command. |
+| `docs/02-semantics.md` | **The spec** of the language extension: `@` and the list form, the implicit `reachable` term and `lifetime.pin`, `scope`, hooks and the `!@` operator, tokens, `destroy`, the cascade order, `__destroy`, tombstones, errors, reachability, program end. |
+| `docs/03-runtime.md` | The design of the `lifetime` module: state records inside the anchor, the sentinel, the cascade, scope records, tokens. |
+| `docs/04-transpiler.md` | The grammar and the code generation: what `@` expands to, block epilogues on every exit path, the `pcall` wrapper, the command. |
 | `docs/05-decisions.md` | Decision log of this repository. Check here before proposing a change. |
 | `docs/06-open-questions.md` | Not decided yet. If a task hits one of these, stop and ask. |
 | `docs/07-conformance.md` | How the conformance suite relates to `xd/examples/`: ported, rewritten, deviations. |
@@ -133,10 +133,10 @@ Skills, invoked with `/name`:
   newest first, skipping holes: never `ipairs`, which stops at the first
   hole, and never a sort per cascade.
 - Hot paths stay cheap and compilable by LuaJIT: the generated chunk
-  binds the runtime functions it uses to locals; the `caller` prologue and
-  epilogue are inline field updates, not calls; the runtime uses numeric
-  `for` loops on its own hot paths; nothing that runs per call or per
-  block entry uses `debug.*`, `coroutine.running`, `select("#", …)` on
+  binds the runtime functions it uses to locals; no generated function
+  gets a prologue or epilogue of its own, so a call costs what it costs
+  in Lua; the runtime uses numeric `for` loops on its own hot paths;
+  nothing that runs per block entry uses `debug.*`, `coroutine.running`, `select("#", …)` on
   the common path, or creates a closure where an alternative exists.
   Where the spec forces a cost (the `pcall` wrapper, the sentinel), the
   benchmark says how much (`docs/03-runtime.md`, "Performance").
@@ -146,8 +146,7 @@ Skills, invoked with `/name`:
   wraps assignments. `collectgarbage("collect")` is the only timing a test
   may rely on for a reachable death.
 - Guest and host are the same Lua state. The runtime's own tables
-  (`lifetime`, the dead metatable, the per-coroutine depth counters) are
-  roots like any module; nothing else the runtime holds keeps a user
+  (`lifetime`, the dead metatable) are roots like any module; nothing else the runtime holds keeps a user
   object alive beyond what rule 6 allows.
 
 ## Things that look like bugs but are the spec
@@ -178,8 +177,10 @@ Skills, invoked with `/name`:
   with `lifetime.token([name])`.
 - `lifetime.token("p") @ self` dies early if nothing holds it, like any
   `@ self`; keep it in a field or anchor it with `lifetime.pin(self)`.
-- `scope` and `caller` cannot be stored or passed; there is no scope
-  value and no loop-iteration trap.
+- `scope` cannot be stored or passed; there is no scope value and no
+  loop-iteration trap.
+- There is no `caller`: a function returns an object on the default
+  lifetime and the receiver anchors it (`local x = f() @ scope`).
 - A plain table the runtime never saw is collected silently, `__destroy`
   or not; `x @ lifetime.reachable` registers it.
 - `return x` from a block where `x @ scope` hands the caller a tombstone.

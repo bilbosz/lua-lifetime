@@ -1,6 +1,6 @@
 ---
 id: 006
-title: Emitter: `@` and lists, hooks (`!@`), block epilogues on every exit path, the `pcall` error path, `caller` prologue and epilogue
+title: Emitter: `@` and lists, hooks (`!@`), block epilogues on every exit path, the `pcall` error path
 status: todo
 depends: [003, 005]
 branch:
@@ -13,8 +13,8 @@ review:
 
 The emitter turns the extended AST into Lua 5.1 that calls the runtime:
 the chunk header, the `@` expansions, hooks (`!@`, named and anonymous), scope records with
-an epilogue on every exit path, the `pcall` wrapper for blocks that need
-it, and the function prologue and epilogue for `caller`. After this task a
+an epilogue on every exit path, and the `pcall` wrapper for blocks that
+need it. After this task a
 `.lt` program runs through `cli.build` plus `loadstring`, and the
 conformance runner can run programs that use the syntax.
 
@@ -24,26 +24,25 @@ conformance runner can run programs that use the syntax.
   expands to" (the table); "Blocks: prologue and epilogue on every exit
   path" (which blocks need a record; `return`, `break`, `goto`, loop
   bodies, function bodies); "The error path: the `pcall` wrapper" (the
-  closure rewrite, `...`, `exit` with `ok, err`); "Functions: prologue and
-  epilogue for `caller`"; "The emitter keeps every statement on its source
-  line".
-- `docs/02-semantics.md`, "Scopes: `scope` and `caller`": a loop body is a
-  fresh scope per iteration; a function body is a scope.
+  closure rewrite, `...`, `exit` with `ok, err`); "Functions" (a function
+  body is a block, no per-function prologue); "The emitter keeps every
+  statement on its source line".
+- `docs/02-semantics.md`, "Scopes: `scope`": a loop body is a fresh scope
+  per iteration; a function body is a scope; there is no `caller`.
 - `docs/02-semantics.md`, "Hooks: the `!@` operator": the anchor is always
   written, `f !@ scope` being block exit; "Named hooks": the name passed
   for a binding target.
 - `docs/02-semantics.md`, "Cascading death": scope dependents in reverse
   attachment order (the runtime does it; the emitter must call `exit` at
   the right moment).
-- `docs/03-runtime.md`, "Scope records and `caller`" (the calls).
+- `docs/03-runtime.md`, "Scope records" (the calls).
 
 ## Acceptance criteria
 
 - Every output chunk that uses the extension or names a lifetime builtin
   starts with the header line; any other chunk is emitted unchanged.
 - Each row of the expansion table is produced for its source form, with
-  `scope` resolving to the innermost enclosing block's record local and
-  `caller` to `lifetime.caller()`.
+  `scope` resolving to the innermost enclosing block's record local.
 - A block that contains (directly) `scope` as an anchor of `@` or `!@`
   gets `enter` at its start and `exit` on fall-through, before
   every `return` that leaves it (values evaluated first, packed with
@@ -54,11 +53,8 @@ conformance runner can run programs that use the syntax.
   receives `ok, err` and re-raises an error unchanged.
 - A block without those constructs is emitted verbatim: no record, no
   wrapper, no closure.
-- Every generated function whose body contains a call gets the inline
-  `caller` prologue on its `function` line and the inline epilogue on
-  fall-through and before every `return`, exactly as
-  `docs/04-transpiler.md` writes them; no call into the runtime on that
-  path.
+- No function gets a prologue or an epilogue of its own: a function whose
+  body does not anchor to `scope` is emitted verbatim, call for call.
 - The chunk header binds every runtime function the chunk calls to a
   local and names nothing it does not use; a chunk with no extension
   syntax and no lifetime builtin gets no header.
@@ -88,9 +84,10 @@ text for the chunk header and for a block that needs no wrapper.
 3. `examples/unwind.lt`: an error raised inside a block with scope
    dependents, caught by `pcall` outside; the dependents' log lines appear
    before `pcall` returns `false`, with the original message and position.
-4. `examples/caller.lt`: `open_log()` anchors its result to `caller`; the
-   caller's block exit destroys it; a plain Lua function in between is
-   transparent.
+4. `examples/receiver_anchors.lt`: `open_log()` returns its result on the
+   default lifetime; the receiver writes `local log = open_log() @ scope`
+   and its block exit destroys it; a second receiver that does not anchor
+   keeps the object until `collectgarbage("collect")`.
 5. `examples/loop_scope.lt`: `for i = 1, 3 do local t = {} @ scope end`
    logs three deaths, one per iteration, each before the next iteration's
    first statement.
@@ -107,10 +104,11 @@ its own `f !@ scope` to pin it.
 Hot paths: everything the emitter writes. Benchmarks: a scoped block in a
 loop (record, wrapper and epilogue) against hand-written cleanup; the
 same loop with no scoped object (must equal plain Lua); a call-heavy
-function with and without the `caller` prologue; `return` through a
-block epilogue. Must stay free: a block with no `@ scope` and no bare
-hook is emitted verbatim; a function with no call gets no prologue; a
-chunk with no extension syntax gets no header. The numbers for the
+function (must equal plain Lua: no prologue exists); `return` through a
+block epilogue. Must stay free: a block with no `@ scope` and no
+`!@ scope` is emitted verbatim; a function that does not anchor to
+`scope` is emitted verbatim; a chunk with no extension syntax gets no
+header. The numbers for the
 wrapper are the evidence for "Catch-site unwinding" in
 `docs/06-open-questions.md`; report them.
 
@@ -120,7 +118,6 @@ wrapper are the evidence for "Catch-site unwinding" in
   `loadstring`).
 - The open "Catch-site unwinding" alternative; this task implements the
   per-block wrapper as specified.
-- The error path of the `caller` counter (open question).
 
 ## Spec issues found
 

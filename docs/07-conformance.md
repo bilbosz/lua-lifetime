@@ -47,6 +47,7 @@ holds the headings and is filled in as each example is classified.
 
 | Example | What differs | Decision |
 | --- | --- | --- |
+| `caller` | Not ported: the `caller` anchor does not exist here. The receiver anchors what a function returns (`local x = f() @ scope`). | [05-decisions.md](05-decisions.md), "`caller` is removed" |
 
 ## Examples to classify (task 008)
 

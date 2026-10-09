@@ -22,7 +22,7 @@ end
 -- most recently attached first: the hook, then header, then buf.
 ```
 
-Lua source with `@`, the hook operator `!@`, `scope` and `caller` goes in,
+Lua source with `@`, the hook operator `!@` and `scope` goes in,
 plain Lua 5.1 comes out, and the generated code calls into the runtime
 module `lifetime`, which is the language's own `lifetime` table.
 Ownership is deterministic: anchored lifetimes, scope exit, `destroy`,

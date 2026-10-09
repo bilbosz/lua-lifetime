@@ -34,15 +34,16 @@ weak tables for one more cycle.
   only tables a place to keep them; see
   [06-open-questions.md](06-open-questions.md), "Non-table anchors".
 - **Anchor**: what an object's lifetime refers to. One of: a live table or
-  token, the current block (`scope`), the calling function's block
-  (`caller`), the term `reachable` (`lifetime.reachable`), or a **lifetime
-  value** obtained from `lifetime.of(x)` or `lifetime.pin(…)`.
+  token, the current block (`scope`), the term `reachable`
+  (`lifetime.reachable`), or a **lifetime value** obtained from
+  `lifetime.of(x)` or `lifetime.pin(…)`.
 - **Scope**: the activation of a lexical block (`do … end`, a function
   body, a loop body, a `then`/`else` arm). It begins when control enters
   the block and ends when control leaves it by any route: fall-through,
-  `break`, `return`, `goto` (LuaJIT) or an error. `scope` and `caller` are
-  syntax, not values (decision 5): they appear only after `@`, and they
-  cannot be stored or passed on.
+  `break`, `return`, `goto` (LuaJIT) or an error. `scope` is syntax, not a
+  value (decision 5): it appears only after `@` or `!@`, and it cannot be
+  stored or passed on. There is no anchor for the caller's block
+  ("Scopes: `scope`").
 - **Lifetime formula**: a conjunction of anchors. An object is alive
   while every anchor in its formula is alive and, if the formula has the
   `reachable` term, while something refers to the object. There is no
@@ -108,14 +109,14 @@ Grammar (`xd/docs/04-syntax.md` as changed by decision 11):
 ```ebnf
 exp    ::= … | exp '@' anchor
 stat   ::= … | prefixexp '@' anchor
-anchor ::= prefixexp | 'scope' | 'caller' | '(' anchorlist ')'
+anchor ::= prefixexp | 'scope' | '(' anchorlist ')'
 anchorlist ::= anchoritem { ',' anchoritem }
-anchoritem ::= exp | 'scope' | 'caller'
+anchoritem ::= exp | 'scope'
 ```
 
 `@` is a postfix operator with the lowest precedence of any operator:
 `a + b @ s` is `(a + b) @ s`. Its right operand is a `prefixexp`, `scope`,
-`caller`, or a parenthesised list. A one-element list is the plain form:
+or a parenthesised list. A one-element list is the plain form:
 `x @ (a)` is `x @ a`, so Lua's own parenthesised expression after `@`,
 `x @ (cond and a or b)`, keeps working. An empty list `@()` is a syntax
 error. Lists do not nest. In an expression list the commas of a conjunction
@@ -127,7 +128,7 @@ Semantics of `e @ a1, …, an`:
 1. Evaluate `e`. The result must be an object (`attempt to anchor a number
    value`).
 2. Evaluate each element left to right. Each must be a live table or
-   token, `scope`, `caller`, `lifetime.reachable`, or a lifetime value. A
+   token, `scope`, `lifetime.reachable`, or a lifetime value. A
    dead or dying object, `nil`, a value, or a function, coroutine or
    userdata (not an anchor, see "Vocabulary") is an error: `attempt to
    anchor to a nil value`, `attempt to anchor to a dying table`, `attempt
@@ -169,7 +170,7 @@ takes the list").*
 
 `x @ a` means `x @ (a, lifetime.reachable)`: `x` dies with `a` at the
 latest, or earlier when nothing refers to it. The same holds for `@ scope`,
-`@ caller`, `@ tok` and for a list: `x @ (a, b)` is `x @ (a, b,
+`@ tok` and for a list: `x @ (a, b)` is `x @ (a, b,
 lifetime.reachable)`. Two exceptions:
 
 - `f !@ a` keeps replace semantics: a hook is pinned by its anchor,
@@ -182,8 +183,8 @@ lifetime.reachable)`. Two exceptions:
   (lesson 6 of `xd/docs/09-lessons-from-treflove.md`).
 
 Precisely: the formula of a list carries the `reachable` term if any
-element is a table, token, `scope`, `caller`, `lifetime.reachable`, or a
-lifetime value that carries it. `lifetime.pin` strips the term from its
+element is a table, token, `scope`, `lifetime.reachable`, or a lifetime
+value that carries it. `lifetime.pin` strips the term from its
 arguments. `lifetime.pin()` with no arguments, and `lifetime.pin` of
 nothing but `lifetime.reachable`, are errors (`bad argument #1 to
 'lifetime.pin' (anchor expected, got no value)` and `attempt to pin an empty
@@ -195,15 +196,14 @@ One consequence (decision 4): `local tmp = {} @ scope` followed by
 takes it whenever it runs. Every other scope use is unchanged, since the
 local keeps the object referenced until the block ends.
 
-## Scopes: `scope` and `caller`
+## Scopes: `scope`
 
-*From `xd/docs/02-lifetimes.md`, "Scopes as anchors" and "The caller's
-scope"; the scope functions of `xd` replaced by syntax through decision
-5.*
+*From `xd/docs/02-lifetimes.md`, "Scopes as anchors"; the scope functions
+of `xd` replaced by syntax through decision 5. `xd`'s "The caller's scope"
+(`caller`, the scope at level 2) is not part of this language
+([05-decisions.md](05-decisions.md), "`caller` is removed").*
 
-`scope` after `@` is the innermost block enclosing the `@`. `caller` is
-the innermost block of the calling function that was executing when the
-current function was called, what `xd` calls the scope at level 2.
+`scope` after `@` is the innermost block enclosing the `@`.
 
 - An object anchored to `scope` dies when the block exits by any route.
   The transpiler emits an epilogue on every exit path and, for the error
@@ -213,25 +213,32 @@ current function was called, what `xd` calls the scope at level 2.
   every iteration, so `{} @ scope` in a loop body dies at the end of that
   iteration. A function body is a scope; its parameters live in it. The
   main chunk's scope ends when the chunk finishes ("Program end").
-- `caller` inside a function called from the main chunk, or from a
-  function the transpiler did not generate, is the main scope or the
-  nearest generated caller's block respectively: functions the transpiler
-  did not generate (`pcall`, `table.sort`, plain Lua libraries) are
-  transparent, as host frames are in `xd`.
-- `caller` is resolved at run time through a depth counter in the runtime
-  ([03-runtime.md](03-runtime.md), "Scope records and `caller`"). The
-  granularity of that counter, and `caller` inside a coroutine body, are
-  open: [06-open-questions.md](06-open-questions.md).
-- `scope` and `caller` cannot be stored, returned, compared or passed as
-  arguments; using them anywhere but after `@` (including inside the list
-  form) is a syntax error. There is therefore no dead scope token and no
+- `scope` is resolved by the transpiler, which sees the block: no scope
+  exists at run time for a block that does not anchor to it, and no
+  bookkeeping runs per call. Only the block that writes `@ scope` or
+  `!@ scope` pays ([03-runtime.md](03-runtime.md), "Performance").
+- `scope` cannot be stored, returned, compared or passed as an argument;
+  using it anywhere but after `@` or `!@` (including inside the list form)
+  is a syntax error. There is therefore no dead scope token and no
   loop-iteration trap: a scope is named only from inside itself.
 - `destroy` of a scope is impossible; scopes end when their block exits.
+- There is no anchor for the calling function's block. A function cannot
+  name its caller's scope; it returns the object on the default lifetime
+  and the receiver anchors it where it wants it, as constructors do
+  ("Acquiring a lifetime"):
+
+  ```lua
+  local function open_log(path)
+    return Log.open(path)             -- default lifetime: the receiver decides
+  end
+
+  local log = open_log("app.log") @ scope   -- dies when this block exits
+  ```
 
 Returning an object anchored to `scope` alone hands the caller a tombstone
 (`xd/docs/02-lifetimes.md`, "Returning a scope-anchored object", with the
-tombstone of decision 8 in place of `nil`). Anchor to `caller`, to what the
-caller passed in, or to nothing.
+tombstone of decision 8 in place of `nil`). Return it unanchored, as
+above, or anchor it to what the caller passed in.
 
 ## Tokens: `lifetime.token`
 
@@ -299,8 +306,8 @@ unsubscribe !@ (emitter, listener)                     -- runs when either dies
 ```
 
 - `!@` is a postfix operator with the precedence and the right operand of
-  `@`: the lowest precedence of any operator, and a `prefixexp`, `scope`,
-  `caller` or a parenthesised list on the right. It applies to the whole
+  `@`: the lowest precedence of any operator, and a `prefixexp`, `scope`
+  or a parenthesised list on the right. It applies to the whole
   expression on its left, so `a or b !@ s` hooks the value of `a or b`.
   `@` and `!@` associate to the left: `f !@ a @ b` creates the hook on `a`
   and then moves it to `b`.
@@ -627,8 +634,7 @@ finds unreachable cannot run its pending epilogues (5.1 has no
 `coroutine.close`): the runtime destroys its scope records from the
 finalizer, innermost first, and the Lua frames are dropped. On plain Lua
 5.1 a block that needs the error-path wrapper cannot yield (`attempt to
-yield across metamethod/C-call boundary`); LuaJIT allows it. `caller`
-across a coroutine boundary is open ([06-open-questions.md](06-open-questions.md)).
+yield across metamethod/C-call boundary`); LuaJIT allows it.
 
 ## Program end
 
@@ -693,8 +699,8 @@ reduced to what a transpiler can honour.*
 - `@` is reserved and cannot appear in identifiers or elsewhere.
 - `!@` is an operator, and `!` cannot appear anywhere else. The extension
   adds no reserved word; `defer` and `token` are ordinary names. Whether
-  `scope` and `caller` are reserved everywhere or only where the grammar
-  names them is open ([06-open-questions.md](06-open-questions.md),
+  `scope` is reserved everywhere or only where the grammar names it is
+  open ([06-open-questions.md](06-open-questions.md),
   "Reserved words").
 - `__gc` is not removed; the runtime uses it. A `__gc` of your own on a
   userdata still runs, as in Lua. Tables get `__destroy` through the
@@ -708,7 +714,6 @@ reduced to what a transpiler can honour.*
 | `@ lifetime.reachable` (the default) | being referenced | the collector, `destroy()` |
 | `@ a` | `a`, while something refers to the object | `a`'s death, the collector, `destroy()` |
 | `@ scope` | the block, while referenced | block exit by any route, the collector, `destroy()` |
-| `@ caller` | the caller's block, while referenced | that block's exit, the collector, `destroy()` |
 | `@ (a, b)` | both, while referenced | whichever dies first, the collector, `destroy()` |
 | `@ lifetime.pin(a)` | `a` | `a`'s death, `destroy()` |
 | `@ lifetime.pin(a, b)` | both | whichever dies first, `destroy()` |

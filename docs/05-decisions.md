@@ -201,3 +201,67 @@ one name, `token`, beside the six decision 11 lists; it builds an
 object, not a formula, so decision 11's "everything that builds a formula
 is syntax" still holds.
 → [02-semantics.md](02-semantics.md), "Tokens: `lifetime.token`"
+
+## `caller` is removed: `scope` is the only block anchor
+
+Decided by the human on 2026-10-09 ("Let's remove scope with level and
+leave just [the] scope [anchor]"), after measuring what the anchor for
+the calling function's block costs. `@ scope` stays; `@ caller`, `xd`'s
+scope at level 2, is gone from the grammar, the runtime and the
+generated code.
+
+Why. `scope` is static: the transpiler sees the block, so it emits the
+record and the epilogue only in a block that anchors to it, and a program
+that writes no `@ scope` pays nothing. `caller` is dynamic: which
+activation it names is known only at the call, so decision 5 of file 10
+had every generated function maintain a depth counter in a prologue and
+an epilogue, and the runtime had to keep one counter per coroutine by
+wrapping `coroutine.resume`, `coroutine.wrap` and `coroutine.yield`.
+That is paid on every call of every generated function, whether or not
+any callee ever writes `caller`, which breaks rule 5's "code that does
+not use the extension pays nothing", and the transpiler cannot see across
+modules to leave it out. A stand-in of the inline prologue and epilogue
+of the runtime design, measured on 2026-10-09 (LuaJIT 2.1, JIT on):
+
+| Call | Plain Lua | With the prologue and epilogue |
+| --- | --- | --- |
+| empty function | 0.7 ns | 3.3 ns |
+| small body (a few field operations) | 2.6 ns | 3.9 ns |
+
+In the interpreters (Lua 5.1, `luajit -joff`) the small body is about
+twice as slow. The stores to the per-coroutine table cannot be optimised
+away, so the cost does not vanish under the JIT.
+
+The semantics argued the same way. `caller` inside a callback resolves
+to whichever generated function invoked it, which for an event is the
+dispatcher, not the code that raised the event: a `Buffer.new(name) @
+caller` fired through a dispatcher written in the same program died in
+the dispatcher's epilogue, before the value reached the code that fired
+the event, while the same callback called directly, or through `pcall`
+(a C frame, transparent), handed the object to its visible caller. An
+anchor whose owner depends on who is on the stack is the wrong tool for
+a callback, and the factory case it was meant for has a spelling that
+costs nothing: the function returns the object on the default lifetime
+and the receiver writes `local log = open_log() @ scope`, which is what
+"Acquiring a lifetime" already says constructors do.
+
+What it removes: the `caller` anchor and its grammar productions; the
+depth tables, `lifetime.S`, `lifetime.drop`, `lifetime.caller` and the
+inline function prologue and epilogue of the runtime and transpiler
+designs; the wrapping of `coroutine.*`; the main record that `caller`
+created on first use (the main chunk gets a scope record under the block
+rule like any block). Three open questions close with it: "`caller`
+across coroutine boundaries", "`caller`: function granularity and the
+error path" and "The cost of `caller` on every call". "Catch-site
+unwinding" stays open and no longer assumes that `pcall` is wrapped for
+the counter's sake. `xd/examples/caller` cannot be ported and is a
+deviation ([07-conformance.md](07-conformance.md)).
+
+This departs from decision 5 of `xd/docs/10-lua-lifetime-decisions.md`
+(`caller` as syntax, the depth counter, "every generated function
+prologue increments it") and from `xd/docs/02-lifetimes.md`, "The
+caller's scope". The human carries it back to `xd`. Tasks 003, 005, 006,
+007 and 009 updated.
+→ [02-semantics.md](02-semantics.md), "Scopes: `scope`";
+[03-runtime.md](03-runtime.md), "Scope records";
+[04-transpiler.md](04-transpiler.md), "Functions"
