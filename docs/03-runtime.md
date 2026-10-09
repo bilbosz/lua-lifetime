@@ -14,7 +14,7 @@ page is corrected.
 | No `<close>`, `goto` only on LuaJIT | Scope exit is generated code ([04-transpiler.md](04-transpiler.md)); the runtime only provides `enter`/`exit` for scope records. |
 | `__gc` on userdata only | A table whose destructor must run when the collector finds it carries a `newproxy(true)` sentinel ("The sentinel"). |
 | No ephemerons | No side table keyed by anchor. Dependents live inside the anchor (decision 3). The only side table is weak-keyed with values that never refer back to the key. |
-| No yield across `pcall` on plain 5.1 | The runtime never wraps user code in `pcall` on a path a coroutine may yield through; destructor bodies are called in protected mode only where 02 says errors are routed. |
+| No yield across `pcall` on plain 5.1 | The runtime puts no `pcall` between a block and its body: the error path unwinds at the catch site ("Scope records"), so a scoped block may yield. Destructor bodies are called in protected mode only where 02 says errors are routed. |
 | Finalizers run in reverse creation order | The collector's order of 02, "Reachability is the collector's", comes for free. |
 | A finalized object stays in weak tables one more cycle | The cascade unlinks a dying dependent from its anchors' lists explicitly; it never waits for the weak entry to clear. |
 
@@ -173,11 +173,42 @@ variable`. It is never a scope record.
 
 Nothing runs per call. There is no anchor for the calling function's
 block ([05-decisions.md](05-decisions.md), "`caller` is removed"), so the
-runtime keeps no depth counter, gives generated functions no prologue or
-epilogue of their own, and does not wrap `coroutine.resume`,
-`coroutine.wrap` or `coroutine.yield`: a coroutine switch is invisible to
-the runtime, and the records of a suspended coroutine are reached only
-through its stack and its sentinels ("The sentinel").
+runtime keeps no depth counter and gives generated functions no prologue
+or epilogue of their own.
+
+**The scope stack and the error path.** Scope exit on an error is the
+runtime's, not generated code's ([05-decisions.md](05-decisions.md),
+"Scopes unwind at the catch site"). Each coroutine has a **scope stack**,
+a table `{n = depth, [1..n] = records}`; `S.stack` is the stack of the
+running coroutine, and the main thread's is the initial one. The block
+prologue `lifetime.enter(line)` creates the record, stores `line` (the
+line of the block's `end`, for the tombstones of an unwound record) and
+its depth, and pushes it; the epilogue `lifetime.exit(record, line)` pops
+it and runs the cascade. If `exit` finds records above `record` on the
+stack, a catch the runtime could not see left them behind: it unwinds
+them first, innermost first, then proceeds.
+
+When it is first required the runtime replaces four globals, keeping the
+originals as upvalues: `pcall` and `xpcall` read `S.stack.n` before the
+call and, when the call returns `false`, unwind every record above that
+depth, innermost first, with the error counted as propagating (02,
+"Errors in destructors": destructor errors go to `destroyerror`), then
+return what the original returned. `coroutine.resume` swaps `S.stack` to
+the target coroutine's stack (created on first resume, held in a
+weak-keyed table by coroutine whose values never refer to the key) for
+the duration of the call and restores it after, which covers the yield
+path without wrapping `coroutine.yield`; when the original returns
+`false` the coroutine is dead and its whole stack is unwound.
+`coroutine.wrap` creates through the original and returns a function
+that resumes the same way and re-raises as Lua's does. The wrappers pass
+varargs through and allocate nothing: a `pcall` costs one field read
+before and one compare after. `coroutine.running`, `coroutine.status`,
+`coroutine.create`, `coroutine.yield` and `error` are untouched.
+
+A coroutine the collector finds unreachable drops its stack with it; the
+records of a suspended coroutine are then reached only through their
+sentinels ("The sentinel"), which run innermost first by the host's
+reverse creation order.
 
 ## Tokens
 
@@ -217,8 +248,8 @@ same work by hand.
 - a plain Lua chunk transpiles to itself;
 - an object never anchored, hooked, created by `lifetime.token` or passed to
   `destroy`, `discard` or `lifetime.of` has no state record and no proxy;
-- a block with no `@ lifetime.scope` and no `!@ lifetime.scope` gets no scope record and no
-  wrapper;
+- a block with no `@ lifetime.scope` and no `!@ lifetime.scope` gets no scope record, no
+  push and no pop;
 - a function call costs what it costs in Lua: no generated function has
   a prologue or an epilogue of its own ("Scope records").
 
@@ -230,18 +261,19 @@ same work by hand.
 | `x @ b`, a move | one unlink, one link; no allocation |
 | cascade over `n` objects | `O(n)` plus the holes in the walked ranges; no sort, no allocation except the tombstone's state |
 | `lifetime.dependents(a)` | one numeric loop over `a`'s range and the result array |
-| a block with a scope record | one record (a small table) per entry, plus the wrapper ([04-transpiler.md](04-transpiler.md), "The error path") |
+| a block with a scope record | one record (a small table) per entry, one push and one pop; no closure, no `pcall` ("The scope stack and the error path") |
+| `pcall`, `xpcall`, `coroutine.resume`, a `coroutine.wrap` function | one wrapper frame, one field read before and one compare after; no allocation |
 
 **Forced, and measured.** Two costs follow from the spec and are paid
 only where the spec asks for them:
 
 - the sentinel, one `newproxy(true)` per table that has the `reachable`
   term and something to run at collection;
-- the `pcall` wrapper of a block that needs a scope record, a closure per
-  entry into the block. Whether the error path can be built without it is
-  open ([06-open-questions.md](06-open-questions.md), "Catch-site
-  unwinding"); the benchmark of task 010 that runs such a block in a
-  loop is the evidence for that question.
+- the scope record and its push and pop, per entry into a block that
+  anchors to `lifetime.scope`. Nothing the transpiler emits creates a
+  closure or a `pcall`, so a loop whose body owns something stays
+  compilable by LuaJIT; the benchmark of task 006 that runs such a loop
+  against hand-written cleanup is the number.
 
 Rules the implementation follows on hot paths: runtime functions are
 locals of the module, and the generated chunk binds the ones it calls to

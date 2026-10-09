@@ -44,8 +44,9 @@ returns.
   objects anchored to the main chunk's `lifetime.scope` (reason `"anchor"`), `run`
   sets the exit flag; a global with a
   `__destroy` registered through `@` prints at exit with reason `"exit"`.
-- An uncaught error prints `lifetime: <message>` and a traceback on stderr
-  and exits 1, after the main scope's cascade has run.
+- `run` calls the chunk through the runtime's `pcall`, so an uncaught
+  error unwinds every scope left open, the main scope last, and then
+  prints `lifetime: <message>` and a traceback on stderr and exits 1.
 - `luarocks make lua-lifetime-dev-1.rockspec` succeeds on both `luarocks
   --lua-version 5.1` configurations the machine has, installs
   `lifetime`, `lifetime.lexer`, `lifetime.parser`, `lifetime.emit`,

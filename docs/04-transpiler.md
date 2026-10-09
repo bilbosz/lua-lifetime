@@ -106,10 +106,14 @@ blocks get code; every
 other block is emitted verbatim. For a block that needs one:
 
 ```lua
-do local __s1 = lifetime.enter()
+do local __s1 = lifetime.enter(<line of end>)
   …
 lifetime.exit(__s1, <line>) end
 ```
+
+The line passed to `enter` is the line of the block's `end`, which the
+runtime reports for an object the error path unwinds; the line passed to
+`exit` is the line of the exit that runs it.
 
 - **Fall-through**: the epilogue at the end of the block.
 - **`return explist`** inside the block (at any nesting below it that is
@@ -129,57 +133,38 @@ lifetime.exit(__s1, <line>) end
 - **A function body** is a block; its epilogue runs on fall-through and on
   every `return`.
 
-## The error path: the `pcall` wrapper
+## The error path: unwinding at the catch site
 
 Scope destructors must run when an error unwinds through the block
-(decision 10, "Every exit path"). Plain Lua 5.1 offers only `pcall`, so a
-block that needs a scope record is wrapped:
+(decision 10, "Every exit path"). The transpiler emits nothing for it:
+the runtime keeps a stack of the active scope records per coroutine, and
+its replacements for `pcall`, `xpcall`, `coroutine.resume` and
+`coroutine.wrap` unwind, innermost first, every record pushed since the
+call began before they return `false` or re-raise
+([03-runtime.md](03-runtime.md), "The scope stack and the error path";
+[05-decisions.md](05-decisions.md), "Scopes unwind at the catch site").
+What this buys the generated code:
 
-```lua
-do local __s1 = lifetime.enter()
-  local __ok, __r = pcall(function(...)
-    …                      -- the block body, with return/break rewritten
-  end, ...)
-  lifetime.exit(__s1, <line>, __ok, __r)   -- runs the cascade, then re-raises __r if not __ok
-  …                        -- re-executes the return or break the body asked for
-end
-```
-
-- The body becomes a closure; `return` inside it becomes `return
-  "return", n, {…}` and `break` becomes `return "break"`, which the code
-  after the wrapper re-executes outside the closure. A fall-through returns
-  nothing.
-- `...` of the enclosing function is passed into the closure as its own
-  varargs, since 5.1 closures cannot see an outer `...`.
-- `lifetime.exit` with `__ok == false` runs the cascade with the error
-  already propagating (02, "Errors in destructors": later destructor errors
-  go to `destroyerror`) and then re-raises `__r` unchanged, so the
-  position in the message is the original one.
+- A block body stays a block body: no closure, no rewrite of `return` and
+  `break`, no forwarding of `...`. A loop whose body owns something is
+  still one trace for LuaJIT.
+- A block that anchors to `lifetime.scope` may yield on plain Lua 5.1.
+- A `return f(x)` inside such a block is still not a tail call, because
+  the epilogue runs after `f(x)`; that is the only cost that remains.
 - Message handlers of an enclosing `xpcall` run at the raise point, before
-  the epilogue, as they would in Lua.
-- The wrapper is emitted only for blocks that need a scope record; a block
-  with no `lifetime.scope` anchor costs nothing. Where it is
-  emitted it allocates a closure per entry into the block, the most
-  expensive thing the transpiler generates; the benchmarks of task 010
-  measure it, and "Catch-site unwinding" in
-  [06-open-questions.md](06-open-questions.md) is the alternative. A yield inside
-  a wrapped block fails on plain 5.1 and works on LuaJIT (02, "Coroutines").
-- A main chunk that needs a record is wrapped the same way; an uncaught
-  error therefore still runs the main scope's cascade before reaching the
-  interpreter.
-
-An alternative that removes the closure rewrite and the 5.1 yield
-restriction, unwinding at the catching `pcall` instead of at the block, is
-recorded in [06-open-questions.md](06-open-questions.md), "Catch-site
-unwinding"; it is not the design here because decisions 5 and 10 name the
-per-block wrapper.
+  any epilogue, as they would in Lua.
+- The main chunk is a block like any other. `lifetime run` calls it
+  through the runtime's `pcall`, so an uncaught error still unwinds the
+  main scope before the error is reported ("The command"); an embedding
+  host that loads the chunk itself gets the same by calling it through
+  `pcall` after requiring `lifetime`.
 
 ## Functions
 
 A function body is a block and gets code only under the block rule above:
-a record, an epilogue on fall-through and before every `return`, and the
-wrapper, when and only when the body anchors to `lifetime.scope`. A function that
-does not is emitted verbatim, and a call costs what it costs in Lua.
+a record and an epilogue on fall-through and before every `return`, when
+and only when the body anchors to `lifetime.scope`. A function that does
+not is emitted verbatim, and a call costs what it costs in Lua.
 There is no per-function prologue: the anchor for the caller's block that
 would have needed one is not part of the language
 ([05-decisions.md](05-decisions.md), "`caller` is removed").
