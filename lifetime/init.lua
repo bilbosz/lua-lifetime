@@ -461,12 +461,14 @@ local function unlink(ast, s, pinned)
         return
     end
     -- `strong` is read only when needed: the entry is in it, or a shrink
-    -- loop meets a slot `deps` does not hold. A move between anchors
-    -- without hooks reads nothing more than before `strong` existed
-    -- (bench/README.md, `runtime/move`).
-    local strong
+    -- loop is about to walk a slot `deps` does not hold. A move between
+    -- anchors without hooks reads nothing more than before `strong`
+    -- existed (bench/README.md, `runtime/move`). It is read before a
+    -- loop, never inside one, so its type is fixed while the loop runs
+    -- (a local that changes type inside a loop makes LuaJIT abort the
+    -- trace: "persistent type instability").
     if pinned then
-        strong = ast.strong or false
+        local strong = ast.strong
         if strong then
             strong[s] = nil
         end
@@ -476,14 +478,11 @@ local function unlink(ast, s, pinned)
     local lo, seq = deps.lo, deps.seq
     if s == seq - 1 then
         s = s - 1
-        while s >= lo and deps[s] == nil do
-            if strong == nil then
-                strong = ast.strong or false
+        if s >= lo and deps[s] == nil then
+            local strong = ast.strong
+            while s >= lo and deps[s] == nil and not (strong and strong[s] ~= nil) do
+                s = s - 1
             end
-            if strong and strong[s] ~= nil then
-                break
-            end
-            s = s - 1
         end
         if s < lo then
             deps.lo, deps.seq = 1, 1
@@ -492,14 +491,11 @@ local function unlink(ast, s, pinned)
         end
     elseif s == lo then
         s = s + 1
-        while s < seq and deps[s] == nil do
-            if strong == nil then
-                strong = ast.strong or false
+        if s < seq and deps[s] == nil then
+            local strong = ast.strong
+            while s < seq and deps[s] == nil and not (strong and strong[s] ~= nil) do
+                s = s + 1
             end
-            if strong and strong[s] ~= nil then
-                break
-            end
-            s = s + 1
         end
         deps.lo = s
     end
