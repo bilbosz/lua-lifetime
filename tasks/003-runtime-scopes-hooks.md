@@ -1,11 +1,11 @@
 ---
 id: 003
 title: Runtime: scope records, hooks
-status: review
+status: done
 depends: [002]
 branch: task/003-runtime-scopes-hooks
 pr: https://github.com/bilbosz/lua-lifetime/pull/22
-commits:
+commits: a9bc8ce4751b07b2033f54040d8ff986b2f1da29
 review: APPROVE (round 1)
 ---
 

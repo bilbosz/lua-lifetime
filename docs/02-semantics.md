@@ -242,9 +242,13 @@ of `xd` replaced by syntax through decision 5. `xd`'s "The caller's scope"
   an ordinary name; the extension adds no reserved word.
 - Anywhere else `lifetime.scope` is an ordinary expression and reads the
   field `scope` of the runtime table, a marker with no other use: `@` on
-  it raises `attempt to anchor to lifetime.scope through a variable`,
-  indexing it raises `attempt to index lifetime.scope`, and `tostring`
-  renders `lifetime.scope`. So a scope cannot be stored, returned,
+  it raises `attempt to anchor to lifetime.scope through a variable`
+  (as does `!@`, and the marker as the left operand of either), indexing,
+  assigning or calling it raises `attempt to index lifetime.scope`,
+  `tostring` renders `lifetime.scope`, `getmetatable` gives the string
+  `"lifetime.scope"`, and `destroy`, `discard`, `lifetime.of` and
+  `lifetime.format` refuse it with their argument error (`object expected,
+  got lifetime.scope`). So a scope cannot be stored, returned,
   compared or passed as an argument. There is therefore no dead scope
   token and no loop-iteration trap: a scope is named only from inside
   itself.

@@ -573,3 +573,19 @@ valid Lua 5.1 chunk contains. The parser does not resolve labels: LuaJIT
 reports an undefined or duplicate label when it loads the output, at the
 same line, and Lua 5.1 rejects the `goto`.
 → [04-transpiler.md](04-transpiler.md), "Pipeline" and "Grammar"
+
+## A hook anchored to `lifetime.reachable` alone runs when collected
+
+Decided by the orchestrator on 2026-10-09 on the human's standing
+authority, resolving a contradiction task 003's review found. "Hooks"
+says the collector "may run `f` at any later time; legal" for `f !@
+lifetime.reachable`, while "The sentinel" in 03 said a hook never
+carries a sentinel, so such a hook could never run and `lifetime.format`
+rendered its formula as `()`. The spec sentence wins: a hook whose
+formula is the term alone has no anchor to die with, so it carries the
+sentinel and runs with reason `"unreachable"` when the collector finds
+it, as a registered table with a `__destroy` does; `format` renders
+`reachable`. Every other hook is pinned by an anchor and carries no
+sentinel, as before. Task 004 implements it with the sentinel.
+→ [02-semantics.md](02-semantics.md), "Hooks: the `!@` operator";
+[03-runtime.md](03-runtime.md), "The sentinel"

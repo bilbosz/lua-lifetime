@@ -48,6 +48,28 @@ behave as specified.
   `attempt to anchor to a dead table` (decided: `docs/05-decisions.md`,
   "Lifetime values are immutable snapshots").
 
+- `tasks/003-runtime-scopes-hooks.md`, review round 1, carried into this
+  task: F1, `lifetime.exit(nil, …)` on an empty stack must raise before
+  it pops (move the pop after the `rec.deps` read); F2, a test of
+  nested-coroutine stack swapping (main, A, B, each with a record and a
+  yield, B raising on its second resume: `b1` dies inside A's `resume`,
+  `a1` at A's exit, `m1` at main's); task 003's test case 7 (a collected
+  suspended coroutine's records die through their sentinels, innermost
+  first) now that the sentinel exists; the eleven cases in
+  `tests/test-runtime.lua` (lines 359 to 710) that hold no reference to
+  dependents with the term must hold them (rule 6).
+- `docs/05-decisions.md`, "A hook anchored to `lifetime.reachable` alone
+  runs when collected": such a hook carries the sentinel and runs with
+  `"unreachable"`; `lifetime.format` renders its formula as `reachable`.
+- `docs/03-runtime.md`, "The state of an object" (as implemented): the
+  strong table is `strong`; pinned dependents already route there
+  (task 003), so `lifetime.pin` only has to produce a formula without the
+  term.
+- Left for a decision, not required: a plain `setmetatable` for an
+  unprotected tombstone takes LuaJIT's one-object scope loop from about
+  470 to 355 ns and costs 3 to 7% on Lua 5.1's destroy-heavy benchmarks
+  (task 003's handoff); measure and report, do not decide alone.
+
 ## Acceptance criteria
 
 - `lifetime.attach` adds the `reachable` term unless every anchor is a
