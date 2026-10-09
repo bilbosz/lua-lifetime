@@ -1,9 +1,9 @@
 ---
 id: 001
 title: Skeleton, `make test`, conformance runner, pass-through transpiler for plain Lua
-status: todo
+status: in-progress
 depends: []
-branch:
+branch: task/001-skeleton-and-conformance-runner
 pr:
 commits:
 review:
