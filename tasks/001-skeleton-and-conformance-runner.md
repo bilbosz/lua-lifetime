@@ -1,12 +1,12 @@
 ---
 id: 001
 title: Skeleton, `make test`, conformance runner, pass-through transpiler for plain Lua
-status: in-progress
+status: review
 depends: []
 branch: task/001-skeleton-and-conformance-runner
 pr:
 commits:
-review:
+review: APPROVE (round 2)
 ---
 
 ## Goal
@@ -158,3 +158,13 @@ Suite on `0deb6ee`: unit 44/44 under lua5.1 and luajit, conformance 5/5 under bo
 - F3 (non-blocking): unused exports `lexer.KEYWORDS`, `parser.LEFT`, `parser.RIGHT`, `parser.UNARY_PRIORITY`.
 - Design points accepted: the `lines` array on token-owning nodes is the convention for tasks 005 and 006, to be stated in `docs/04-transpiler.md`, "Pipeline"; `jit.off(true, true)` in parser and emitter stays (transpiler only, output unchanged, measured 7x).
 - Task text: the `x @ y` test-case sentence corrected to Lua's wording; spec issue 2 extended with the LuaJIT-only lexical extensions for task 005.
+
+### Round 2: APPROVE
+
+Suite on `587a013`: unit 46/46 under lua5.1 and luajit, conformance 5/5 under both, lint clean (16 files). `cli.build` on `lifetime/parser.lua`: lua5.1 7.8 ms, luajit 3.7 ms steady.
+
+- F1 fixed in `f920b06` as described: `constructor` records the looked-at token's index, `funcargs` skips the ambiguity check for that one position. Traced by hand against `lparser.c`; 19 nested-constructor probes and the 151-chunk differential batch give 0 mismatches against `loadstring` under lua5.1 (the 10 luajit mismatches are the LuaJIT-only lexical extensions recorded under *Spec issues found*). Tests pin the three error forms, the accepting forms and the emit round trip; a mutation check (skip clause removed) fails 3 cases.
+- F3 fixed in `8c666a5`: the four exports removed, kept as module locals; nothing referenced them.
+- Docs (`587a013`): wording only in `docs/04-transpiler.md`, "Pipeline".
+- F2 carried, non-blocking: the `jit.off` comment names task 010's transpiler benchmark once it exists.
+- Notes for later tasks: 005 decides the LuaJIT lexical extensions listed above; 007 strips a `#!` first line before `build` as `luaL_loadfile` does and replaces the chunkname-prefix test in `cli.build`'s error classification with a marker; 010 names the transpiler benchmark (`cli.build` on the largest corpus file; baselines lua5.1 7.5 to 7.8 ms, luajit 3.6 to 3.7 ms).
