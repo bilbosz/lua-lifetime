@@ -447,25 +447,42 @@ end
 
 -- Unlink the entry `s` from an anchor's list (docs/03-runtime.md,
 -- "Attachment", step 3, and "The cascade", the tombstone step), whichever
--- of the two tables holds it. The range shrinks when the entry was at
+-- of the two tables holds it: `strong` when `pinned`, which the caller
+-- reads from the dependent's record (a dependent is in its anchors'
+-- `strong` tables exactly when its formula has no `reachable` term,
+-- `st.reachable == false`). The range shrinks when the entry was at
 -- either end, so attach-then-destroy in either order leaves no holes to
 -- compact; a list that empties starts again at 1. Neither renumbers
 -- anything, so it is safe while a cascade walks this list: the walk's
 -- bounds are fixed when it starts.
-local function unlink(ast, s)
+local function unlink(ast, s, pinned)
     local deps = ast.deps
     if not deps then
         return
     end
-    deps[s] = nil
-    local strong = ast.strong
-    if strong then
-        strong[s] = nil
+    -- `strong` is read only when needed: the entry is in it, or a shrink
+    -- loop meets a slot `deps` does not hold. A move between anchors
+    -- without hooks reads nothing more than before `strong` existed
+    -- (bench/README.md, `runtime/move`).
+    local strong
+    if pinned then
+        strong = ast.strong or false
+        if strong then
+            strong[s] = nil
+        end
+    else
+        deps[s] = nil
     end
     local lo, seq = deps.lo, deps.seq
     if s == seq - 1 then
         s = s - 1
-        while s >= lo and deps[s] == nil and not (strong and strong[s] ~= nil) do
+        while s >= lo and deps[s] == nil do
+            if strong == nil then
+                strong = ast.strong or false
+            end
+            if strong and strong[s] ~= nil then
+                break
+            end
             s = s - 1
         end
         if s < lo then
@@ -475,7 +492,13 @@ local function unlink(ast, s)
         end
     elseif s == lo then
         s = s + 1
-        while s < seq and deps[s] == nil and not (strong and strong[s] ~= nil) do
+        while s < seq and deps[s] == nil do
+            if strong == nil then
+                strong = ast.strong or false
+            end
+            if strong and strong[s] ~= nil then
+                break
+            end
             s = s + 1
         end
         deps.lo = s
@@ -567,6 +590,15 @@ local function decide(obj, st, id)
     end
 end
 
+-- A destructor body raised: the records it pushed and its error left on
+-- the stack die first, then the error is routed (`route`).
+local function body_failed(obj, err, depth)
+    if stack.n > depth then
+        unwind(stack, depth)
+    end
+    route(obj, err)
+end
+
 -- Clear every field of `obj` from the key `k` on in traversal order,
 -- except the state record (docs/03-runtime.md, "The tombstone": "Clearing
 -- the table ..., legal in Lua while iterating"). A proper tail call per
@@ -604,22 +636,24 @@ local function destroy_object(obj, st, reason, where, skip_body)
     -- and its error left on the stack are unwound before the error is
     -- routed ("Scopes: `lifetime.scope`": they die "before that call
     -- returns to its caller").
+    local mt = debug_getmetatable(obj)
+    local hook = mt == HOOK_MT
     if not skip_body then
-        local mt = debug_getmetatable(obj)
-        local ok, err, depth = true, nil, stack.n
-        if mt == HOOK_MT then
-            ok, err = pcall(st.fn, reason)
+        if hook then
+            local depth = stack.n
+            local ok, err = pcall(st.fn, reason)
+            if not ok then
+                body_failed(obj, err, depth)
+            end
         else
             local body = mt ~= nil and rawget(mt, "__destroy")
             if body then
-                ok, err = pcall(body, obj, reason)
+                local depth = stack.n
+                local ok, err = pcall(body, obj, reason)
+                if not ok then
+                    body_failed(obj, err, depth)
+                end
             end
-        end
-        if not ok then
-            if stack.n > depth then
-                unwind(stack, depth)
-            end
-            route(obj, err)
         end
     end
 
@@ -631,8 +665,9 @@ local function destroy_object(obj, st, reason, where, skip_body)
     -- read once; nothing can be linked to a dying anchor, and unlinking
     -- only empties slots.
     local deps = st.deps
+    local strong = false
     if deps then
-        local strong = st.strong
+        strong = st.strong
         for i = deps.seq - 1, deps.lo, -1 do
             local dep = deps[i]
             if dep == nil and strong then
@@ -658,14 +693,14 @@ local function destroy_object(obj, st, reason, where, skip_body)
     -- root trace") until side traces cover it; without the loop the
     -- user's loop body compiles at once (bench/README.md,
     -- `scope/loop-one-object`).
-    local n = st.n
+    local n, pinned = st.n, not st.reachable
     if n == 1 then
-        unlink(rawget(st[1], STATE), st[2])
+        unlink(rawget(st[1], STATE), st[2], pinned)
         st[1] = nil
         st[2] = nil
     else
         for j = 1, 2 * n, 2 do
-            unlink(rawget(st[j], STATE), st[j + 1])
+            unlink(rawget(st[j], STATE), st[j + 1], pinned)
             st[j] = nil
             st[j + 1] = nil
         end
@@ -674,20 +709,23 @@ local function destroy_object(obj, st, reason, where, skip_body)
     if field == STATE then
         field = next(obj, field)
     end
-    clear_from(obj, field)
+    if field ~= nil then
+        clear_from(obj, field)
+    end
     debug_setmetatable(obj, DEAD_MT)
     st.n = 0
     -- Written only when set, so that a record without the field (a hook)
     -- does not grow at death. A dead anchor holds nothing strongly; a dead
     -- hook lets its function go ("After it runs the hook is dead: a hook
-    -- runs at most once").
-    if st.deps then
+    -- runs at most once"). `strong` was read with `deps` (a table has
+    -- `strong` only once it has `deps`).
+    if deps then
         st.deps = false
+        if strong then
+            st.strong = false
+        end
     end
-    if st.strong then
-        st.strong = false
-    end
-    if st.fn then
+    if hook then
         st.fn = false
     end
     st.phase = "dead"
@@ -926,8 +964,9 @@ local function attach_general(fname, obj, pin, count, ...)
     -- `reachable` term.
     local reachable = term and not pin
     local old = 2 * st.n
+    local was_pinned = not st.reachable
     for j = 1, old, 2 do
-        unlink(rawget(st[j], STATE), st[j + 1])
+        unlink(rawget(st[j], STATE), st[j + 1], was_pinned)
     end
     local k = 1
     if count == 1 then
@@ -957,10 +996,11 @@ function lifetime.attach(obj, pin, ...)
     local count = select("#", ...)
 
     -- The common case, without a call: one anchor, a live table the
-    -- runtime has seen, and an object that is new to the runtime or alive
-    -- with at most one anchor, outside any destroy phase. It does exactly
-    -- what the general path does for these arguments; anything else
-    -- falls through to it.
+    -- runtime has seen, and an object that is new to the runtime, or
+    -- alive with one anchor and the `reachable` term and staying so (the
+    -- ordinary move; a pinned object or a hook takes the general path),
+    -- outside any destroy phase. It does exactly what the general path
+    -- does for these arguments; anything else falls through to it.
     if count == 1 and type(obj) == "table" and phase_depth == 0 then
         local a = ...
         local ast = type(a) == "table" and rawget(a, STATE)
@@ -975,19 +1015,11 @@ function lifetime.attach(obj, pin, ...)
                     st.reachable = not pin
                     return obj
                 end
-            elseif not st.phase then
-                local n = st.n
-                if n == 1 or n == 0 then
-                    if n == 1 then
-                        unlink(rawget(st[1], STATE), st[2])
-                    end
-                    local pinned = pin or st.fn ~= nil
-                    st[1] = a
-                    st[2] = link(a, ast, obj, pinned)
-                    st.n = 1
-                    st.reachable = not pinned
-                    return obj
-                end
+            elseif not st.phase and st.n == 1 and st.reachable and not pin then
+                unlink(rawget(st[1], STATE), st[2], false)
+                st[1] = a
+                st[2] = link(a, ast, obj, false)
+                return obj
             end
         end
     end
@@ -1060,14 +1092,26 @@ function lifetime.dependents(obj)
     if deps then
         local strong = st.strong
         local n = 0
-        for i = deps.lo, deps.seq - 1 do
-            local dep = deps[i]
-            if dep == nil and strong then
-                dep = strong[i]
+        if strong then
+            for i = deps.lo, deps.seq - 1 do
+                local dep = deps[i]
+                if dep == nil then
+                    dep = strong[i]
+                end
+                if dep ~= nil then
+                    n = n + 1
+                    result[n] = dep
+                end
             end
-            if dep ~= nil then
-                n = n + 1
-                result[n] = dep
+        else
+            -- No hook and no pinned dependent: `deps` alone, one test less
+            -- per entry (bench/README.md, `runtime/dependents-100`).
+            for i = deps.lo, deps.seq - 1 do
+                local dep = deps[i]
+                if dep ~= nil then
+                    n = n + 1
+                    result[n] = dep
+                end
             end
         end
     end
