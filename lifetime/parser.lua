@@ -613,6 +613,20 @@ function parser.parse(tokens, chunkname)
         return e
     end
 
+    -- The statement form of `e anchorop { anchorop }`, whose first operator
+    -- is the current token (docs/04-transpiler.md, "Grammar": "A statement
+    -- chains `@` and `!@` exactly as an expression does, left to right").
+    -- The loop is expr()'s; the statement is named after the outermost
+    -- operator: `f !@ a @ b` is an AnchorStat around Anchor(Hook(f, a), b).
+    local function anchor_statement(e, line)
+        local v = tok.value
+        while (v == "@" or v == "!@") and tok.type == "symbol" do
+            e = apply_anchor(e)
+            v = tok.value
+        end
+        return {tag = e.tag == "Anchor" and "AnchorStat" or "HookStat", line = line, expr = e}
+    end
+
     -- docs/02-semantics.md, "Named hooks": "A hook created as the value
     -- bound to a name carries that name: `local NAME = f !@ …`, `NAME = f
     -- !@ …` and `t.NAME = f !@ …`". The value of `e @ a` and of `(e)` is
@@ -735,13 +749,13 @@ function parser.parse(tokens, chunkname)
         if ahead.value == "(" and ahead.type == "symbol" then
             -- docs/04-transpiler.md, "Grammar": "A statement may start with
             -- `function (`, an anonymous function, which must then be
-            -- followed by `!@`" (stat ::= functiondef '!@' anchor).
+            -- followed by `!@`" (stat ::= functiondef '!@' anchor { anchorop }).
             advance()
             local func = body({tag = "Function", line = line, lines = {line}}, tok.line)
             if not is("!@") then
                 raise_expected("!@")
             end
-            return {tag = "HookStat", line = line, expr = apply_anchor(func)}
+            return anchor_statement(func, line)
         end
         local func = {tag = "Function", line = line, lines = {line}}
         local node = {tag = "FunctionStat", line = line, func = func}
@@ -816,15 +830,14 @@ function parser.parse(tokens, chunkname)
         return {tag = "Break", line = line, lines = {line}}, true
     end
 
-    -- exprstat: func | assignment | prefixexp '@' anchor | prefixexp '!@'
-    -- anchor (docs/04-transpiler.md, "Grammar"; docs/02-semantics.md,
-    -- "Acquiring a lifetime": "The left side must be a `prefixexp`"). One
-    -- operator, as the grammar has it: `x @ a @ b` is no statement.
+    -- exprstat: func | assignment | prefixexp anchorop { anchorop }
+    -- (docs/04-transpiler.md, "Grammar"; docs/02-semantics.md, "Acquiring
+    -- a lifetime": "The left side must be a `prefixexp`").
     local function exprstat(line)
         local e = primaryexp()
         local op = tok.value
         if (op == "@" or op == "!@") and tok.type == "symbol" then
-            return {tag = op == "@" and "AnchorStat" or "HookStat", line = line, expr = apply_anchor(e)}
+            return anchor_statement(e, line)
         end
         if e.tag == "Call" or e.tag == "Invoke" then
             return {tag = "CallStat", line = line, call = e}

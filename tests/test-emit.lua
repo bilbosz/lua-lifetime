@@ -174,6 +174,12 @@ test.case("the extension's nodes come back in their spelling, every token on its
     test.assert_deep_eq(parse(output), ast)
     test.assert_deep_eq(lexer.tokenize(output, "t"), lexer.tokenize(chunks.EXTENDED, "t"))
     test.assert_eq(round_trip("local h = f !@ ( a ,lifetime.scope ) @ b\nx @ (t) .owner"), "local h = f !@ (a, lifetime.scope) @ b\nx @ (t).owner")
+    -- Chained statements (docs/04-transpiler.md, "Grammar"), over lines.
+    local chained = "f !@ a @ b\nfunction() end !@ a\n  @ (b,\n  lifetime.scope) !@ c\nx\n@\nlifetime\n.\nscope\n@\nd\n"
+    ast = parse(chained)
+    output = emit.emit(ast)
+    test.assert_deep_eq(parse(output), ast)
+    test.assert_deep_eq(lexer.tokenize(output, "t"), lexer.tokenize(chained, "t"))
 end)
 
 test.case("LuaJIT's syntax round-trips; under LuaJIT, to the same bytecode", function()

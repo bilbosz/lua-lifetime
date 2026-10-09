@@ -508,8 +508,41 @@ test.case("the statement forms take a prefixexp on the left", function()
     assert_syntax_error("{} @ lifetime.scope", "t:1: unexpected symbol near '{'")
     assert_syntax_error("\"s\" @ a", "t:1: unexpected symbol near '\"s\"'")
     assert_syntax_error("a + b @ s", "t:1: '=' expected near '+'")
-    -- One operator per statement, as the grammar has it.
-    assert_syntax_error("x @ a @ b", "t:1: unexpected symbol near '@'")
+end)
+
+test.case("a statement chains `@` and `!@` like an expression", function()
+    -- docs/04-transpiler.md, "Grammar": "A statement chains `@` and `!@`
+    -- exactly as an expression does, left to right: `f !@ a @ b` as a
+    -- statement creates the hook on `a` and moves it to `b`".
+    test.assert_eq(statement("x @ a @ b"), "AnchorStat ((x @ a) @ b)")
+    test.assert_eq(statement("f !@ a @ b"), "AnchorStat ((f !@ a) @ b)")
+    test.assert_eq(statement("x @ a !@ b"), "HookStat ((x @ a) !@ b)")
+    test.assert_eq(statement("t.f @ (a, b) @ lifetime.scope @ c"), "AnchorStat (((t.f @ (a, b)) @ SCOPE) @ c)")
+    test.assert_eq(statement("function() end !@ a @ b"), "AnchorStat ((function() !@ a) @ b)")
+    test.assert_eq(statement("function() end !@ a !@ b"), "HookStat ((function() !@ a) !@ b)")
+    local s = parse("f !@ a @ b")[1]
+    test.assert_eq(s.expr.tag, "Anchor")
+    test.assert_eq(s.expr.expr.tag, "Hook")
+    test.assert_eq(s.expr.expr.name, nil)
+    -- The expression forms are unchanged, a bound hook still named.
+    test.assert_eq(statement("local h = f !@ a @ b"), "((f !@[h] a) @ b)")
+    -- The lines of every operator and anchor of a chain over lines.
+    s = parse("f\n!@\na\n@\n(\nb\n,\nlifetime.scope\n)")[1]
+    test.assert_eq(s.tag, "AnchorStat")
+    test.assert_eq(s.line, 1)
+    test.assert_deep_eq(s.expr.lines, {4, 5, 7, 9}) -- @ ( , )
+    test.assert_deep_eq(s.expr.expr.lines, {2}) -- !@
+    test.assert_eq(s.expr.expr.anchors[1].line, 3)
+    test.assert_deep_eq(s.expr.anchors[2].lines, {8, 8, 8})
+    s = parse("function()\nend\n!@ a\n@ b")[1]
+    test.assert_eq(s.tag, "AnchorStat")
+    test.assert_deep_eq(s.expr.lines, {4})
+    test.assert_deep_eq(s.expr.expr.lines, {3})
+    -- What follows a chain is the next statement.
+    test.assert_eq(statement("x @ a @ b y = 1", 2), "1")
+    assert_syntax_error("x @ a @", "t:1: unexpected symbol near '<eof>'")
+    assert_syntax_error("x @ a + b", "t:1: unexpected symbol near '+'")
+    assert_syntax_error("function() end @ a !@ b", "t:1: '!@' expected near '@'")
 end)
 
 test.case("`function (` starts a statement only with `!@`", function()
