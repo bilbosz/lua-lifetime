@@ -214,3 +214,57 @@ what the code does and why, for the reviewer and the human to decide.
    exit. They are held now (`hold` in that file; CLAUDE.md, rule 6).
 
 ## Review log
+
+- Implementer, round 1 (resumed after a container restart). The
+  previous implementer's `31f8b03` and `2ae3266` carried the runtime
+  (sentinel, token, pin, alive, the exit flag `lifetime.set_exiting`,
+  F1) but no tests of it; `0a89c29` (its uncommitted work, committed by
+  the orchestrator) generalised the one spare proxy to a stack of spares
+  ordered by a weak `armed` list. It was coherent and complete, and was
+  kept, then reworked for speed: kept proxies stay in their slots
+  (`kept[slot]`), so arming and disarming write less, and holes are
+  handled only off the common path. Tests for the whole task are new in
+  `tests/test-sentinel.lua`; F2 and task 003's case 7 are there too.
+- Implementer, round 1, robustness: the unit suite passes with an eager
+  collector (`collectgarbage("setpause", 1 .. 10)`, `setstepmul` 200 to
+  1000) under both interpreters, apart from two task 003 tests that
+  count memory or a compaction range under LuaJIT ("enter in a loop
+  allocates the records and nothing else", "hooks are compacted with the
+  other dependents") and fail there now and then; under the same
+  settings master's `tests/test-runtime.lua` fails three to seven of the
+  cases whose dependents nothing held (no sentinel there: the dependent
+  simply vanishes from its anchor's list).
+- Implementer, round 1, performance: `make bench BASE=master`, four
+  invocations, the last three on the final runtime (`ec619eb`). Marks:
+  run 1 (`6199bf1`): `runtime/attach-destroy-100` (LuaJIT, 1.156/1.179)
+  and `scope/loop-one-object` (Lua 5.1, 1.112/1.108); run 2: none; run
+  3: `runtime/attach-destroy-100` (LuaJIT, 1.148/1.101) and
+  `scope/pcall-empty` (LuaJIT, 26 vs 30 ns; this task does not touch
+  `pcall`); run 4: `runtime/attach-destroy-100` (LuaJIT, 1.160/1.205)
+  and `runtime/cascade-tree` (LuaJIT, 1.147/1.126). Lua 5.1 is clean in
+  runs 2 to 4 (`runtime/attach-destroy-100` 1.08 to 1.09,
+  `runtime/cascade-tree` 1.04 to 1.08, `scope/loop-one-object` 1.03 to
+  1.09). So `runtime/attach-destroy-100` under LuaJIT is marked in two
+  consecutive invocations (3 and 4): a finding by bench/README.md's rule,
+  for the orchestrator to decide. Every object of
+  `runtime/attach-destroy-100` and `runtime/cascade-tree` has a
+  `__destroy` and the term, so it now needs a sentinel
+  (docs/03-runtime.md, "Performance", "Forced, and measured"): arming
+  and disarming one costs about 40 to 60 ns per object on LuaJIT (master
+  about 350 ns per object for the whole attach-and-destroy) and about
+  130 to 170 ns on Lua 5.1 (master about 2100 ns). Without the
+  bookkeeping the runtime matches master (measured with the arming
+  removed). In-process, `sentinel/anchor-100` (the term against the same
+  objects pinned) reads 0.98 to 0.99 on Lua 5.1 and 1.06 to 1.09 on
+  LuaJIT.
+- Implementer, round 1, the `setmetatable` measurement (not decided):
+  tombstoning with `setmetatable` when the object's metatable is not
+  protected (`rawget(mt, "__metatable") == nil`), `debug.setmetatable`
+  otherwise, against the final runtime, `make bench BASE=HEAD` on the
+  runtime, scope and sentinel files: LuaJIT `runtime/attach-destroy-100`
+  0.959, `runtime/cascade-tree` 0.977, `scope/loop-one-object` 0.958,
+  `scope/hook-on-scope` 0.972, `sentinel/anchor-100` 0.971; Lua 5.1
+  `runtime/attach-destroy-100` 1.056, `runtime/cascade-tree` 1.009,
+  `scope/loop-one-object` 1.009, `sentinel/anchor-100` 1.038. The extra
+  `rawget` is a C call on Lua 5.1; `debug.setmetatable` is stitched, not
+  compiled, on LuaJIT. Reverted.
