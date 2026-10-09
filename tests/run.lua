@@ -13,7 +13,11 @@ local test = require("tests.lib.test")
 -- Unit test modules, one per module under test (tests/test-<module>.lua).
 -- Add new files here.
 local TEST_MODULES = {
-    "tests.test-harness"
+    "tests.test-harness",
+    "tests.test-lexer",
+    "tests.test-parser",
+    "tests.test-emit",
+    "tests.test-cli"
 }
 
 local what = arg and arg[1] or "all"

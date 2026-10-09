@@ -10,7 +10,8 @@ ignore = {"212"}
 
 -- Lua 5.1 and LuaJIT are the targets (docs/02-semantics.md, "Host"):
 -- `newproxy`, `unpack`, `loadstring`, `setfenv` are 5.1's; `jit` is
--- LuaJIT's and is only ever tested for presence.
+-- LuaJIT's and is only used where present (the transpiler's parser and
+-- emitter call `jit.off`; the runtime and generated code never use it).
 std = "lua51"
 read_globals = {"jit"}
 
