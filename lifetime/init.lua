@@ -128,18 +128,28 @@ local unwind
 -- owner's whole life ("never again for the same object").
 --
 -- When an owner dies by a cascade its proxy is disarmed (`owner = nil`),
--- so the finalizer finds nothing to do. A disarmed proxy is kept for the
--- next owner (`spare`) only when no proxy has been handed out since it
--- was (`newest[1]` is still it), so that handing it out again keeps the
--- proxies in the order of the `@`s, exactly as a fresh one would; a loop
--- body that owns one object then reuses one proxy and allocates none.
--- `newest` is weak-valued: it keeps no proxy alive, and a proxy the
+-- so the finalizer finds nothing to do, and it is kept for a later owner
+-- when that keeps the order: handing out a kept proxy must put it after
+-- every armed one, exactly as a fresh one would be. `armed` lists the
+-- armed proxies in the order they were handed out (`mt.slot`), `armed_n`
+-- being the last slot used. A proxy disarmed in the last slot is newer
+-- than every proxy still armed, so it goes on the `spares` stack; the
+-- spares are newer than every armed proxy and the top one is the oldest
+-- of them, so the next owner takes the top one. A cascade tombstones its
+-- objects newest first, so a scope exit or a `destroy` gives back every
+-- proxy its objects had, and the next ones reuse them: a loop body that
+-- owns objects allocates no proxy after its first iteration. Any other
+-- disarmed proxy loses its `__gc`, so the collector frees it without a
+-- finalizer call.
+--
+-- `armed` is weak-valued: it keeps no proxy alive, and a proxy the
 -- collector has scheduled for finalization is cleared from it (a
 -- finalized userdata is removed from weak values on both hosts), so such
--- a proxy is never reused. Every other disarmed proxy also loses its
--- `__gc`, so the collector frees it without a finalizer call.
-local newest = setmetatable({}, WEAK_VALUES)
-local spare = false
+-- a proxy, which its pending `__gc` will still be called on, is never
+-- kept. The spares hold nothing but their own proxies.
+local armed = setmetatable({}, WEAK_VALUES)
+local armed_n = 0
+local spares, spares_n = {}, 0
 
 -- The finalizer, defined with the cascade below.
 local finalize
@@ -147,29 +157,46 @@ local finalize
 -- A sentinel for `owner` (docs/03-runtime.md, "The sentinel"); returns
 -- the proxy's metatable, which the owner's record keeps.
 local function new_sentinel(owner)
-    local mt = spare
-    if mt then
-        spare = false
-        mt.owner = owner
-        return mt
+    local mt
+    local s = spares_n
+    if s > 0 then
+        mt = spares[s]
+        spares[s] = nil
+        spares_n = s - 1
+    else
+        local p = newproxy(true)
+        mt = getmetatable(p)
+        mt.__gc = finalize
+        mt.proxy = p
     end
-    local p = newproxy(true)
-    mt = getmetatable(p)
-    mt.__gc = finalize
     mt.owner = owner
-    mt.proxy = p
-    newest[1] = p
+    local n = armed_n + 1
+    armed_n = n
+    armed[n] = mt.proxy
+    mt.slot = n
     return mt
 end
 
 -- Disarm the sentinel of an owner that died by a cascade.
 local function drop_sentinel(mt)
     mt.owner = nil
-    if newest[1] == mt.proxy then
-        spare = mt
-    else
-        mt.__gc = nil
+    local slot = mt.slot
+    if armed[slot] == mt.proxy then
+        if slot == armed_n then
+            slot = slot - 1
+            while slot > 0 and armed[slot] == nil do
+                slot = slot - 1
+            end
+            armed_n = slot
+            local s = spares_n + 1
+            spares_n = s
+            spares[s] = mt
+            return
+        end
+        -- Below the last slot: a hole the next skip passes over.
+        armed[slot] = nil
     end
+    mt.__gc = nil
 end
 
 -- docs/02-semantics.md, "Reachability is the collector's": "A destructor
@@ -855,12 +882,22 @@ local function destroy_object(obj, st, reason, where, skip_body)
     -- collection (docs/03-runtime.md, "The sentinel": the finalizer skips
     -- an object already dead).
     if term ~= true and term then
-        -- `drop_sentinel`, inlined.
-        term.owner = nil
-        if newest[1] == term.proxy then
-            spare = term
+        -- `drop_sentinel`, its common case (the newest armed) inlined.
+        local slot = term.slot
+        if slot == armed_n and armed[slot] == term.proxy then
+            -- The slot above `armed_n` keeps its stale entry until the
+            -- next sentinel takes it; nothing reads above `armed_n`.
+            term.owner = nil
+            slot = slot - 1
+            while slot > 0 and armed[slot] == nil do
+                slot = slot - 1
+            end
+            armed_n = slot
+            slot = spares_n + 1
+            spares_n = slot
+            spares[slot] = term
         else
-            term.__gc = nil
+            drop_sentinel(term)
         end
         st.reachable = true
     end
@@ -1222,11 +1259,17 @@ function lifetime.attach(obj, pin, ...)
                     if pin then
                         st.reachable = false
                     elseif mt ~= nil and rawget(mt, "__destroy") ~= nil then
-                        -- `new_sentinel`, its common case inlined.
-                        local smt = spare
-                        if smt then
-                            spare = false
+                        -- `new_sentinel`, its common case (a spare) inlined.
+                        local s = spares_n
+                        if s > 0 then
+                            local smt = spares[s]
+                            spares[s] = nil
+                            spares_n = s - 1
                             smt.owner = obj
+                            local n = armed_n + 1
+                            armed_n = n
+                            armed[n] = smt.proxy
+                            smt.slot = n
                             st.reachable = smt
                         else
                             st.reachable = new_sentinel(obj)
