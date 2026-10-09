@@ -53,8 +53,9 @@
 -- and `build/lifetime-largest` in bench/bench-build.lua (`make bench`);
 -- the restart by `build/extension-5000` (a `lifetime.scope` on line 3)
 -- and `build/scope-at-end-5000` (on the last line: a whole emission
--- thrown away, about 15% more than `build/generated-5000` on the same
--- file, task 007).
+-- thrown away, then the analysis and the emission again; about 1.4 times
+-- `build/generated-5000` on the same file under both interpreters, task
+-- 007).
 
 local count_newlines = require("lifetime.lexer").count_newlines
 

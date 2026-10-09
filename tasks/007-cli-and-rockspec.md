@@ -131,8 +131,9 @@ generated file.
    requires the runtime whatever the chunk is, and the runtime replaces
    `pcall`, `xpcall`, `coroutine.resume` and `coroutine.wrap`. A plain
    chunk run as `lua FILE` keeps the originals; under `lifetime run` each
-   of its `pcall`s costs the wrapper (`scope/pcall-empty`: ratio about
-   1.7 under LuaJIT, 1.0 under Lua 5.1). Requiring the runtime only for a
+   of its `pcall`s costs the wrapper (`scope/pcall-empty`, ten empty
+   `pcall`s: ratio 2.55 under Lua 5.1, about 75 ns more per `pcall`, and
+   1.65 under LuaJIT, about 1 ns more; `scope/pcall-error` 1.82 and 1.02). Requiring the runtime only for a
    chunk with a header would miss scopes left open by transpiled modules
    that a plain main chunk requires; unwinding those after the fact needs
    a runtime entry point that does not exist (an unwind to depth 0). The
