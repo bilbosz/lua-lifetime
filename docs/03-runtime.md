@@ -62,6 +62,17 @@ holds:
 - `name`: `tostring(obj)` captured when the object starts dying, for the
   tombstone's message.
 
+As implemented (task 002, review finding F1): the record's fixed fields
+are `n` (the number of anchors), `reachable`, `deps`, `phase`,
+`phase_id` (the destroy phase in which the runtime first saw the object,
+for "No moves during destruction"), `name`, `where` and `reason`, with
+the anchor pairs `[2i-1] = anchor, [2i] = sequence number` in the array
+part; `seq`, `lo` and `limit` (the amortised compaction limit) live in the
+anchor's weak `deps` table rather than in the record, so an object that
+is never used as an anchor pays nothing for them. The names above
+(`formula`, `dependents`, `strong`, `sentinel`) are the design's; `deps`
+is the weak table, and task 004 adds `strong` and the sentinel beside it.
+
 A dependent that is not a table (a function, coroutine or userdata) has
 no hidden field; its state record lives in a weak-keyed side table whose
 value refers to the dependent's anchors, never to the dependent itself,

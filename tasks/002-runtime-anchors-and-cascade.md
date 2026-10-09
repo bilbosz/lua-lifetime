@@ -1,11 +1,11 @@
 ---
 id: 002
 title: Runtime: anchors, dependents inside the anchor, `destroy`, cascade order, tombstones, `destroyerror`
-status: review
+status: done
 depends: [001, 010]
 branch: task/002-runtime-anchors-and-cascade
 pr: https://github.com/bilbosz/lua-lifetime/pull/16
-commits:
+commits: 695bf8e82ff194ec6538ca118ddb6bd1c51b6ef0
 review: APPROVE (round 1)
 ---
 
