@@ -101,18 +101,6 @@ how many objects it owns. *Leaning:* catch-site unwinding, decided on the
 numbers of the task 010 benchmark that runs a scoped block in a loop both
 ways.
 
-### Reserved words
-
-The extension adds no reserved word: hooks are made with the `!@`
-operator ([05-decisions.md](05-decisions.md)), so `defer` is an ordinary
-name and Treflove's `events/defer-manager.lua` keeps its local `defer`.
-Tokens come from `lifetime.token`, so `token` is an ordinary name too
-(Treflove uses it 41 times). Treflove uses `scope` nowhere. *Leaning:*
-`scope` is a keyword only after `@` or `!@` and inside the list form,
-where a variable of that name could not be anchored to anyway. Decision 5
-calls it a keyword without saying reserved; settled by the parser task
-with the human.
-
 ### Teal and `!@`
 
 The hook operator `!@` was chosen partly because Teal is believed not to

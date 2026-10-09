@@ -1,6 +1,6 @@
 ---
 id: 005
-title: Lexer and parser: Lua 5.1 plus `@`, the list form, the hook operator `!@`, `scope`
+title: Lexer and parser: Lua 5.1 plus `@`, the list form, the hook operator `!@`, `lifetime.scope`
 status: todo
 depends: [001, 010]
 branch:
@@ -13,13 +13,11 @@ review:
 
 The lexer and parser of task 001 accept the whole extended grammar of
 `docs/04-transpiler.md` and produce AST nodes for `@` (expression and
-statement, single anchor and list, `scope` as an anchor),
-the hook operator `!@` (expression and statement, with the name of its
-binding target for named hooks), plus
-LuaJIT's `goto` and labels in the input. Before writing the parser, the
-implementer settles "Reserved words" in `docs/06-open-questions.md` with
-the human (an open point this repository owns) and records the answer in
-`docs/05-decisions.md` on the task branch.
+statement, single anchor and list, `lifetime.scope` as an anchor matched
+by spelling), the hook operator `!@` (expression and statement, with the
+name of its binding target for named hooks), plus LuaJIT's `goto` and
+labels in the input. The extension adds no reserved word
+(`docs/05-decisions.md`, "The scope anchor is spelled `lifetime.scope`").
 
 ## Spec
 
@@ -27,13 +25,14 @@ the human (an open point this repository owns) and records the answer in
   precedence of any operator and is postfix"; "`!@` has the precedence
   and the right operand of `@`"; `!@` is one token; the `!=` error; a
   statement may start with `function (`; "`@()` is a syntax error. Lists
-  do not nest"; reserved words.
+  do not nest"; `scopeanchor` matched by spelling before `prefixexp`; no
+  reserved words.
 - `docs/02-semantics.md`, "Acquiring a lifetime: the `@` operator": the
   statement form's left side must be a `prefixexp`; `x @ (a)` is `x @ a`;
   `x @ (cond and a or b)` is a one-element list.
-- `docs/02-semantics.md`, "Scopes: `scope`": "using it anywhere but
-  after `@` or `!@` (including inside the list form) is a syntax error";
-  there is no `caller` anchor.
+- `docs/02-semantics.md`, "Scopes: `lifetime.scope`": the spelling is
+  matched in anchor position, "whatever `lifetime` names at that point";
+  anywhere else it is an ordinary expression; there is no `caller` anchor.
 - `docs/02-semantics.md`, "Hooks: the `!@` operator": the anchor is
   always written; the statement form's left side; "Named hooks": which
   binding targets name a hook.
@@ -43,23 +42,27 @@ the human (an open point this repository owns) and records the answer in
 
 ## Acceptance criteria
 
-- `e @ a`, `e @ (a, b, c)`, `e @ scope`, `e @ (a, scope)` parse to an
-  `Anchor` node holding the expression and an array of anchor items,
-  where `scope` is a marked item, not a name.
-- `caller` is an ordinary name: `local caller = 1` and `e @ caller` parse
-  as Lua and an `@` on the variable `caller`.
+- `e @ a`, `e @ (a, b, c)`, `e @ lifetime.scope`, `e @ (a, lifetime.scope)`
+  parse to an `Anchor` node holding the expression and an array of anchor
+  items, where `lifetime.scope` is a marked item, not a field access.
+- `e @ lifetime.scope.x`, `e @ lifetime.scope()` and `e @ lifetime.pin(a)`
+  parse as `@` on an ordinary `prefixexp`; `local lifetime = t; x @
+  lifetime.scope` still parses as the scope anchor (spelling, not
+  binding).
+- `scope` and `caller` are ordinary names: `local scope, caller = 1, 2`,
+  `e @ lifetime.scope` and `e @ caller` parse as Lua and an `@` on the variable.
 - `a + b @ s` parses as `(a + b) @ s`; `f(x) @ s` as `(f(x)) @ s`;
   `x @ y @ z` as `(x @ y) @ z`.
-- The statement form accepts a `prefixexp` on the left; `{} @ scope`
+- The statement form accepts a `prefixexp` on the left; `{} @ lifetime.scope`
   alone is `unexpected symbol near '{'` or Lua's equivalent wording.
 - `@()` raises a syntax error naming the empty list; `@ (a, (b, c))`
   raises `unexpected symbol near ','` (a nested list is not a list, it is
   Lua's parenthesised expression, which cannot hold a comma).
-- `f !@ a`, `f !@ scope`, `f !@ (a, b)`, `a or b !@ s` (hooking `a or
-  b`), `local h = function() … end !@ scope` parse to `Hook` nodes with
+- `f !@ a`, `f !@ lifetime.scope`, `f !@ (a, b)`, `a or b !@ s` (hooking `a or
+  b`), `local h = function() … end !@ lifetime.scope` parse to `Hook` nodes with
   the same anchor items as `@`; `5 !@ a` is accepted by the parser (the
   runtime raises on the value); `f !@` with no anchor is a syntax error.
-- `function() … end !@ scope` and `obj.close !@ obj` are statements; `a
+- `function() … end !@ lifetime.scope` and `obj.close !@ obj` are statements; `a
   or b !@ s` at statement start is a syntax error (needs parentheses);
   `function () end` at statement start without `!@` is a syntax error.
 - `f !@ a @ b` is `Anchor(Hook(f, a), b)`.
@@ -72,8 +75,6 @@ the human (an open point this repository owns) and records the answer in
 - `defer` is an ordinary name: `local defer = 1` parses.
 - `token` is an ordinary name: `local token = 1` and
   `lifetime.token("p") @ a` parse as Lua and an `@`.
-- `scope` anywhere but after `@` or `!@` or inside the list form is a
-  syntax error with Lua's wording.
 - `goto name` and `::name::` parse (LuaJIT syntax) so the emitter can
   honour them; they are AST nodes with lines.
 - Every line of every new node is recorded.

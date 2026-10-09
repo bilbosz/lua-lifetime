@@ -262,6 +262,52 @@ This departs from decision 5 of `xd/docs/10-lua-lifetime-decisions.md`
 prologue increments it") and from `xd/docs/02-lifetimes.md`, "The
 caller's scope". The human carries it back to `xd`. Tasks 003, 005, 006,
 007 and 009 updated.
-→ [02-semantics.md](02-semantics.md), "Scopes: `scope`";
+→ [02-semantics.md](02-semantics.md), "Scopes: `lifetime.scope`";
 [03-runtime.md](03-runtime.md), "Scope records";
 [04-transpiler.md](04-transpiler.md), "Functions"
+
+## The scope anchor is spelled `lifetime.scope`
+
+Decided by the human on 2026-10-09 ("Let's have the lifetime.scope"),
+right after "`caller` is removed". The block anchor is written
+`x @ lifetime.scope` and `f !@ lifetime.scope`, and inside the list form
+`x @ (a, lifetime.scope)`. The semantics do not change: it is still the
+innermost block enclosing the `@`, resolved by the transpiler, with the
+epilogue on every exit path and the `pcall` wrapper where one is needed.
+
+Why. Every other name the extension gives the programmer lives on the
+`lifetime` table: `lifetime.reachable`, `lifetime.pin`, `lifetime.token`,
+`lifetime.of`, `lifetime.alive`, `lifetime.dependents`, `lifetime.format`.
+A bare `scope` was the one spelling that looked like a variable and was
+not one. With `lifetime.scope` the anchors read as one vocabulary (`@
+lifetime.reachable`, `@ lifetime.scope`, `@ lifetime.pin(a)`), and the
+extension adds **no reserved word at all**: `scope` is an ordinary name,
+like `defer`, `token` and `caller`, which settles "Reserved words" of
+[06-open-questions.md](06-open-questions.md) the simplest way. The cost
+is five more characters at each use, and one rule the parser must state:
+in anchor position the spelling `lifetime.scope` is syntax, matched
+before `prefixexp` and whatever `lifetime` names at that point, so that
+a module which shadows `lifetime` still gets its scope anchor and a
+module which names a local `scope` keeps it.
+
+What `lifetime.scope` is when it is not in anchor position: an ordinary
+expression that reads the runtime table's field `scope`, which holds a
+marker. The marker exists so that the mistake has a message: `local s =
+lifetime.scope; x @ s` raises `attempt to anchor to lifetime.scope
+through a variable` instead of anchoring to a value that means nothing,
+and indexing it raises `attempt to index lifetime.scope`. Making the
+field `nil` was rejected because `attempt to anchor to a nil value` would
+not say what went wrong; making the transpiler reject `lifetime.scope`
+outside anchor position was rejected because `lifetime` is an ordinary
+name and the parser cannot know what it holds. A scope remains
+unstorable: "there is no scope value" holds, the marker is not one.
+
+This keeps decision 5 of `xd/docs/10-lua-lifetime-decisions.md` ("scopes
+are syntax") and changes only the spelling, which `xd/docs/04-syntax.md`
+writes as the bare word `scope`; the human carries the spelling back to
+`xd`. Tasks 001, 003, 005, 006, 007 and 009 updated. `lifetime.scope` is
+listed in "The `lifetime` table" as syntax, not as an eighth function.
+→ [02-semantics.md](02-semantics.md), "Scopes: `lifetime.scope`" and
+"Acquiring a lifetime: the `@` operator";
+[04-transpiler.md](04-transpiler.md), "Grammar";
+[03-runtime.md](03-runtime.md), "Scope records"

@@ -80,7 +80,7 @@ The task file, the branch name, the implementer's handoff, and the diff
 - No benchmark the task touches is slower than `master` beyond the
   threshold in `bench/README.md`.
 - Code that does not use the extension pays nothing: the plain-Lua
-  benchmarks did not move, a block without `@ scope` or a bare hook is
+  benchmarks did not move, a block without `@ lifetime.scope` or a bare hook is
   emitted verbatim, an object never anchored has no state.
 - No optimisation changes observable behaviour (order, reasons, error
   texts, the statement of death).

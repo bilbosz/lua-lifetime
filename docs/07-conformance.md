@@ -15,8 +15,8 @@ An `xd` example is ported into `examples/` of this repository as
    removed (the `all` and `any` constructors, the scope functions,
    nil-on-death, `remaining`) and pins no reachable death to a statement.
    Only the spelling changes: the scope function after `@` becomes
-   `scope`, an `all` over `a` and `b` becomes `(a, b)`. The `.expected`
-   file is `xd`'s, byte for byte. `defer f @ a` becomes `f !@ a`, and a bare `defer f` becomes `f !@ scope`.
+   `lifetime.scope`, an `all` over `a` and `b` becomes `(a, b)`. The `.expected`
+   file is `xd`'s, byte for byte. `defer f @ a` becomes `f !@ a`, and a bare `defer f` becomes `f !@ lifetime.scope`.
 2. **Rewritten around `collectgarbage`.** The program pins a death by
    `reachable` to a statement. The port inserts `collectgarbage("collect")`
    at that statement, and the `.expected` file is the one `xd` adopts for
@@ -47,7 +47,7 @@ holds the headings and is filled in as each example is classified.
 
 | Example | What differs | Decision |
 | --- | --- | --- |
-| `caller` | Not ported: the `caller` anchor does not exist here. The receiver anchors what a function returns (`local x = f() @ scope`). | [05-decisions.md](05-decisions.md), "`caller` is removed" |
+| `caller` | Not ported: the `caller` anchor does not exist here. The receiver anchors what a function returns (`local x = f() @ lifetime.scope`). | [05-decisions.md](05-decisions.md), "`caller` is removed" |
 
 ## Examples to classify (task 008)
 

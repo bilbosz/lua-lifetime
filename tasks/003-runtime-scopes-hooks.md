@@ -21,7 +21,7 @@ there is no `caller` anchor and no depth counter (`docs/05-decisions.md`,
 
 ## Spec
 
-- `docs/02-semantics.md`, "Scopes: `scope`": a scope's dependents die at
+- `docs/02-semantics.md`, "Scopes: `lifetime.scope`": a scope's dependents die at
   block exit "by any route"; each entry is a new scope; "no bookkeeping
   runs per call".
 - `docs/02-semantics.md`, "Hooks: the `!@` operator": default lifetime is the
@@ -52,6 +52,10 @@ there is no `caller` anchor and no depth counter (`docs/05-decisions.md`,
 - `lifetime.exit(record, line, false, err)` runs the cascade with the
   error counted as propagating (every destructor error goes to
   `destroyerror`) and then re-raises `err` unchanged.
+- `lifetime.scope` is the marker of `docs/03-runtime.md`, "Scope
+  records": `tostring` gives `lifetime.scope`, indexing it raises
+  `attempt to index lifetime.scope`, and `attach(x, false, lifetime.scope)`
+  raises `attempt to anchor to lifetime.scope through a variable`.
 - The runtime exports no `S`, `drop`, `caller` or `exit_main`, and
   requiring it leaves `coroutine.resume`, `coroutine.wrap` and
   `coroutine.yield` untouched (`rawequal` before and after `require`).
