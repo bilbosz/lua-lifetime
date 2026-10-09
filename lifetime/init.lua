@@ -109,13 +109,16 @@ local unwind
 -- zero-size userdata with its own fresh metatable ... The runtime stores
 -- the owning table in that metatable (`getmetatable(proxy).owner = obj`)
 -- and sets `__gc` to the finalizer; the table holds the proxy in its
--- state record." The owner's record holds it in `reachable` (an object
--- with the `reachable` term and something to run at collection: the term
--- is backed by the sentinel, so the field is `false` for no term, `true`
--- for the term alone, or the proxy), and a scope record in `sentinel`.
--- The cycle proxy -> metatable -> owner -> record -> proxy is an ordinary
--- one: when the owner becomes unreachable the collector resurrects all of
--- it for the finalizer.
+-- state record." The record holds the proxy through the proxy's own
+-- metatable, which refers to the proxy (`mt.proxy`), so that arming and
+-- disarming a sentinel are field writes without a `getmetatable` call:
+-- an object's record in `reachable` (an object with the `reachable` term
+-- and something to run at collection: the term is backed by the
+-- sentinel, so the field is `false` for no term, `true` for the term
+-- alone, or the sentinel's metatable), a scope record's in `sentinel`.
+-- The cycle proxy -> metatable -> owner -> record -> metatable is an
+-- ordinary one: when the owner becomes unreachable the collector
+-- resurrects all of it for the finalizer.
 --
 -- Finalizers run in reverse creation order of the proxies (both hosts;
 -- docs/02-semantics.md, "Host"), which is "newest first" of
@@ -141,28 +144,29 @@ local spare = false
 -- The finalizer, defined with the cascade below.
 local finalize
 
--- A sentinel for `owner` (docs/03-runtime.md, "The sentinel").
+-- A sentinel for `owner` (docs/03-runtime.md, "The sentinel"); returns
+-- the proxy's metatable, which the owner's record keeps.
 local function new_sentinel(owner)
-    local p = spare
-    if p then
+    local mt = spare
+    if mt then
         spare = false
-        getmetatable(p).owner = owner
-        return p
+        mt.owner = owner
+        return mt
     end
-    p = newproxy(true)
-    local mt = getmetatable(p)
+    local p = newproxy(true)
+    mt = getmetatable(p)
     mt.__gc = finalize
     mt.owner = owner
+    mt.proxy = p
     newest[1] = p
-    return p
+    return mt
 end
 
 -- Disarm the sentinel of an owner that died by a cascade.
-local function drop_sentinel(p)
-    local mt = getmetatable(p)
+local function drop_sentinel(mt)
     mt.owner = nil
-    if newest[1] == p then
-        spare = p
+    if newest[1] == mt.proxy then
+        spare = mt
     else
         mt.__gc = nil
     end
@@ -851,7 +855,13 @@ local function destroy_object(obj, st, reason, where, skip_body)
     -- collection (docs/03-runtime.md, "The sentinel": the finalizer skips
     -- an object already dead).
     if term ~= true and term then
-        drop_sentinel(term)
+        -- `drop_sentinel`, inlined.
+        term.owner = nil
+        if newest[1] == term.proxy then
+            spare = term
+        else
+            term.__gc = nil
+        end
         st.reachable = true
     end
     st.phase = "dead"
@@ -1019,29 +1029,16 @@ local function check_anchor(a, level)
     return true
 end
 
--- Whether `obj` has a `__destroy`, for the sentinel (docs/03-runtime.md,
--- "The sentinel": "a table whose formula has the `reachable` term and
--- that has a `__destroy`"). `mt` is `getmetatable(obj)`, which LuaJIT
--- compiles: the real metatable unless it is protected. A `__destroy`
--- found there is the answer for an unprotected metatable, the common
--- case; otherwise `debug.getmetatable` decides (a protected metatable, or
--- a metatable without `__destroy`). `__destroy` is read again at the
--- moment of death; a `__destroy` added later than this check runs on
--- `destroy` and on an anchor's death, but not at collection ("allocated
--- lazily: on the first `@` that makes the object need one, not at
--- `setmetatable`").
-local function has_destroy(obj, mt)
-    if mt == nil then
-        return false
-    end
-    if type(mt) == "table" and rawget(mt, "__destroy") ~= nil then
-        return true
-    end
-    local real = debug_getmetatable(obj)
-    if real == nil or rawequal(real, mt) then
-        return false
-    end
-    return rawget(real, "__destroy") ~= nil
+-- Whether the metatable `mt` of an object (`debug.getmetatable`, the
+-- real one even when protected) has a `__destroy`, for the sentinel
+-- (docs/03-runtime.md, "The sentinel": "a table whose formula has the
+-- `reachable` term and that has a `__destroy`"). `__destroy` is read
+-- again at the moment of death; a `__destroy` added later than this
+-- check runs on `destroy` and on an anchor's death, but not at
+-- collection ("allocated lazily: on the first `@` that makes the object
+-- need one, not at `setmetatable`").
+local function has_destroy(mt)
+    return mt ~= nil and rawget(mt, "__destroy") ~= nil
 end
 
 -- Link `obj` (record `st`) to the anchors of element `a`, from pair
@@ -1169,7 +1166,7 @@ local function attach_general(fname, obj, pin, count, ...)
     end
     if reachable then
         if had == true or had == false then
-            if hook or st.deps or has_destroy(obj, getmetatable(obj)) then
+            if hook or st.deps or has_destroy(debug_getmetatable(obj)) then
                 st.reachable = new_sentinel(obj)
             else
                 st.reachable = true
@@ -1215,8 +1212,8 @@ function lifetime.attach(obj, pin, ...)
         if ast and not ast.phase then
             local st = rawget(obj, STATE)
             if st == nil then
-                local mt = getmetatable(obj)
-                if mt ~= "lifetime" then
+                local mt = debug_getmetatable(obj)
+                if mt ~= VALUE_MT then
                     busy = busy + 1
                     st = new_state(obj)
                     st[1] = a
@@ -1224,8 +1221,16 @@ function lifetime.attach(obj, pin, ...)
                     st.n = 1
                     if pin then
                         st.reachable = false
-                    elseif has_destroy(obj, mt) then
-                        st.reachable = new_sentinel(obj)
+                    elseif mt ~= nil and rawget(mt, "__destroy") ~= nil then
+                        -- `new_sentinel`, its common case inlined.
+                        local smt = spare
+                        if smt then
+                            spare = false
+                            smt.owner = obj
+                            st.reachable = smt
+                        else
+                            st.reachable = new_sentinel(obj)
+                        end
                     end
                     busy = busy - 1
                     if busy == 0 and queue_tail ~= 0 then
@@ -1234,6 +1239,16 @@ function lifetime.attach(obj, pin, ...)
                     return obj
                 end
             elseif not st.phase and st.n == 1 and st.reachable and not pin then
+                -- An anchor that has its dependents list already gets an
+                -- unpinned link without an allocation (a table store that
+                -- grows a table runs no collector step on either host), so
+                -- no finalizer can run in between and `busy` is not needed.
+                if ast.deps then
+                    unlink(rawget(st[1], STATE), st[2], false)
+                    st[1] = a
+                    st[2] = link(a, ast, obj, false)
+                    return obj
+                end
                 busy = busy + 1
                 unlink(rawget(st[1], STATE), st[2], false)
                 st[1] = a
@@ -1301,7 +1316,7 @@ function lifetime.of(obj)
         error("bad argument #1 to 'lifetime.of' (object expected, got lifetime)", 2)
     end
     st = new_state(obj)
-    if has_destroy(obj, getmetatable(obj)) then
+    if has_destroy(debug_getmetatable(obj)) then
         st.reachable = new_sentinel(obj)
     end
     return REACHABLE
@@ -1858,7 +1873,7 @@ local function run_finalizer(p)
     mt.owner = nil
     local st = rawget(owner, STATE)
     if st == owner then
-        if owner.sentinel == p then
+        if owner.sentinel == mt then
             owner.sentinel = false
         end
         if not owner.phase then
@@ -1873,7 +1888,7 @@ local function run_finalizer(p)
         end
         return
     end
-    if st.reachable == p then
+    if st.reachable == mt then
         st.reachable = true
     end
     if st.phase then
