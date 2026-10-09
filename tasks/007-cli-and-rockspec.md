@@ -32,6 +32,12 @@ returns.
   `lifetime run` once it exists, keeping the chunk name and the exit
   status contract.
 
+- `tasks/001-skeleton-and-conformance-runner.md`, review round 2: a `#!`
+  first line is stripped before `build`, as `luaL_loadfile` does (the
+  conformance runner and `lifetime run` read the file themselves); and
+  `cli.build` classifies a syntax error by a marker rather than by the
+  chunkname prefix of the message, since this task chooses chunknames.
+
 ## Acceptance criteria
 
 - `lifetime build FILE -o OUT` writes the transpiled source; `-o -`

@@ -1,11 +1,11 @@
 ---
 id: 001
 title: Skeleton, `make test`, conformance runner, pass-through transpiler for plain Lua
-status: review
+status: done
 depends: []
 branch: task/001-skeleton-and-conformance-runner
 pr: https://github.com/bilbosz/lua-lifetime/pull/6
-commits:
+commits: f32c998884af812bab009f58e6ca091ee03c8189
 review: APPROVE (round 2)
 ---
 
