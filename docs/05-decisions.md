@@ -558,10 +558,12 @@ escapes `x41` and `u{41}`, so they already passed. A token's decoded
 `value` is Lua 5.1's reading wherever Lua 5.1 accepts the token; nothing
 in the output depends on it.
 
-Not accepted: numerals keep Lua 5.1's delimiting, so `0x1p-4` is the
-malformed `0x1p` and `0x1.8` is `0x1` followed by `.8`. Accepting them as
-one token would change a valid Lua 5.1 chunk (`0x1..8` is `"18"` in Lua
-5.1).
+Not accepted: hex fractions and signed binary exponents (`0x1.8`,
+`0x1p-4`). Numerals keep Lua 5.1's delimiting, so `0x1p-4` is the
+malformed `0x1p` and `0x1.8` is `0x1` followed by `.8`, both errors.
+Reading them as one token would need a numeral delimiter that differs
+from Lua 5.1's, and that delimiter would still have to keep `0x1..8`
+apart, a valid Lua 5.1 chunk (`"18"`).
 
 LuaJIT's `goto NAME` and `::NAME::` are in the grammar
 ([04-transpiler.md](04-transpiler.md), "Grammar"). As in LuaJIT, `goto`

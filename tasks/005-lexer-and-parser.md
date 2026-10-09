@@ -142,7 +142,7 @@ numbers in the handoff.
   they chain (`local m = f !@ a @ b` is `Anchor(Hook(f, a), b)`). The
   parser follows the grammar. If a statement should chain, the grammar
   needs `stat ::= prefixexp ('@' | '!@') anchor {('@' | '!@') anchor}`;
-  the parser change is two lines. Question, current choice: no chain.
+  the parser change is two lines. Question, current choice: no chain. Resolved on master (`8ee0825`, 05, "A statement chains `@` and `!@` like an expression"); round 2 implements the chain.
 - **`{` after `lifetime.scope`.** `docs/04-transpiler.md`, "Grammar",
   defines the scope anchor as the spelling "with nothing after them that
   would continue a `prefixexp` (no `.x`, `[`, `(`, `:` or string

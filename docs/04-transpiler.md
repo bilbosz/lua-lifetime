@@ -62,6 +62,10 @@ scopeanchor ::= 'lifetime' '.' 'scope'
   `lifetime` names at that point; anywhere else `lifetime.scope` is an
   ordinary `prefixexp` and `lifetime.scope.x` or `lifetime.scope()` are
   ordinary expressions. `@()` is a syntax error. Lists do not nest.
+  A one-element parenthesised item followed by a suffix (`x @
+  (lifetime.scope).f`, `x @ (t).owner`) is Lua's parenthesised
+  `prefixexp`, not a list, so the inner `lifetime.scope` is the ordinary
+  marker.
 - Reserved words: none added. `defer`, `token`, `scope` and `caller` are
   ordinary names ([05-decisions.md](05-decisions.md), "The scope anchor is
   spelled `lifetime.scope`").
