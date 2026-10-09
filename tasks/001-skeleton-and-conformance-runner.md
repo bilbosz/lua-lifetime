@@ -106,4 +106,32 @@ largest file of the test corpus in the handoff, as a first baseline.
 
 ## Spec issues found
 
+- **`x @ y` and Lua's wording (task text vs. Lua 5.1).** *Test cases*
+  says `x @ y` raises `unexpected symbol near '@'`. As a statement,
+  Lua 5.1 and LuaJIT both report `t:1: '=' expected near '@'`: `x`
+  starts an assignment and `@` is not `=`. Lua says `unexpected symbol
+  near '@'` only where `@` starts an expression or a statement
+  (`local z = x @ y`, `f() @ x`). The acceptance criteria require "Lua's
+  own words", and so does `CLAUDE.md` rule 1, so the parser follows Lua.
+  `tests/test-parser.lua` pins both messages, and `tests/test-cli.lua`
+  pins them through `build`. Decision needed: correct the test-case
+  sentence. (Task 005 replaces both messages with the extension's
+  grammar, so this affects only the interval until then.)
+- **Where Lua 5.1 and LuaJIT lex differently (the docs are silent).**
+  `docs/04-transpiler.md` says "Lua 5.1 (`lparser.c`, the manual's §8)".
+  Three lexical points depend on the implementation, and the manual's
+  §2.1 does not decide them:
+  - `[[` inside a level-0 long string: Lua 5.1 raises `nesting of [[...]]
+    is deprecated` (LUA_COMPAT_LSTR); LuaJIT accepts it.
+  - an unknown escape such as `\q`: Lua 5.1 accepts it as `q`; LuaJIT
+    raises `invalid escape sequence`.
+  - a decimal escape above 255: Lua 5.1 says `escape sequence too large`;
+    LuaJIT says `invalid escape sequence`.
+
+  The lexer accepts what either interpreter accepts and uses Lua 5.1's
+  wording where it rejects. The output keeps the spelling and line of
+  every token, so an interpreter that rejects a construct does so when it
+  loads the output, at the same line. No decision is needed unless the
+  project wants the transpiler to reject the intersection instead.
+
 ## Review log
