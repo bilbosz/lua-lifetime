@@ -447,3 +447,22 @@ Treflove's `table.to_string` needs. The `lifetime` table grows by one
 name, `is_state`, which builds no formula, so decision 11 still holds.
 → [03-runtime.md](03-runtime.md), "The state of an object";
 [02-semantics.md](02-semantics.md), "The `lifetime` table"
+
+## A statement chains `@` and `!@` like an expression
+
+Decided by the orchestrator on 2026-10-09 on the human's standing
+authority, closing a gap task 005 found (*Spec issues found*, item 2).
+The grammar gave the statement form one operator (`stat ::= prefixexp
+'@' anchor | prefixexp '!@' anchor | functiondef '!@' anchor`) while the
+expression form chains, so `f !@ a @ b` was legal as an expression and a
+syntax error as a statement, although "Hooks: the `!@` operator" already
+reads it as a statement ("creates the hook on `a` and then moves it to
+`b`"). Decided: a statement chains the two operators exactly as an
+expression does, left to right, and `functiondef '!@' anchor` may be
+followed by further operators. The parser's loop is the same in both
+positions; nothing changes in what any program that already parsed
+observes. The same change lists `{` (a table argument) among the tokens
+that continue a `prefixexp` after `lifetime.scope`, which "Grammar"
+intended and the parenthetical omitted.
+→ [04-transpiler.md](04-transpiler.md), "Grammar";
+[02-semantics.md](02-semantics.md), "Acquiring a lifetime"
