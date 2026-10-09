@@ -1,12 +1,12 @@
 ---
 id: 007
 title: CLI `lifetime build` and `lifetime run`; the rockspec installs and runs
-status: in-progress
+status: review
 depends: [006]
 branch: task/007-cli-and-rockspec
 pr:
 commits:
-review:
+review: APPROVE (round 2)
 ---
 
 ## Goal
@@ -174,3 +174,9 @@ Suite on `b5edd6f`: unit 250/250 under lua5.1 and luajit, conformance 19/19 unde
 - Rulings 1 to 6 hold on the code as written. Ruling 3 (a chunk under `lifetime run` has the runtime loaded and pays its `pcall` wrapper) goes into `docs/04`, "The command", in the done chore.
 - Runtime notes for a follow-up, not this task: the default `destroyerror` handler writes to stderr without flushing stdout first; an error through `coroutine.wrap` shows the runtime's wrapper frames above the main chunk where the standalone interpreter shows `[C]: in function 'w'`.
 - After task 004 merges: move `tests/fixtures/exit_order.lt(.expected)` to `examples/` and drop the `set_exiting` conditional and the `note:` line.
+
+### Round 2: APPROVE
+
+Suite on `fa37fe8`: unit 250/250 under lua5.1 and luajit, conformance 19/19 under both, lint clean (28 files). F1 fixed: the non-ASCII `goto` label is reported as `FILE:LINE: <message>` with exit 1 and no traceback through `build` and `run` under both interpreters; the new case fails on round 1's `cli.lua`; the pattern matches only the exact shape (a suffix, a position before the chunkname, a label starting with a digit, an empty label, a longer chunkname all propagate). No findings.
+
+- Carried: ruling 3's sentence into `docs/04`, "The command" (done chore); after task 004 merges, move `tests/fixtures/exit_order.lt(.expected)` to `examples/` and drop the `set_exiting` conditional and the `note:` line; runtime follow-ups for task 012 or a chore: the default `destroyerror` handler flushes stdout before writing stderr; an error through `coroutine.wrap` shows the runtime's wrapper frames above the main chunk in the traceback.
