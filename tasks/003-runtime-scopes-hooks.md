@@ -1,12 +1,12 @@
 ---
 id: 003
 title: Runtime: scope records, hooks
-status: in-progress
+status: review
 depends: [002]
 branch: task/003-runtime-scopes-hooks
 pr:
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -248,3 +248,13 @@ what the code does and why, for the reviewer and the human to decide.
   every load path tried (45 to 73 ns against master's 25), and was
   reverted: task 002's benchmarks must stay within the threshold. The
   scope loop's single entry and the single-anchor unlink stay loop-free.
+
+### Round 1: APPROVE
+
+Suite on `58c3447`: unit 202/202 under lua5.1 and luajit (five runs, no flakiness in the eleven latent cases), conformance 5/5 under both, lint clean (27 files). `make bench BASE=master` twice: nothing marked among task 002's, the transpiler's and the plain benchmarks; in-process `plain/transpiled` 0.978 to 1.026. Replacements against master's C originals, ns per 10 operations, Lua 5.1 / LuaJIT: `scope/pcall-empty` 1204 and 1230 vs 534 / 25.5 and 27.0 vs 21 (marked once); `scope/pcall-error` 2162 and 2139 vs 1227 / parity; `scope/resume-yield` 1760 and 1766 vs 752 / 641 vs 477 and 484 (marked both runs, both hosts). The orchestrator's decision: the forced cost of the catch-site design, recorded in `docs/03`, "Forced, and measured". Wrapper shape judged minimal: a wrapper and its continuation, two Lua vararg frames (a single frame cannot inspect `ok` without packing), +72 ns per `pcall` and +101 ns per `resume` on 5.1, +0.5 and +1.6 ns on LuaJIT. Trace aborts and the bisection confirmed: 37 warm-up aborts at the tombstone loop then compiled; the abort-free variant makes `runtime/move` 46 vs 25 ns; the loop is the right trade. Traced by hand: a scoped block with hooks and dependents unwound by `pcall` (`h2, a, b, h1`, tombstone at the `enter` line); nested coroutines main, A, B with records and yields at every level and B raising; a `__destroy` resuming a raising coroutine during a scope exit; yield across `pcall` under both hosts.
+
+- F1 (non-blocking): `lifetime.exit(nil, …)` on an empty stack pops before `rec.deps` raises, leaving `stack.n` at -1. Fix in task 004: move the pop after the `rec.deps` read (free). `exit` is emitter-facing.
+- F2 (non-blocking): nested-coroutine stack swapping is covered only by the reviewer's trace. Task 004 adds the main, A, B case.
+- Question for the spec: `f !@ lifetime.reachable` makes a hook with no anchor and no term that renders `()` and never runs; `docs/02`, "Hooks", says the collector may run it, `docs/03`, "The sentinel", says never a hook. Settled by the orchestrator in the done chore: a hook whose formula is `lifetime.reachable` alone carries a sentinel and runs with `"unreachable"` when collected; `format` renders `reachable`; task 004 implements it with the sentinel.
+- Docs brought in line in the done chore: 03 "weak-keyed" (weak in keys and values, each record holds its stack; hidden-catch records in a suspended coroutine die through their sentinels), "one wrapper frame", the marker's texts; 04 `enter` takes the position as a constant `"chunk:line"` string.
+- Follow-ups for task 004 besides F1 and F2: the eleven `tests/test-runtime.lua` cases that hold no reference to dependents with the term (lines 359 to 710); the LuaJIT-only gain of a plain `setmetatable` for an unprotected tombstone (470 to 355 ns on the one-object loop, 3 to 7% cost on 5.1's destroy-heavy benchmarks) left for a decision.
