@@ -4,7 +4,7 @@ title: Emitter: `@` and lists, hooks (`!@`), block epilogues on every exit path
 status: review
 depends: [003, 005]
 branch: task/006-emitter
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/24
 commits:
 review: APPROVE (round 1)
 ---
