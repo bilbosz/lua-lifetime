@@ -1,14 +1,33 @@
 #!/usr/bin/env lua
 -- bin/lifetime: the command. `lifetime build FILE -o OUT`, `lifetime run
--- FILE [ARGS]`. See docs/04-transpiler.md, "The command". Task 007.
+-- FILE [ARGS]` (docs/04-transpiler.md, "The command"; lifetime/cli.lua).
+-- Runs under the standalone `lua5.1` or `luajit`: `lua5.1 bin/lifetime
+-- run FILE` from a checkout, or `lifetime run FILE` once the rockspec has
+-- installed it.
 --
--- When run from a checkout, make `require("lifetime")` find the modules
--- next to this script; the rockspec installs them on the normal path.
-local script = arg and arg[0] or "bin/lifetime"
-local root = script:match("^(.*)[/\\]bin[/\\][^/\\]*$")
-if root then
+-- From a checkout, `require("lifetime")` finds the modules next to this
+-- script, ahead of any installed copy: the directory above bin/ goes
+-- first on `package.path` when it holds lifetime/cli.lua. Installed, the
+-- script's directory holds no lifetime/ and the normal path applies.
+local script = arg and arg[0] or "lifetime"
+local root = (script:match("^(.*)[/\\][^/\\]*$") or ".") .. "/.."
+local probe = io.open(root .. "/lifetime/cli.lua", "rb")
+if probe then
+    probe:close()
     package.path = root .. "/?.lua;" .. root .. "/?/init.lua;" .. package.path
 end
 
-local cli = require("lifetime.cli")
-os.exit(cli.main(arg))
+local status = require("lifetime.cli").main(arg)
+
+-- docs/02-semantics.md, "Program end": after the main scope, "the host
+-- closes the state", which runs the pending finalizers. The standalone
+-- interpreter closes it when this script ends, but `os.exit` on Lua 5.1
+-- does not. So a status of 0 ends the script normally, and a status of 1
+-- raises `nil`: the interpreter reports nothing for a nil error object
+-- (lua.c and luajit.c, `report`), closes the state and exits with
+-- EXIT_FAILURE, 1. A usage error (2) ran nothing and exits at once.
+if status == 1 then
+    error(nil)
+elseif status ~= 0 then
+    os.exit(status)
+end
