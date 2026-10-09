@@ -38,6 +38,20 @@ local function new_logged(log, name, extra)
     return setmetatable({}, mt)
 end
 
+-- Holds `x` for the rest of the suite and returns it. A dependent anchored
+-- with the implicit `reachable` term may be found by the collector before
+-- its anchor dies (task 004 gives it a sentinel, so it would then die
+-- "unreachable" early): where generated code would keep it in a local,
+-- and the test's own frame cannot (a frame an error unwinds, a statement
+-- whose value is not kept), the test holds it here (CLAUDE.md, rule 6:
+-- "If a test needs a strong reference to keep an object alive, the test
+-- holds it"). Tombstones cost their header.
+local held = {}
+local function hold(x)
+    held[#held + 1] = x
+    return x
+end
+
 -- A logging hook function: appends `text (reason)`.
 local function logger(log, text)
     return function(reason)
@@ -234,10 +248,12 @@ test.case("the first destructor error is raised at the exit, after the whole cas
     local log = {}
     local before = depth()
     local s = enter("t.lt:80")
-    attach(new_logged(log, "a", function()
+    -- The dependents carry the `reachable` term, so the test holds them,
+    -- as the generated locals would (CLAUDE.md, rule 6).
+    local a = attach(new_logged(log, "a", function()
         error("a failed", 0)
     end), false, s)
-    attach(new_logged(log, "b", function()
+    local b = attach(new_logged(log, "b", function()
         error("b failed", 0)
     end), false, s)
     local routed = {}
@@ -253,6 +269,7 @@ test.case("the first destructor error is raised at the exit, after the whole cas
     test.assert_deep_eq(log, {"b (anchor)", "a (anchor)"})
     test.assert_deep_eq(routed, {"a: a failed"})
     test.assert_eq(depth(), before, "the record was popped all the same")
+    test.assert_false(lifetime.alive(a) or lifetime.alive(b))
 end)
 
 test.case("a dependent of a record cannot be moved during the scope exit; a fresh object can", function()
@@ -261,13 +278,15 @@ test.case("a dependent of a record cannot be moved during the scope exit; a fres
     local s = enter("t.lt:90")
     local fresh_ok, move_err
     local older = attach({}, false, s)
-    attach(new_logged(log, "x", function()
+    local x = attach(new_logged(log, "x", function()
         fresh_ok = pcall(attach, {}, false, other)
         local ok
         ok, move_err = pcall(attach, older, false, other)
         test.assert_false(ok)
-    end), false, s)
+    end), false, s) -- held: rule 6
     exit(s, "t.lt:90")
+    test.assert_deep_eq(log, {"x (anchor)"})
+    test.assert_false(lifetime.alive(x))
     test.assert_true(fresh_ok)
     test.assert_true(move_err:find("attempt to move", 1, true) ~= nil, move_err)
 end)
@@ -740,9 +759,9 @@ test.case("case 5: pcall unwinds the records pushed since it began, innermost fi
     local before = depth()
     local ok, err = pcall(function()
         local outer = enter("t.lt:160")
-        attach(new_logged(log, "x"), false, outer)
+        hold(attach(new_logged(log, "x"), false, outer))
         local inner = enter("t.lt:158")
-        attach(new_logged(log, "y"), false, inner)
+        hold(attach(new_logged(log, "y"), false, inner))
         log[#log + 1] = "raise"
         error("boom")
     end)
@@ -771,7 +790,7 @@ test.case("records of an enclosing block outside the pcall are not unwound", fun
     local keep = attach(new_logged(log, "outside"), false, outside)
     pcall(function()
         local s = enter("t.lt:185")
-        attach(new_logged(log, "inside"), false, s)
+        hold(attach(new_logged(log, "inside"), false, s))
         error("boom")
     end)
     test.assert_deep_eq(log, {"inside (anchor)"})
@@ -785,9 +804,9 @@ test.case("case 5: xpcall's handler runs at the raise point, before any record i
     local before = depth()
     local ok, err = xpcall(function()
         local outer = enter("t.lt:200")
-        attach(new_logged(log, "x"), false, outer)
+        hold(attach(new_logged(log, "x"), false, outer))
         local inner = enter("t.lt:199")
-        attach(new_logged(log, "y"), false, inner)
+        hold(attach(new_logged(log, "y"), false, inner))
         error("boom", 0)
     end, function(e)
         log[#log + 1] = "handler"
@@ -808,11 +827,11 @@ test.case("case 5: a destructor error during the unwind goes to destroyerror; th
     end, function()
         ok, err = pcall(function()
             local outer = enter("t.lt:220")
-            attach(new_logged(log, "x"), false, outer)
+            hold(attach(new_logged(log, "x"), false, outer))
             local inner = enter("t.lt:219")
-            attach(new_logged(log, "d", function()
+            hold(attach(new_logged(log, "d", function()
                 error("d", 0)
-            end), false, inner)
+            end), false, inner))
             error("boom", 0)
         end)
     end)
@@ -872,14 +891,14 @@ test.case("case 5a: a record a hidden catch left behind dies at the next exit th
     local log = {}
     local before = depth()
     local outer = enter("t.lt:240")
-    attach(new_logged(log, "outer x"), false, outer)
+    hold(attach(new_logged(log, "outer x"), false, outer))
     -- `hidden_pcall` is the original pcall, as captured into a local before
     -- `lifetime` was required: the runtime does not see this catch.
     local ok = hidden_pcall(function()
         local r = enter("t.lt:236")
-        attach(new_logged(log, "r y"), false, r)
+        hold(attach(new_logged(log, "r y"), false, r))
         local r2 = enter("t.lt:235")
-        attach(new_logged(log, "r2 z"), false, r2)
+        hold(attach(new_logged(log, "r2 z"), false, r2))
         error("boom")
     end)
     test.assert_false(ok)
@@ -895,14 +914,14 @@ test.case("an exit that unwinds hidden records raises the first destructor error
     local routed = {}
     local before = depth()
     local outer = enter("t.lt:260")
-    attach(new_logged(log, "outer", function()
+    hold(attach(new_logged(log, "outer", function()
         error("outer failed", 0)
-    end), false, outer)
+    end), false, outer))
     hidden_pcall(function()
         local r = enter("t.lt:255")
-        attach(new_logged(log, "left", function()
+        hold(attach(new_logged(log, "left", function()
             error("left failed", 0)
-        end), false, r)
+        end), false, r))
         error("boom")
     end)
     local ok, err
@@ -923,7 +942,7 @@ test.case("a destructor body that raises with records of its own has them unwoun
     local before = depth()
     local root = new_logged(log, "root", function()
         local s = enter("t.lt:270")
-        attach(new_logged(log, "inner"), false, s)
+        hold(attach(new_logged(log, "inner"), false, s))
         error("root failed", 0)
     end)
     lifetime.of(root)
@@ -944,7 +963,7 @@ test.case("case 4: a record in a coroutine survives a yield and dies at its exit
     local main_x = attach(new_logged(log, "main x"), false, main)
     local co = coroutine.create(function()
         local s = enter("t.lt:295")
-        attach(new_logged(log, "x"), false, s)
+        hold(attach(new_logged(log, "x"), false, s))
         test.assert_eq(depth(), 1, "the coroutine has a stack of its own")
         coroutine.yield("yielded")
         log[#log + 1] = "resumed"
@@ -969,12 +988,12 @@ test.case("case 5b: a coroutine that raises has its records unwound before resum
     local log = {}
     local before = depth()
     local main = enter("t.lt:330")
-    attach(new_logged(log, "main"), false, main)
+    hold(attach(new_logged(log, "main"), false, main))
     local co = coroutine.create(function()
         local s = enter("t.lt:325")
-        attach(new_logged(log, "z"), false, s)
+        hold(attach(new_logged(log, "z"), false, s))
         local inner = enter("t.lt:324")
-        attach(new_logged(log, "w"), false, inner)
+        hold(attach(new_logged(log, "w"), false, inner))
         coroutine.yield()
         error("boom", 0)
     end)
@@ -994,7 +1013,7 @@ test.case("case 5b: a coroutine.wrap function unwinds the coroutine's records, t
     local before = depth()
     local w = coroutine.wrap(function()
         local s = enter("t.lt:345")
-        attach(new_logged(log, "z"), false, s)
+        hold(attach(new_logged(log, "z"), false, s))
         coroutine.yield(1, nil, 3)
         error("boom", 0)
     end)
@@ -1015,9 +1034,9 @@ test.case("an error in a coroutine's destructor during its unwind goes to destro
     end, function()
         ok, err = coroutine.resume(coroutine.create(function()
             local s = enter("t.lt:360")
-            attach(new_logged({}, "z", function()
+            hold(attach(new_logged({}, "z", function()
                 error("z failed", 0)
-            end), false, s)
+            end), false, s))
             error("boom", 0)
         end))
     end)
@@ -1031,7 +1050,7 @@ test.case("a refused resume (a running coroutine resuming itself) leaves its sta
     local co
     co = coroutine.create(function()
         local s = enter("t.lt:380")
-        attach(new_logged(log, "x"), false, s)
+        hold(attach(new_logged(log, "x"), false, s))
         local ok, err = coroutine.resume(co)
         log[#log + 1] = tostring(ok) .. " " .. tostring(err):gsub("^.*: ", "")
         exit(s, "t.lt:380")
