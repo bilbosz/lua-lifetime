@@ -1,12 +1,12 @@
 ---
 id: 005
 title: Lexer and parser: Lua 5.1 plus `@`, the list form, the hook operator `!@`, `lifetime.scope`
-status: in-progress
+status: review
 depends: [001, 010]
 branch: task/005-lexer-and-parser
 pr:
 commits:
-review:
+review: APPROVE (round 2)
 ---
 
 ## Goal
@@ -183,3 +183,9 @@ Suite on `cc0e598`: unit 85/85 under lua5.1 and luajit, conformance 5/5 under bo
 - Orchestrator's settled items: nested-list wording follows Lua (task text corrected); statement chaining and `{` are the spec change on master (round 2 implements chaining); naming a hook through `@` and parentheses is correct.
 - Reading fixed for `x @ (lifetime.scope).f`: a one-element parenthesised item followed by a suffix is Lua's parenthesised prefixexp (so the inner `lifetime.scope` is the ordinary marker, as `x @ (t).owner` is); stated in `docs/04`, "Grammar" (round 2, wording only).
 - For task 006: `x @ (a)` (`list = true`) and `x @ a` emit identically, and a one-element `(lifetime.scope)` item the same as the bare one; a call or `...` as the last anchor item is truncated to one value. For task 007: the `#` first line is the lexer's; `lifetime build` output has an empty first line in that case.
+
+### Round 2: APPROVE
+
+Suite on `b6f936a`: unit 95/95 under lua5.1 and luajit, conformance 5/5 under both, lint clean (23 files). Bytecode identity of `cli.build` output for 24 repository files; token-mutation differential against `loadstring` under both interpreters, 1600 chunks each, 0 mismatches. Statement chaining traced against `docs/04`, "Grammar": `anchor_statement` is `expr()`'s loop, the node tagged by the outermost operator, the `function (` form still requiring `!@` first; ten uncovered chained programs behave as the grammar reads them. Merge verified: master's four decision entries intact and first; `docs/04` holds master's EBNF, bullet and `{` plus the branch's `goto` bullet. F1's rewording and the `docs/04` sentence are wording only. No findings.
+
+- For task 006: `x @ (a)` and `x @ a` emit identically, a one-element `(lifetime.scope)` item the same as the bare one; a call or `...` as the last anchor item is truncated to one value; a `HookStat` may wrap a chain whose first operator is `@`; the placeholder tests in `tests/test-cli.lua` and `tests/test-emit.lua` ("until task 006 …") are replaced, not deleted silently. For task 007: the `#` first line is the lexer's.
