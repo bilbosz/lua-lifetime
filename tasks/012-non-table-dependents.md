@@ -45,6 +45,15 @@ superseded sentence of "Explicit destruction" (finding F2).
 - `CLAUDE.md`, rule 6: the side table is weak-keyed and its values never
   refer to the key.
 
+- `tasks/007-cli-and-rockspec.md`, review round 2, runtime follow-ups
+  carried here: the default `destroyerror` handler flushes `io.stdout`
+  before writing to stderr, so a merged stream keeps the order of events;
+  and an error re-raised by a `coroutine.wrap` function shows the
+  runtime's wrapper frames above the main chunk in a traceback where the
+  standalone interpreter shows `[C]: in function 'w'` (cosmetic; fix if
+  a level argument or `error(e, 0)` placement removes the frames without
+  changing what `pcall` returns, else record).
+
 ## Acceptance criteria
 
 - `attach(f, false, a)` for a function, coroutine or userdata `f` links

@@ -1,11 +1,11 @@
 ---
 id: 007
 title: CLI `lifetime build` and `lifetime run`; the rockspec installs and runs
-status: review
+status: done
 depends: [006]
 branch: task/007-cli-and-rockspec
 pr: https://github.com/bilbosz/lua-lifetime/pull/26
-commits:
+commits: d68305a2dfbda5eb21fa8fd4a18b0df60b919abb
 review: APPROVE (round 2)
 ---
 

@@ -203,6 +203,12 @@ would have needed one is not part of the language
   to standard output. Exit status 1 and a message on standard error for a
   syntax error, in the shape `FILE:LINE: <message>`.
 - `lifetime run FILE [ARGS]`: transpile and run in the current
+  interpreter. The runtime is loaded first, so the chunk and every
+  module it requires run with the runtime's `pcall`, `xpcall`,
+  `coroutine.resume` and `coroutine.wrap` in place and pay their cost
+  (03, "Performance") even in a chunk that uses no extension syntax; a
+  program that wants no runtime runs its generated file under the
+  interpreter directly. It transpiles and runs in the current
   interpreter with the chunk name `FILE`, `arg` set as the standalone
   interpreter sets it, and the exit flag of 03, "Program end", set after
   the chunk returns. An uncaught error is reported as `lifetime: <message>`
