@@ -175,13 +175,18 @@ each says what the code does and why, for the reviewer and the human.
    runtime.** 04, "The error path", says "A loop whose body owns something
    is still one trace for LuaJIT". Nothing the emitter writes stops the
    trace: with a loop-free stand-in of `attach`, `enter` and `exit`, `luajit
-   -jv` records the generated loop as one trace (`[TRACE 4 scoped.lt:3
-   loop]`). With the real runtime the root trace aborts with `inner loop in
+   -jv` records the generated loop as one trace (`[TRACE 1 scoped.lt:3
+   loop]`, with one side trace back into it, as the hand-written loop
+   with the destructor called by hand). With the real runtime the root trace aborts with `inner loop in
    root trace at init.lua:691`, the tombstone's `for k in next, obj` that
    clears the dying object's fields (task 002), and the loop runs in the
    interpreter with the cascade's own traces linked in. This is the
-   runtime's (task 004 is working in `lifetime/init.lua`), not a change to
-   the semantics; recorded for the runtime and for 03, "Performance".
+   runtime's, not a change to the semantics; recorded for the runtime and
+   for 03, "Performance". Re-checked after the restart on master
+   (a8ceb7f) and on task 004's branch head (0a89c29, the same loop at its
+   `init.lua:860`): the same abort on both. The cost the benchmarks show is the runtime's:
+   `emit/scoped-loop` (generated code) and `scope/loop-one-object` (the
+   same runtime calls written by hand, task 003) read the same.
 7. **`lifetime.alive` is not on master yet** (task 004). Test case 1a
    prints `lifetime.alive(hook)`; `examples/named_hook.lt` shows the dead
    hook through `tostring` (`dead hook hook`) and `getmetatable`
