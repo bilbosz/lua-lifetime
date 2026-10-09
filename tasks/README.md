@@ -53,5 +53,7 @@ during implementation and review.
 | 009 | Treflove trial: transpile the sessions-and-listeners slice described in `xd/docs/notes/xd-in-treflove.md` and run it under LuaJIT | 008 |
 | 010 | Benchmark harness: `make bench`, comparison with plain Lua and with `master` | 001 |
 | 011 | Benchmark harness: bake the two-run rule into `make bench BASE=`, base exit status, README noise range | 010 |
+| 012 | Runtime: functions, coroutines and userdata as dependents (the weak-keyed side table) | 004 |
+| 013 | Benchmark harness: one process per benchmark file | 011 |
 
 Keep this table in sync when adding tasks.
