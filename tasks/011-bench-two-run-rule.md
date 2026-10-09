@@ -4,7 +4,7 @@ title: Benchmark harness: bake the two-run rule into `make bench BASE=`, base ex
 status: review
 depends: [010]
 branch: task/011-bench-two-run-rule
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/12
 commits:
 review: APPROVE (round 2)
 ---
