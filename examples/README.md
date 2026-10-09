@@ -30,14 +30,15 @@ never prints a table address or a float whose rendering could differ. Every
 `NAME.lt` must have a `NAME.lt.expected` and vice versa; a missing partner
 is a collection error that names the missing file.
 
-Each program is transpiled to `build/examples/NAME.lua` and runs under the
-chunk name `examples/NAME.lt`, so a position in an error message reads
-`examples/NAME.lt:LINE:` in both the expected output and an `!error:` line;
-the emitter keeps every statement on its source line to make that true. A
-program without an `!error:` line must exit with status 0; one with it must
-exit with status 1 after the interpreter reports `<interpreter>: <message>`
-on standard error (task 007 switches the runner to `lifetime run`, which
-reports `lifetime: <message>`).
+Each program is transpiled to `build/examples/NAME.lua` (for inspection)
+and runs with `lifetime run examples/NAME.lt` (`bin/lifetime`, from the
+repository root) under the chunk name `examples/NAME.lt`, so a position in
+an error message reads `examples/NAME.lt:LINE:` in both the expected output
+and an `!error:` line; the emitter keeps every statement on its source line
+to make that true. A program without an `!error:` line must exit with
+status 0; one with it must exit with status 1 after `lifetime run` reports
+`lifetime: <message>` on standard error (docs/04-transpiler.md, "The
+command").
 
 Every example must pass; there is no expected-failure marker. The examples
 ported from `xd/examples/` and how each relates to its original are

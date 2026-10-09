@@ -2,13 +2,16 @@
 -- examples/README.md is the contract).
 --
 -- For every examples/NAME.lt with an examples/NAME.lt.expected: transpile
--- it with lifetime.cli.build, write the output under build/examples/, and
--- run it under every interpreter found on PATH among `lua5.1` and
--- `luajit`, with the chunk name `examples/NAME.lt`. Standard output must
+-- it with lifetime.cli.build and write the output under build/examples/
+-- (for inspection, and so that a build failure is reported as one), then
+-- run it with `lifetime run examples/NAME.lt` (bin/lifetime, task 007)
+-- under every interpreter found on PATH among `lua5.1` and `luajit`,
+-- which gives it the chunk name `examples/NAME.lt`. Standard output must
 -- match the .expected file byte for byte; a final `!error: <prefix>` line
 -- in the .expected file means the program must end with an uncaught error
--- whose message starts with the prefix. At least one interpreter must be
--- present, or the run fails loudly. Every example must pass.
+-- whose message starts with the prefix, reported by `lifetime run` as
+-- `lifetime: <message>` with exit status 1. At least one interpreter must
+-- be present, or the run fails loudly. Every example must pass.
 --
 -- Exposes `run(test)` for tests/run.lua, which records one test case per
 -- example and interpreter, plus the collection checks.
@@ -121,10 +124,18 @@ function conformance.parse_expected(data)
     return data, nil
 end
 
--- The driver that runs the generated file under the chunk name the
--- contract requires; a script rather than `-e`, since lua5.1 and luajit
--- set up `arg` differently for `-e` code.
-local DRIVER = "tests/lib/driver.lua"
+-- The command that runs an example under the chunk name the contract
+-- requires (examples/README.md): `<interpreter> bin/lifetime run
+-- examples/NAME.lt`, from the repository root.
+local COMMAND = "bin/lifetime"
+
+-- The message of the uncaught-error report in `stderr`: the rest of its
+-- first line that starts with `lifetime: ` (docs/04-transpiler.md, "The
+-- command"). A destructor error routed to `destroyerror` while the scopes
+-- unwind is written before it, as `destroyerror: ...`.
+function conformance.reported_error(stderr)
+    return ("\n" .. stderr):match("\nlifetime: ([^\n]*)")
+end
 
 -- Run one example under one interpreter. Returns nil on success, or a
 -- message describing the mismatch.
@@ -143,14 +154,17 @@ function conformance.check(name, interpreter)
     os.execute("mkdir -p " .. shell_quote(BUILD_DIR))
     local output_path = BUILD_DIR .. "/" .. name .. ".lua"
     write_file(output_path, generated)
-    local r = run_shell(string.format("%s %s %s %s", interpreter, shell_quote(DRIVER), shell_quote(output_path), shell_quote(source_path)))
+    local r = run_shell(string.format("%s %s run %s", interpreter, shell_quote(COMMAND), shell_quote(source_path)))
     if r.stdout ~= expected_stdout then
         return string.format("stdout differs under %s\n--- expected ---\n%s--- actual ---\n%s--- stderr ---\n%s", interpreter, expected_stdout, r.stdout, r.stderr)
     end
     if expected_error then
-        local message = r.stderr:match("^[^:\n]*: ([^\n]*)") or ""
+        local message = conformance.reported_error(r.stderr)
         if r.status ~= 1 then
             return string.format("expected exit status 1 under %s, got %d; stderr:\n%s", interpreter, r.status, r.stderr)
+        end
+        if not message then
+            return string.format("expected an error reported as \"lifetime: <message>\" under %s; stderr:\n%s", interpreter, r.stderr)
         end
         if message:sub(1, #expected_error) ~= expected_error then
             return string.format("expected an error starting with %q under %s, got %q", expected_error, interpreter, message)

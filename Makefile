@@ -57,7 +57,7 @@ unit:
 conformance:
 	@if [ -z "$(FIRST)" ]; then \
 		echo "make: neither lua5.1 nor luajit found on PATH" >&2; exit 1; fi
-	@echo "== conformance suite (driver: $(FIRST); examples run under every interpreter found)"
+	@echo "== conformance suite (runner: $(FIRST); examples run under every interpreter found)"
 	@$(FIRST) tests/run.lua conformance
 
 lint:

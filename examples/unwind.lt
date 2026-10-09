@@ -94,8 +94,8 @@ print(pcall(wrapped))
 
 -- The main chunk is a block like any other: an uncaught error unwinds its
 -- scope before the error is reported, when the chunk is called through
--- the runtime's `pcall` (tests/lib/driver.lua does, as `lifetime run`
--- will).
+-- the runtime's `pcall`, as `lifetime run` does (docs/04-transpiler.md,
+-- "The command").
 local z = res("z") @ lifetime.scope
 print("last statement", z.name)
 error("uncaught")

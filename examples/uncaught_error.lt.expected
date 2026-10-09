@@ -1,0 +1,6 @@
+calling with	first	second
+raising in	inner
+destroy inner (anchor)
+destroy second (anchor)
+destroy first (anchor)
+!error: examples/uncaught_error.lt:23: x
