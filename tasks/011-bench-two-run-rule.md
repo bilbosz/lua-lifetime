@@ -91,3 +91,13 @@ benchmark within the threshold.
 ## Spec issues found
 
 ## Review log
+
+### Round 1: REQUEST_CHANGES
+
+Suite on `6188b63`: unit 70/70 under lua5.1 and luajit, conformance 5/5 under both, lint clean (23 files). `make bench BASE=master` twice by the reviewer (base `eb17aa6`, identical `lifetime/`): no `SLOWER` mark; cross-process pairings on identical code spanned 0.903 to 1.089; in-process `plain/transpiled` ratio 0.941 to 1.020. Exit-status paths reproduced under dash and bash: failing branch run, base with no line (pairing 1 and pairing 2), base failing some files, failing `compare.lua`.
+
+- F1 (blocking): `lua5.1 tests/run.lua unit` without `make` on PATH fails 4 cases (`make: not found`, status 127) instead of skipping them. Fix: probe `command -v make` once before the "make bench" suite; if absent, print one line and do not register the four cases.
+- Orchestrator's answers 1 to 3 confirmed correct in code: exit 2 asserted with the message; `-` for the median ratio unless both pairings complete; the rest of an interpreter skipped after an empty base run.
+- `BASE_DIR` safety traced: the only `rm -rf` is reachable solely for the literal `build/base`. Subprocess tests leave nothing outside `build/test-bench/` and create no worktree.
+- Nit: `Makefile`, `bench_to`'s `return $$code` returns 0 if the status file vanished; `return $${code:-1}`.
+- Orchestrator's decision on the reviewer's question: a `SLOWER` mark in one invocation is a finding to confirm, not yet a finding; the README states that a mark must appear in two consecutive invocations to count (a mark in one of two is noise), given that both pairings above 1.10 on identical code is a percent-level event per benchmark per invocation. The in-process range is stated as "within 3%, with occasional outliers to 0.94".
