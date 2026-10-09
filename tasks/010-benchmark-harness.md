@@ -93,4 +93,14 @@ the reviewer's threshold is not tripped by a busy machine.
 
 ## Spec issues found
 
+- (implementer, round 1; not a semantic issue, a wording one) The first
+  criterion says "a fixed wall-clock budget". Lua 5.1 has no sub-second
+  wall clock without a dependency (`os.time` has a resolution of one
+  second; LuaJIT's `ffi` is not in Lua 5.1), so the harness times with
+  `os.clock`, the process's CPU time, which for a single-threaded
+  benchmark without I/O advances with the wall clock and leaves out the
+  moments the process is descheduled. Stated in `bench/README.md` and
+  `bench/lib/bench.lua`; the clock is injectable (`options.clock`) if a
+  human prefers another.
+
 ## Review log

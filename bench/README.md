@@ -85,6 +85,12 @@ Beyond the threshold, the plain-Lua benchmarks (`plain/*`) must also keep
 their `ratio` at 1.0 within noise: code that does not use the extension
 pays nothing.
 
+How large the noise is: on the machine where task 010 was written, a
+branch whose `lifetime/` differed from `master` only in comments read
+`branch/base` between 0.95 and 1.08, and six alternating runs of
+`build/generated-5000` (about 2 operations per timed run) spread over
+±5%. A single reading near 1.10 says nothing; two in a row do.
+
 ## The benchmarks
 
 | Name | File | Measures | Baseline |
