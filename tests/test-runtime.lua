@@ -912,13 +912,13 @@ test.case("holes from collected dependents are compacted: the range stays bounde
     fill()
     collectgarbage("collect")
     collectgarbage("collect")
-    local st = state_of(a)
-    test.assert_true(st.seq - st.lo < 300, "range " .. (st.seq - st.lo))
+    local deps = state_of(a).deps
+    test.assert_true(deps.seq - deps.lo < 300, "range " .. (deps.seq - deps.lo))
     test.assert_deep_eq(lifetime.dependents(a), kept)
     -- Every kept dependent's stored sequence number matches its slot.
     for _, x in ipairs(kept) do
         local xs = state_of(x)
-        test.assert_true(rawequal(st.deps[xs[2]], x))
+        test.assert_true(rawequal(deps[xs[2]], x))
     end
     -- The order survives destruction after compaction.
     local log = {}
@@ -961,9 +961,9 @@ test.case("explicit unlinks in any order keep the order; a list emptied by moves
     for _, x in ipairs(expected) do
         attach(x, false, b)
     end
-    local st = state_of(a)
-    test.assert_eq(st.lo, 1)
-    test.assert_eq(st.seq, 1)
+    local deps = state_of(a).deps
+    test.assert_eq(deps.lo, 1)
+    test.assert_eq(deps.seq, 1)
     test.assert_deep_eq(lifetime.dependents(a), {})
 end)
 
@@ -973,8 +973,8 @@ test.case("no compaction during a destroy phase", function()
     local done
     local root = setmetatable({}, {
         __destroy = function()
-            local st = state_of(a)
-            local seq_before = st.seq
+            local deps = state_of(a).deps
+            local seq_before = deps.seq
             -- Fresh objects linked during the phase, then dropped: holes.
             for _ = 1, 200 do
                 attach({}, false, a)
@@ -982,7 +982,7 @@ test.case("no compaction during a destroy phase", function()
             collectgarbage("collect")
             collectgarbage("collect")
             attach({}, false, a)
-            done = st.seq == seq_before + 201
+            done = deps.seq == seq_before + 201
         end
     })
     destroy(root)

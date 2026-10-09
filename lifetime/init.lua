@@ -74,8 +74,12 @@ local held, held_error = false, nil
 -- design's `nil`. The formula is `n` anchors in the array part as pairs
 -- `[2i - 1] = anchor, [2i] = the sequence number under which this object
 -- sits in that anchor's `deps``, plus `reachable`, the implicit term.
--- `deps`, `seq`, `lo` and `limit` are this object's side as an anchor.
--- `name`, `where` and `reason` are what the tombstone's message needs.
+-- `deps` is this object's side as an anchor, created on the first link
+-- (`link`): the weak-valued table of dependents by sequence number, which
+-- also carries the counters `seq`, `lo` and `limit` of the design, so
+-- that a record has eight fields and an object that is never an anchor
+-- pays for none of them. `name`, `where` and `reason` are what the
+-- tombstone's message needs.
 local function new_state(obj)
     local st = {
         false,
@@ -83,9 +87,6 @@ local function new_state(obj)
         n = 0,
         reachable = true,
         deps = false,
-        seq = 1,
-        lo = 1,
-        limit = MIN_LIMIT,
         phase = false,
         phase_id = phase_id,
         name = false,
@@ -203,8 +204,8 @@ end
 -- densely from `lo`, in order, updates each dependent's stored sequence
 -- number, and resets `seq`." Called from `link` only, never during a
 -- destroy phase. Returns the next free sequence number.
-local function compact(anchor, ast)
-    local deps, lo, seq = ast.deps, ast.lo, ast.seq
+local function compact(anchor, deps)
+    local lo, seq = deps.lo, deps.seq
     local live = 0
     for i = lo, seq - 1 do
         if deps[i] ~= nil then
@@ -231,12 +232,12 @@ local function compact(anchor, ast)
             end
         end
         seq = to
-        ast.seq = seq
+        deps.seq = seq
     end
     -- Twice the range after the scan, so the next scan comes after as
     -- many links again as this one cost.
     local limit = 2 * (seq - lo)
-    ast.limit = limit > MIN_LIMIT and limit or MIN_LIMIT
+    deps.limit = limit > MIN_LIMIT and limit or MIN_LIMIT
     return seq
 end
 
@@ -245,15 +246,15 @@ end
 local function link(anchor, ast, obj)
     local deps = ast.deps
     if not deps then
-        deps = setmetatable({}, WEAK_VALUES)
+        deps = setmetatable({seq = 1, lo = 1, limit = MIN_LIMIT}, WEAK_VALUES)
         ast.deps = deps
     end
-    local s = ast.seq
-    if s - ast.lo >= ast.limit and phase_depth == 0 then
-        s = compact(anchor, ast)
+    local s = deps.seq
+    if s - deps.lo >= deps.limit and phase_depth == 0 then
+        s = compact(anchor, deps)
     end
     deps[s] = obj
-    ast.seq = s + 1
+    deps.seq = s + 1
     return s
 end
 
@@ -269,23 +270,23 @@ local function unlink(ast, s)
         return
     end
     deps[s] = nil
-    local lo, seq = ast.lo, ast.seq
+    local lo, seq = deps.lo, deps.seq
     if s == seq - 1 then
         s = s - 1
         while s >= lo and deps[s] == nil do
             s = s - 1
         end
         if s < lo then
-            ast.lo, ast.seq = 1, 1
+            deps.lo, deps.seq = 1, 1
         else
-            ast.seq = s + 1
+            deps.seq = s + 1
         end
     elseif s == lo then
         s = s + 1
         while s < seq and deps[s] == nil do
             s = s + 1
         end
-        ast.lo = s
+        deps.lo = s
     end
 end
 
@@ -348,7 +349,7 @@ local function decide(obj, st, id)
     end
     local deps = st.deps
     if deps then
-        for i = st.seq - 1, st.lo, -1 do
+        for i = deps.seq - 1, deps.lo, -1 do
             local dep = deps[i]
             if dep ~= nil then
                 local dst = rawget(dep, STATE)
@@ -392,7 +393,7 @@ local function destroy_object(obj, st, reason, where, skip_body)
     -- only empties slots.
     local deps = st.deps
     if deps then
-        for i = st.seq - 1, st.lo, -1 do
+        for i = deps.seq - 1, deps.lo, -1 do
             local dep = deps[i]
             if dep ~= nil then
                 local dst = rawget(dep, STATE)
@@ -580,8 +581,39 @@ end
 -- carries it when any element does ("The implicit `reachable` term").
 -- The term is only recorded here; its effect is task 004's.
 function lifetime.attach(obj, pin, ...)
-    -- Step 1: an object.
+    local count = select("#", ...)
     local t = type(obj)
+
+    -- The common case, without a call: one anchor, a live table the
+    -- runtime has seen, and an object that is new to the runtime or alive
+    -- with one anchor, outside any destroy phase. It does exactly what
+    -- the general path below does for these arguments; anything else
+    -- falls through to it.
+    if count == 1 and t == "table" and phase_depth == 0 then
+        local a = ...
+        local ast = type(a) == "table" and rawget(a, STATE)
+        if ast and not ast.phase then
+            local st = rawget(obj, STATE)
+            if st == nil then
+                if getmetatable(obj) ~= "lifetime" then
+                    st = new_state(obj)
+                    st[1] = a
+                    st[2] = link(a, ast, obj)
+                    st.n = 1
+                    st.reachable = not pin
+                    return obj
+                end
+            elseif not st.phase and st.n == 1 then
+                unlink(rawget(st[1], STATE), st[2])
+                st[1] = a
+                st[2] = link(a, ast, obj)
+                st.reachable = not pin
+                return obj
+            end
+        end
+    end
+
+    -- Step 1: an object.
     if t ~= "table" then
         if t == "function" or t == "thread" or t == "userdata" then
             not_implemented("attach")
@@ -590,7 +622,6 @@ function lifetime.attach(obj, pin, ...)
     end
 
     -- Step 2: every element, left to right, before anything changes.
-    local count = select("#", ...)
     local term = false
     if count == 1 then
         term = check_anchor((...))
@@ -707,7 +738,7 @@ function lifetime.dependents(obj)
     local deps = st and st.deps
     if deps then
         local n = 0
-        for i = st.lo, st.seq - 1 do
+        for i = deps.lo, deps.seq - 1 do
             local dep = deps[i]
             if dep ~= nil then
                 n = n + 1

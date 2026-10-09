@@ -100,6 +100,11 @@ BASE=master`, none beyond the threshold, and six alternating runs of
 | `build/generated-5000` | `bench-build.lua` | `cli.build` on a generated 5 000-line plain Lua file | `loadstring` of the same text |
 | `build/lifetime-largest` | `bench-build.lua` | `cli.build` on the largest file under `lifetime/` (today `lifetime/parser.lua`); cited by the `jit.off` comments in `lifetime/parser.lua` and `lifetime/emit.lua` | `loadstring` of the same text |
 | `plain/transpiled` | `bench-plain.lua` | running the transpiled output of `bench/plain/workload.lua` | running the same source loaded directly; ratio 1.0 within noise |
+| `runtime/attach-destroy-100` | `bench-runtime.lua` | an anchor, 100 dependents with a `__destroy` attached, then `destroy(anchor)` | an array of the same 100 children and an explicit close loop, newest first |
+| `runtime/move` | `bench-runtime.lua` | one move of an object between two anchors | moving it between two sets |
+| `runtime/cascade-tree` | `bench-runtime.lua` | a three-level tree (1 + 10 + 100) built with `attach` and destroyed from the root | the same tree of arrays closed by a recursive loop |
+| `runtime/dependents-100` | `bench-runtime.lua` | `lifetime.dependents` of an anchor with 100 dependents | copying an array of 100 |
+| `runtime/attach-first` | `bench-runtime.lua` | `attach` of a fresh table to a long-lived anchor, dropped at once (holes and compaction) | storing a fresh table in a weak-valued array |
 
 ## Adding a benchmark
 
