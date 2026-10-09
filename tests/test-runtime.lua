@@ -383,14 +383,21 @@ end)
 test.case("dependents die newest first, each with its whole subtree before the next", function()
     local log = {}
     local root = new_logged(log, "root")
+    -- Every dependent carries the `reachable` term, so the test holds each
+    -- one: an unreferenced dependent may be collected before `destroy`
+    -- (CLAUDE.md, rule 6: "If a test needs a strong reference to keep an
+    -- object alive, the test holds it").
     local x = attach(new_logged(log, "x"), false, root)
-    attach(new_logged(log, "x1"), false, x)
-    attach(new_logged(log, "x2"), false, x)
+    local x1 = attach(new_logged(log, "x1"), false, x)
+    local x2 = attach(new_logged(log, "x2"), false, x)
     local y = attach(new_logged(log, "y"), false, root)
-    attach(new_logged(log, "y1"), false, y)
-    attach(new_logged(log, "z"), false, root)
+    local y1 = attach(new_logged(log, "y1"), false, y)
+    local z = attach(new_logged(log, "z"), false, root)
     destroy(root)
     test.assert_deep_eq(log, {"root (destroy)", "z (anchor)", "y (anchor)", "y1 (anchor)", "x (anchor)", "x2 (anchor)", "x1 (anchor)"})
+    for _, dead in ipairs({x1, x2, y1, z}) do
+        test.assert_eq(getmetatable(dead), "dead")
+    end
 end)
 
 test.case("destroying an object does not affect its anchors", function()

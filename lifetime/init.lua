@@ -8,23 +8,30 @@
 --
 -- Task 002: anchors, the state record, `attach`, `destroy`, `discard`,
 -- the two-phase cascade, tombstones, `destroyerror`, lifetime values
--- (`of`, `reachable`, `format`), `dependents`, `is_state`. Task 003 adds
--- scope records and hooks; task 004 tokens, `pin`, `alive` and the
--- sentinel.
+-- (`of`, `reachable`, `format`), `dependents`, `is_state`. Task 003:
+-- scope records (`enter`, `exit`), the per-coroutine scope stack and the
+-- replacements for `pcall`, `xpcall`, `coroutine.resume` and
+-- `coroutine.wrap` that unwind it on the error path, the `lifetime.scope`
+-- marker, hooks (`hook`) and the anchor's `strong` table. Task 004:
+-- tokens, `pin`, `alive` and the sentinel.
 --
 -- Rules this file keeps (CLAUDE.md, "Technical decisions"; rule 6):
 --
 -- * State lives inside the object, under the private key STATE. There is
 --   no side table keyed by an object.
 -- * An anchor's `deps` table is weak-valued: the runtime never keeps a
---   dependent alive. A dependent's record holds its anchors strongly.
+--   dependent alive. Its `strong` table holds what the language says the
+--   anchor keeps alive (hooks and pinned dependents) and nothing else. A
+--   dependent's record holds its anchors strongly.
 -- * Dependents are walked by a numeric loop over the sequence range
 --   `seq - 1 .. lo`, newest first, skipping holes; never `ipairs`, never
 --   a sort. Holes are compacted on `link`, amortised, never during a
 --   destroy phase.
 -- * Nothing here keeps a strong reference to a user object except a
---   dependent's record (its anchors) and lifetime values (their anchors),
---   both of which the spec makes strong.
+--   dependent's record (its anchors), lifetime values (their anchors),
+--   an anchor's `strong` table (its hooks and pinned dependents) and the
+--   scope stacks (the active scope records), all of which the spec makes
+--   strong.
 
 local lifetime = {}
 
@@ -48,6 +55,14 @@ local WEAK_VALUES = {__mode = "v"}
 -- links that grew the range.
 local MIN_LIMIT = 16
 
+-- An emptied dependents list, kept for the next anchor's first link: the
+-- `deps` and `strong` tables of a scope record whose exit left both
+-- empty. A loop body that anchors to its block then allocates no list per
+-- iteration (docs/03-runtime.md, "Performance": "a block with a scope
+-- record: one record (a small table) per entry"). Empty tables refer to
+-- nothing, so this holds no user object (CLAUDE.md, rule 6).
+local spare_deps, spare_strong = false, false
+
 -- The phase guard (docs/03-runtime.md, "The cascade", "Phase guard").
 -- `phase_depth` counts the destroy phases running; `phase_id` is the id
 -- of the innermost one (0 when none runs); `phase_counter` hands out ids.
@@ -64,6 +79,21 @@ local phase_depth, phase_id, phase_counter = 0, 0, 0
 -- destructors and `destroyerror`"): whether an error is held, and which.
 -- Saved and restored around a nested cascade, which is one of its own.
 local held, held_error = false, nil
+
+-- The scope stack of the running coroutine (docs/03-runtime.md, "The
+-- scope stack and the error path": "`S.stack` is the stack of the
+-- running coroutine, and the main thread's is the initial one"), a
+-- plain table `{n = depth, [1 .. n] = records}`. An upvalue rather than
+-- a field, so `enter` and `exit` read it without a table lookup; the
+-- `coroutine.resume` and `coroutine.wrap` replacements swap it for the
+-- duration of a resume ("Error path" below).
+local main_stack = {n = 0}
+local stack = main_stack
+
+-- Unwinds the records of a stack above a depth on the error path;
+-- defined with the scope records below, called from the cascade where
+-- the runtime's own protected calls catch an error.
+local unwind
 
 ------------------------------------------------------------------------
 -- State records
@@ -154,22 +184,47 @@ lifetime.reachable = REACHABLE
 -- Tombstones
 ------------------------------------------------------------------------
 
+-- `tostring(obj)` as it reads without a metatable: `table: 0x…`.
+local function raw_tostring(obj)
+    local mt = debug_getmetatable(obj)
+    debug_setmetatable(obj, nil)
+    local name = tostring(obj)
+    debug_setmetatable(obj, mt)
+    return name
+end
+
+-- docs/02-semantics.md, "Named hooks": "`tostring(hook)` is `hook NAME`
+-- ... A hook bound any other way ... is anonymous and `tostring` gives
+-- `hook: 0x…`". A hook's record keeps the name it was created with in
+-- `name` (fixed at creation, "storing the hook somewhere else later does
+-- not rename it"), and the text is built when asked for, so a hook costs
+-- no string per creation (docs/03-runtime.md, "Hooks": "Naming costs one
+-- string constant per creation site and nothing per call").
+local function hook_name(h, st)
+    local name = st.name
+    if name then
+        return "hook " .. tostring(name)
+    end
+    -- `table: 0x…` without the `table: `.
+    return "hook: " .. raw_tostring(h):sub(8)
+end
+
 -- `<name>` of a tombstone: `tostring(obj)` before death
 -- (docs/02-semantics.md, "Tombstones"). An object whose metatable had a
 -- `__tostring` had its name captured when it started dying (`decide`);
 -- for any other table `tostring` gives `table: 0x…`, which depends only
 -- on identity, so it is computed here, on the error path, instead of
--- allocating a string per tombstone.
+-- allocating a string per tombstone. A hook's record has the field `fn`
+-- (`false` once dead) and renders through `hook_name`.
 local function name_of(obj, st)
+    if st.fn ~= nil then
+        return hook_name(obj, st)
+    end
     local name = st.name
     if name then
         return tostring(name)
     end
-    local mt = debug_getmetatable(obj)
-    debug_setmetatable(obj, nil)
-    name = tostring(obj)
-    debug_setmetatable(obj, mt)
-    return name
+    return raw_tostring(obj)
 end
 
 -- `attempt to <verb> a dead table (<name>, died at <where>, <reason>)`
@@ -196,30 +251,140 @@ DEAD_MT.__tostring = function(obj)
 end
 
 ------------------------------------------------------------------------
+-- Runtime objects: hooks, scope records, the `lifetime.scope` marker
+------------------------------------------------------------------------
+
+-- docs/02-semantics.md, "Hooks: the `!@` operator": "A hook is a table
+-- with the private metatable `"hook"`: `getmetatable(h) == "hook"`;
+-- calling or indexing it raises `attempt to call a hook value` /
+-- `attempt to index a hook value`." Assigning a field is indexing, as
+-- for a token ("Tokens": "indexing or assigning a field raises `attempt
+-- to index a token value`"). The hook table holds nothing but its state
+-- record, so every user index reaches these.
+local HOOK_MT = {__metatable = "hook"}
+HOOK_MT.__index = function()
+    error("attempt to index a hook value", 2)
+end
+HOOK_MT.__newindex = HOOK_MT.__index
+HOOK_MT.__call = function()
+    error("attempt to call a hook value", 2)
+end
+HOOK_MT.__tostring = function(h)
+    return hook_name(h, rawget(h, STATE))
+end
+
+-- docs/03-runtime.md, "The state of an object": scope records are
+-- runtime tables with "a private metatable (`__metatable` set to ...
+-- `"scope"`)"; docs/02-semantics.md, "The `lifetime` table":
+-- `lifetime.format` renders a scope as `scope`, and object anchors render
+-- through `tostring`, so a formula that mentions a scope reads
+-- `(scope, reachable)`.
+local SCOPE_MT = {
+    __metatable = "scope",
+    __tostring = function()
+        return "scope"
+    end
+}
+
+-- docs/03-runtime.md, "Scope records": "The runtime's own field
+-- `lifetime.scope` is ... a table with a private metatable whose
+-- `__index`, `__newindex` and `__call` raise `attempt to index
+-- lifetime.scope`, whose `__tostring` is `lifetime.scope`, and which
+-- `attach` refuses with `attempt to anchor to lifetime.scope through a
+-- variable`. It is never a scope record."
+--
+-- The marker carries a state record whose phase is `"marker"`. Every
+-- path that anchors to an object or moves one already falls off its fast
+-- path on a set phase, so the refusals below cost the common case
+-- nothing, and the marker can never be given a state record of the
+-- ordinary kind (and so become an anchor) by `of`, `destroy` or `@`.
+local MARKER_MESSAGE = "attempt to anchor to lifetime.scope through a variable"
+local MARKER_MT = {__metatable = "lifetime.scope"}
+MARKER_MT.__index = function()
+    error("attempt to index lifetime.scope", 2)
+end
+MARKER_MT.__newindex = MARKER_MT.__index
+MARKER_MT.__call = MARKER_MT.__index
+MARKER_MT.__tostring = function()
+    return "lifetime.scope"
+end
+local MARKER = {}
+MARKER[STATE] = {
+    false,
+    false,
+    n = 0,
+    reachable = true,
+    deps = false,
+    phase = "marker",
+    phase_id = 0,
+    name = false,
+    where = false,
+    reason = false
+}
+setmetatable(MARKER, MARKER_MT)
+lifetime.scope = MARKER
+
+-- The argument error for something `destroy`, `discard`, `lifetime.of`
+-- and `lifetime.format` cannot take that is a runtime table but not an
+-- object of the language: the marker, or a scope record reached through
+-- a lifetime value ("`destroy` of a scope is impossible"). Error path
+-- only; nil for everything else.
+local function not_an_object(obj)
+    local mt = debug_getmetatable(obj)
+    if mt == MARKER_MT then
+        return "lifetime.scope"
+    elseif mt == SCOPE_MT then
+        return "scope"
+    end
+    return nil
+end
+
+------------------------------------------------------------------------
 -- Dependents lists
 ------------------------------------------------------------------------
+
+-- docs/03-runtime.md, "The state of an object": an anchor's dependents
+-- live in two tables that share one sequence counter: `deps`, weak-valued,
+-- for every dependent whose formula carries the `reachable` term, and
+-- `strong`, strong-valued, for hooks and pinned dependents ("A hook is
+-- pinned by its anchor ... the anchor is what holds it";
+-- docs/05-decisions.md, "Pinned dependents are held by their anchors").
+-- A sequence number is in one of the two at most, and every walk merges
+-- them by sequence number. The counters `seq`, `lo` and `limit` live in
+-- `deps`, which every anchor has from its first link. `strong` is created
+-- on the first pinned link; a plain record does not carry the field until
+-- then (hooks and scope records do), so an anchor that never holds a hook
+-- pays nothing for it.
 
 -- docs/03-runtime.md, "The state of an object": "When holes outnumber
 -- live entries the runtime compacts: it renumbers the live entries
 -- densely from `lo`, in order, updates each dependent's stored sequence
 -- number, and resets `seq`." Called from `link` only, never during a
 -- destroy phase. Returns the next free sequence number.
-local function compact(anchor, deps)
+local function compact(anchor, ast, deps)
+    local strong = ast.strong
     local lo, seq = deps.lo, deps.seq
     local live = 0
     for i = lo, seq - 1 do
-        if deps[i] ~= nil then
+        if deps[i] ~= nil or (strong and strong[i] ~= nil) then
             live = live + 1
         end
     end
     if seq - lo - live > live then
+        -- Every slot in `[to, from)` is empty in both tables when `from`
+        -- is reached, so an entry moves down within its own table.
         local to = lo
         for from = lo, seq - 1 do
+            local list = deps
             local dep = deps[from]
+            if dep == nil and strong then
+                list = strong
+                dep = strong[from]
+            end
             if dep ~= nil then
                 if from ~= to then
-                    deps[to] = dep
-                    deps[from] = nil
+                    list[to] = dep
+                    list[from] = nil
                     local dst = rawget(dep, STATE)
                     for j = 1, 2 * dst.n, 2 do
                         if rawequal(dst[j], anchor) and dst[j + 1] == from then
@@ -242,39 +407,82 @@ local function compact(anchor, deps)
 end
 
 -- Link `obj` at the end of `anchor`'s list; returns its sequence number
--- (docs/03-runtime.md, "Attachment", step 4).
-local function link(anchor, ast, obj)
+-- (docs/03-runtime.md, "Attachment", step 4). `pinned` (a hook, or a
+-- formula without the `reachable` term) puts it in `strong`: "Hooks and
+-- pinned dependents go into `strong` instead of `dependents` under the
+-- same sequence counter".
+local function link(anchor, ast, obj, pinned)
     local deps = ast.deps
     if not deps then
-        deps = setmetatable({seq = 1, lo = 1, limit = MIN_LIMIT}, WEAK_VALUES)
+        deps = spare_deps
+        if deps then
+            spare_deps = false
+        else
+            deps = setmetatable({seq = 1, lo = 1, limit = MIN_LIMIT}, WEAK_VALUES)
+        end
         ast.deps = deps
     end
     local s = deps.seq
     if s - deps.lo >= deps.limit and phase_depth == 0 then
-        s = compact(anchor, deps)
+        s = compact(anchor, ast, deps)
     end
-    deps[s] = obj
+    if pinned then
+        local strong = ast.strong
+        if not strong then
+            strong = spare_strong
+            if strong then
+                spare_strong = false
+            else
+                strong = {}
+            end
+            ast.strong = strong
+        end
+        strong[s] = obj
+    else
+        deps[s] = obj
+    end
     deps.seq = s + 1
     return s
 end
 
 -- Unlink the entry `s` from an anchor's list (docs/03-runtime.md,
--- "Attachment", step 3, and "The cascade", the tombstone step). The
--- range shrinks when the entry was at either end, so attach-then-destroy
--- in either order leaves no holes to compact; a list that empties starts
--- again at 1. Neither renumbers anything, so it is safe while a cascade
--- walks this list: the walk's bounds are fixed when it starts.
-local function unlink(ast, s)
+-- "Attachment", step 3, and "The cascade", the tombstone step), whichever
+-- of the two tables holds it: `strong` when `pinned`, which the caller
+-- reads from the dependent's record (a dependent is in its anchors'
+-- `strong` tables exactly when its formula has no `reachable` term,
+-- `st.reachable == false`). The range shrinks when the entry was at
+-- either end, so attach-then-destroy in either order leaves no holes to
+-- compact; a list that empties starts again at 1. Neither renumbers
+-- anything, so it is safe while a cascade walks this list: the walk's
+-- bounds are fixed when it starts.
+local function unlink(ast, s, pinned)
     local deps = ast.deps
     if not deps then
         return
     end
-    deps[s] = nil
+    -- `strong` is read only when needed: the entry is in it, or a shrink
+    -- loop is about to walk a slot `deps` does not hold. A move between
+    -- anchors without hooks reads nothing more than before `strong`
+    -- existed (bench/README.md, `runtime/move`). It is read before a
+    -- loop, never inside one, so its type is fixed while the loop runs
+    -- (a local that changes type inside a loop makes LuaJIT abort the
+    -- trace: "persistent type instability").
+    if pinned then
+        local strong = ast.strong
+        if strong then
+            strong[s] = nil
+        end
+    else
+        deps[s] = nil
+    end
     local lo, seq = deps.lo, deps.seq
     if s == seq - 1 then
         s = s - 1
-        while s >= lo and deps[s] == nil do
-            s = s - 1
+        if s >= lo and deps[s] == nil then
+            local strong = ast.strong
+            while s >= lo and deps[s] == nil and not (strong and strong[s] ~= nil) do
+                s = s - 1
+            end
         end
         if s < lo then
             deps.lo, deps.seq = 1, 1
@@ -283,8 +491,11 @@ local function unlink(ast, s)
         end
     elseif s == lo then
         s = s + 1
-        while s < seq and deps[s] == nil do
-            s = s + 1
+        if s < seq and deps[s] == nil then
+            local strong = ast.strong
+            while s < seq and deps[s] == nil and not (strong and strong[s] ~= nil) do
+                s = s + 1
+            end
         end
         deps.lo = s
     end
@@ -311,8 +522,12 @@ local function call_destroyerror(obj, err)
         default_destroyerror(obj, err)
         return
     end
+    local depth = stack.n
     local ok, err2 = pcall(handler, obj, err)
     if not ok then
+        if stack.n > depth then
+            unwind(stack, depth)
+        end
         io.stderr:write("destroyerror: ", tostring(err), "\n", "destroyerror: error in destroyerror (", tostring(err2), ")\n")
     end
 end
@@ -337,20 +552,30 @@ end
 -- has a `__tostring` gets its tombstone name now (docs/03-runtime.md,
 -- "The state of an object": "`name`: `tostring(obj)` captured when the
 -- object starts dying"), while every object of the cascade is alive.
+--
+-- The dependents are the merge of `deps` and `strong` by sequence number.
+-- A hook needs no capture: its name is fixed at creation (`hook_name`).
 local function decide(obj, st, id)
     st.phase = "dying"
     st.phase_id = id
     local mt = debug_getmetatable(obj)
-    if mt ~= nil and rawget(mt, "__tostring") ~= nil then
+    if mt ~= nil and mt ~= HOOK_MT and rawget(mt, "__tostring") ~= nil then
+        local depth = stack.n
         local ok, name = pcall(tostring, obj)
         if ok then
             st.name = name
+        elseif stack.n > depth then
+            unwind(stack, depth)
         end
     end
     local deps = st.deps
     if deps then
+        local strong = st.strong
         for i = deps.seq - 1, deps.lo, -1 do
             local dep = deps[i]
+            if dep == nil and strong then
+                dep = strong[i]
+            end
             if dep ~= nil then
                 local dst = rawget(dep, STATE)
                 if not dst.phase then
@@ -359,6 +584,15 @@ local function decide(obj, st, id)
             end
         end
     end
+end
+
+-- A destructor body raised: the records it pushed and its error left on
+-- the stack die first, then the error is routed (`route`).
+local function body_failed(obj, err, depth)
+    if stack.n > depth then
+        unwind(stack, depth)
+    end
+    route(obj, err)
 end
 
 -- docs/02-semantics.md, "Cascading death", step 2, **Destroy**, for one
@@ -375,26 +609,50 @@ local function destroy_object(obj, st, reason, where, skip_body)
 
     -- 2.1: `__destroy` read from the metatable at the moment of death
     -- (docs/02-semantics.md, "`__destroy` and reasons", rule 1), called
-    -- as `__destroy(obj, reason)`, in protected mode to route its error.
+    -- as `__destroy(obj, reason)`, or a hook's function as `fn(reason)`
+    -- ("Hooks: the `!@` operator": "The function is called as
+    -- `fn(reason)`"), in protected mode to route its error. That
+    -- protected call is a catch the runtime sees: records the body pushed
+    -- and its error left on the stack are unwound before the error is
+    -- routed ("Scopes: `lifetime.scope`": they die "before that call
+    -- returns to its caller").
+    local mt = debug_getmetatable(obj)
+    local hook = mt == HOOK_MT
     if not skip_body then
-        local mt = debug_getmetatable(obj)
-        local body = mt ~= nil and rawget(mt, "__destroy")
-        if body then
-            local ok, err = pcall(body, obj, reason)
+        if hook then
+            local depth = stack.n
+            local ok, err = pcall(st.fn, reason)
             if not ok then
-                route(obj, err)
+                body_failed(obj, err, depth)
+            end
+        else
+            local body = mt ~= nil and rawget(mt, "__destroy")
+            if body then
+                local depth = stack.n
+                local ok, err = pcall(body, obj, reason)
+                if not ok then
+                    body_failed(obj, err, depth)
+                end
             end
         end
     end
 
-    -- 2.2: the dependents, newest first: a numeric loop over the range,
-    -- skipping holes (CLAUDE.md, "Technical decisions"). The bounds are
+    -- 2.2: the dependents and hooks, newest first: a numeric loop over
+    -- the range, skipping holes (CLAUDE.md, "Technical decisions"), with
+    -- `deps` and `strong` merged by sequence number, so a hook runs "in
+    -- its place among the object's other dependents by attachment order"
+    -- (docs/02-semantics.md, "Hooks: the `!@` operator"). The bounds are
     -- read once; nothing can be linked to a dying anchor, and unlinking
     -- only empties slots.
     local deps = st.deps
+    local strong = false
     if deps then
+        strong = st.strong
         for i = deps.seq - 1, deps.lo, -1 do
             local dep = deps[i]
+            if dep == nil and strong then
+                dep = strong[i]
+            end
             if dep ~= nil then
                 local dst = rawget(dep, STATE)
                 if dst.phase_id == id and dst.phase == "dying" then
@@ -407,10 +665,28 @@ local function destroy_object(obj, st, reason, where, skip_body)
     -- 2.3: the tombstone (docs/03-runtime.md, "The tombstone"): unlink
     -- from the anchors' lists, clear every field, set the dead metatable,
     -- reduce the record to what the message needs.
-    for j = 1, 2 * st.n, 2 do
-        unlink(rawget(st[j], STATE), st[j + 1])
-        st[j] = nil
-        st[j + 1] = nil
+    --
+    -- One anchor, the common case, is unlinked without a loop. The fields
+    -- are cleared by the `for` over `next` of task 002. A loop that runs
+    -- once or twice per destruction becomes hot before a user's loop that
+    -- destroys an object per iteration, and LuaJIT aborts the user's trace
+    -- on it ("inner loop in root trace") during warm-up, until side traces
+    -- cover it; the loop then runs compiled. A clear without a loop (a
+    -- tail-recursive one) avoided those aborts but made `runtime/move`
+    -- about 1.8 times as slow on LuaJIT after `runtime/attach-destroy-100`
+    -- in the same process, whatever the load path (task file, "Spec
+    -- issues found").
+    local n, pinned = st.n, not st.reachable
+    if n == 1 then
+        unlink(rawget(st[1], STATE), st[2], pinned)
+        st[1] = nil
+        st[2] = nil
+    else
+        for j = 1, 2 * n, 2 do
+            unlink(rawget(st[j], STATE), st[j + 1], pinned)
+            st[j] = nil
+            st[j + 1] = nil
+        end
     end
     for k in next, obj do
         if k ~= STATE then
@@ -419,7 +695,20 @@ local function destroy_object(obj, st, reason, where, skip_body)
     end
     debug_setmetatable(obj, DEAD_MT)
     st.n = 0
-    st.deps = false
+    -- Written only when set, so that a record without the field (a hook)
+    -- does not grow at death. A dead anchor holds nothing strongly; a dead
+    -- hook lets its function go ("After it runs the hook is dead: a hook
+    -- runs at most once"). `strong` was read with `deps` (a table has
+    -- `strong` only once it has `deps`).
+    if deps then
+        st.deps = false
+        if strong then
+            st.strong = false
+        end
+    end
+    if hook then
+        st.fn = false
+    end
     st.phase = "dead"
     st.where = where
     st.reason = reason
@@ -492,6 +781,12 @@ local function destroy_target(obj, fname)
         if phase == "dead" or (phase == "dying" and st.phase_id == 0) then
             return nil
         end
+        -- docs/02-semantics.md, "Scopes: `lifetime.scope`": "`destroy` of
+        -- a scope is impossible"; the marker is not an object either.
+        local what = (phase == "marker" or st.n == nil) and not_an_object(obj)
+        if what then
+            error("bad argument #1 to '" .. fname .. "' (object expected, got " .. what .. ")", 3)
+        end
         return st
     end
     if is_value(obj) then
@@ -528,15 +823,19 @@ end
 -- a live table, or a lifetime value whose anchors are all live. Returns
 -- whether the element carries the `reachable` term ("The implicit
 -- `reachable` term": a table carries it; a value carries it if it does).
-local function check_anchor(a)
+-- Raises at `level` (counted from this function).
+local function check_anchor(a, level)
     if type(a) ~= "table" then
-        error("attempt to anchor to a " .. type(a) .. " value", 3)
+        error("attempt to anchor to a " .. type(a) .. " value", level)
     end
     local ast = rawget(a, STATE)
     if ast then
         local phase = ast.phase
         if phase then
-            error("attempt to anchor to a " .. phase .. " table", 3)
+            if phase == "marker" then
+                error(MARKER_MESSAGE, level)
+            end
+            error("attempt to anchor to a " .. phase .. " table", level)
         end
         return true
     end
@@ -548,7 +847,7 @@ local function check_anchor(a)
             local ast_i = rawget(a[i], STATE)
             local phase = ast_i and ast_i.phase
             if phase then
-                error("attempt to anchor to a " .. phase .. " table", 3)
+                error("attempt to anchor to a " .. phase .. " table", level)
             end
         end
         return a.reachable
@@ -558,79 +857,47 @@ end
 
 -- Link `obj` (record `st`) to the anchors of element `a`, from pair
 -- index `k` on; returns the next pair index.
-local function link_element(obj, st, a, k)
+local function link_element(obj, st, a, k, pinned)
     if rawget(a, STATE) == nil and is_value(a) then
         for i = 1, a.n do
             local anchor = a[i]
             st[k] = anchor
-            st[k + 1] = link(anchor, rawget(anchor, STATE) or new_state(anchor), obj)
+            st[k + 1] = link(anchor, rawget(anchor, STATE) or new_state(anchor), obj, pinned)
             k = k + 2
         end
         return k
     end
     local ast = rawget(a, STATE) or new_state(a)
     st[k] = a
-    st[k + 1] = link(a, ast, obj)
+    st[k + 1] = link(a, ast, obj, pinned)
     return k + 2
 end
 
--- docs/03-runtime.md, "Attachment: what `@` does": `lifetime.attach(obj,
--- pin, a1, …, an)` performs steps 1 to 4 of docs/02-semantics.md,
--- "Acquiring a lifetime", and returns `obj`. `pin` true attaches without
--- the implicit `reachable` term (hooks, task 003); otherwise the formula
--- carries it when any element does ("The implicit `reachable` term").
--- The term is only recorded here; its effect is task 004's.
-function lifetime.attach(obj, pin, ...)
-    local count = select("#", ...)
+-- The general path of `@` and `!@`: steps 1 to 4 of docs/02-semantics.md,
+-- "Acquiring a lifetime", for any arguments. `fname` names the entry point
+-- in the argument error; every error is raised at the level of the
+-- entry point's caller, which calls this without a tail call.
+local function attach_general(fname, obj, pin, count, ...)
     local t = type(obj)
-
-    -- The common case, without a call: one anchor, a live table the
-    -- runtime has seen, and an object that is new to the runtime or alive
-    -- with one anchor, outside any destroy phase. It does exactly what
-    -- the general path below does for these arguments; anything else
-    -- falls through to it.
-    if count == 1 and t == "table" and phase_depth == 0 then
-        local a = ...
-        local ast = type(a) == "table" and rawget(a, STATE)
-        if ast and not ast.phase then
-            local st = rawget(obj, STATE)
-            if st == nil then
-                if getmetatable(obj) ~= "lifetime" then
-                    st = new_state(obj)
-                    st[1] = a
-                    st[2] = link(a, ast, obj)
-                    st.n = 1
-                    st.reachable = not pin
-                    return obj
-                end
-            elseif not st.phase and st.n == 1 then
-                unlink(rawget(st[1], STATE), st[2])
-                st[1] = a
-                st[2] = link(a, ast, obj)
-                st.reachable = not pin
-                return obj
-            end
-        end
-    end
 
     -- Step 1: an object.
     if t ~= "table" then
         if t == "function" or t == "thread" or t == "userdata" then
-            not_implemented("attach")
+            error("lifetime: attach of a function, coroutine or userdata is not implemented yet (task 002 covers tables)", 3)
         end
-        error("attempt to anchor a " .. t .. " value", 2)
+        error("attempt to anchor a " .. t .. " value", 3)
     end
 
     -- Step 2: every element, left to right, before anything changes.
     local term = false
     if count == 1 then
-        term = check_anchor((...))
+        term = check_anchor((...), 4)
     else
         if count == 0 then
-            error("bad argument #3 to 'lifetime.attach' (anchor expected, got no value)", 2)
+            error("bad argument #3 to '" .. fname .. "' (anchor expected, got no value)", 3)
         end
         for i = 1, count do
-            if check_anchor((select(i, ...))) then
+            if check_anchor((select(i, ...)), 4) then
                 term = true
             end
         end
@@ -641,44 +908,105 @@ function lifetime.attach(obj, pin, ...)
     if st then
         local phase = st.phase
         if phase == "dying" then
-            error("attempt to move a dying table", 2)
+            error("attempt to move a dying table", 3)
         elseif phase == "dead" then
             -- "If `e` is dead, the dead metatable raises first".
-            error(dead_message(obj, st, "index"), 2)
+            error(dead_message(obj, st, "index"), 3)
+        elseif phase == "marker" then
+            -- docs/02-semantics.md, "Scopes: `lifetime.scope`": "`@` on
+            -- it raises `attempt to anchor to lifetime.scope through a
+            -- variable`".
+            error(MARKER_MESSAGE, 3)
+        elseif st.n == nil then
+            -- A scope record, reached through a lifetime value: a scope
+            -- is not an object that can be moved.
+            error("attempt to anchor a scope value", 3)
         end
         -- docs/02-semantics.md, "No moves during destruction": only
         -- objects on the default formula or created during the innermost
         -- running destroy phase may be moved.
         if phase_depth > 0 and (st.n > 0 or not st.reachable) and st.phase_id ~= phase_id then
-            error("attempt to move an anchored table during destruction", 2)
+            error("attempt to move an anchored table during destruction", 3)
+        end
+        -- "A move keeps it pinned: `hook @ other` never adds the
+        -- `reachable` term to a hook" (docs/02-semantics.md, "Hooks").
+        if st.fn ~= nil then
+            pin = true
         end
     else
         if is_value(obj) then
-            error("attempt to anchor a lifetime value", 2)
+            error("attempt to anchor a lifetime value", 3)
         end
         st = new_state(obj)
     end
 
     -- Step 4: replace the formula; leave the old anchors' lists, join the
-    -- new ones' at the end.
+    -- new ones' at the end, in `strong` when the new formula has no
+    -- `reachable` term.
+    local reachable = term and not pin
     local old = 2 * st.n
+    local was_pinned = not st.reachable
     for j = 1, old, 2 do
-        unlink(rawget(st[j], STATE), st[j + 1])
+        unlink(rawget(st[j], STATE), st[j + 1], was_pinned)
     end
     local k = 1
     if count == 1 then
-        k = link_element(obj, st, (...), k)
+        k = link_element(obj, st, (...), k, not reachable)
     else
         for i = 1, count do
-            k = link_element(obj, st, (select(i, ...)), k)
+            k = link_element(obj, st, (select(i, ...)), k, not reachable)
         end
     end
     for j = k, old do
         st[j] = nil
     end
     st.n = (k - 1) / 2
-    st.reachable = term and not pin
+    st.reachable = reachable
     return obj
+end
+
+-- docs/03-runtime.md, "Attachment: what `@` does": `lifetime.attach(obj,
+-- pin, a1, …, an)` performs steps 1 to 4 of docs/02-semantics.md,
+-- "Acquiring a lifetime", and returns `obj`. `pin` true attaches without
+-- the implicit `reachable` term (hooks; `lifetime.pin` is task 004's);
+-- otherwise the formula carries it when any element does ("The implicit
+-- `reachable` term"). A formula without the term is pinned: the anchors
+-- hold the object in their `strong` tables. A hook stays pinned whatever
+-- `pin` says.
+function lifetime.attach(obj, pin, ...)
+    local count = select("#", ...)
+
+    -- The common case, without a call: one anchor, a live table the
+    -- runtime has seen, and an object that is new to the runtime, or
+    -- alive with one anchor and the `reachable` term and staying so (the
+    -- ordinary move; a pinned object or a hook takes the general path),
+    -- outside any destroy phase. It does exactly what the general path
+    -- does for these arguments; anything else falls through to it.
+    if count == 1 and type(obj) == "table" and phase_depth == 0 then
+        local a = ...
+        local ast = type(a) == "table" and rawget(a, STATE)
+        if ast and not ast.phase then
+            local st = rawget(obj, STATE)
+            if st == nil then
+                if getmetatable(obj) ~= "lifetime" then
+                    st = new_state(obj)
+                    st[1] = a
+                    st[2] = link(a, ast, obj, pin)
+                    st.n = 1
+                    st.reachable = not pin
+                    return obj
+                end
+            elseif not st.phase and st.n == 1 and st.reachable and not pin then
+                unlink(rawget(st[1], STATE), st[2], false)
+                st[1] = a
+                st[2] = link(a, ast, obj, false)
+                return obj
+            end
+        end
+    end
+
+    local result = attach_general("lifetime.attach", obj, pin, count, ...)
+    return result
 end
 
 ------------------------------------------------------------------------
@@ -712,8 +1040,13 @@ function lifetime.of(obj)
     end
     local st = rawget(obj, STATE)
     if st then
-        if st.phase == "dead" then
+        local phase = st.phase
+        if phase == "dead" then
             error(dead_message(obj, st, "index"), 2)
+        end
+        local what = (phase == "marker" or st.n == nil) and not_an_object(obj)
+        if what then
+            error("bad argument #1 to 'lifetime.of' (object expected, got " .. what .. ")", 2)
         end
         return value_of(st)
     end
@@ -726,8 +1059,9 @@ end
 
 -- "`lifetime.dependents(obj)`: A fresh array of the live objects and
 -- hooks whose formula mentions `obj`, in attachment order." Oldest first:
--- the same numeric loop as the cascade, the other way. Does not make the
--- runtime see `obj`.
+-- the same numeric loop as the cascade, the other way, over `deps` and
+-- `strong` merged by sequence number. Does not make the runtime see
+-- `obj`.
 function lifetime.dependents(obj)
     local t = type(obj)
     if t ~= "table" and t ~= "function" and t ~= "thread" and t ~= "userdata" then
@@ -737,12 +1071,28 @@ function lifetime.dependents(obj)
     local st = t == "table" and rawget(obj, STATE)
     local deps = st and st.deps
     if deps then
+        local strong = st.strong
         local n = 0
-        for i = deps.lo, deps.seq - 1 do
-            local dep = deps[i]
-            if dep ~= nil then
-                n = n + 1
-                result[n] = dep
+        if strong then
+            for i = deps.lo, deps.seq - 1 do
+                local dep = deps[i]
+                if dep == nil then
+                    dep = strong[i]
+                end
+                if dep ~= nil then
+                    n = n + 1
+                    result[n] = dep
+                end
+            end
+        else
+            -- No hook and no pinned dependent: `deps` alone, one test less
+            -- per entry (bench/README.md, `runtime/dependents-100`).
+            for i = deps.lo, deps.seq - 1 do
+                local dep = deps[i]
+                if dep ~= nil then
+                    n = n + 1
+                    result[n] = dep
+                end
             end
         end
     end
@@ -765,10 +1115,21 @@ end
 -- docs/02-semantics.md, "The `lifetime` table": "`lifetime.format(v)`: A
 -- string rendering of a lifetime value, an object's formula ... Object
 -- anchors render through `tostring`, so a dead anchor in a snapshot
--- renders as `dead <name>`." Tokens and hooks are tasks 003 and 004.
+-- renders as `dead <name>`." A hook renders as itself: "`hook cleanup`
+-- for a named hook and `hook` for an anonymous one"; a scope record as
+-- `scope`. Tokens are task 004's.
 function lifetime.format(v)
     if type(v) ~= "table" then
         error("bad argument #1 to 'lifetime.format' (lifetime expected, got " .. type(v) .. ")", 2)
+    end
+    local mt = debug_getmetatable(v)
+    if mt == HOOK_MT then
+        local name = rawget(v, STATE).name
+        return name and "hook " .. tostring(name) or "hook"
+    elseif mt == SCOPE_MT then
+        return "scope"
+    elseif mt == MARKER_MT then
+        error("bad argument #1 to 'lifetime.format' (lifetime expected, got lifetime.scope)", 2)
     end
     local items = {}
     if is_value(v) then
@@ -790,5 +1151,438 @@ function lifetime.format(v)
     end
     return format_items(items, n, st.reachable)
 end
+
+------------------------------------------------------------------------
+-- Hooks
+------------------------------------------------------------------------
+
+-- docs/03-runtime.md, "Hooks": "`lifetime.hook(f, name, a1, …)` creates a
+-- hook: a table with a state record, the metatable `"hook"`, the
+-- function, and the name (a constant string the emitter passes for a
+-- named hook, `nil` otherwise). It is attached pinned to its anchors and
+-- linked into each anchor's `strong` list, never into `dependents`, so
+-- the anchor holds it strongly; it never carries a sentinel. Its body
+-- calls `f(reason)`."
+--
+-- The hook's record is an ordinary state record plus `fn`, with `name`
+-- holding the name it was created with, and without `deps` (a hook is
+-- rarely an anchor; `link` adds the field if it becomes one), so that its
+-- hash part keeps eight slots. docs/02-semantics.md, "Hooks: the `!@`
+-- operator": "The left operand must be a function: `attempt to defer a
+-- number value`. A hook is not a function, so `h !@ x` on a hook is
+-- `attempt to defer a hook value`".
+function lifetime.hook(f, name, ...)
+    if type(f) ~= "function" then
+        local what = type(f)
+        if what == "table" then
+            local mt = getmetatable(f)
+            if mt == "hook" or mt == "token" then
+                what = mt
+            end
+        end
+        error("attempt to defer a " .. what .. " value", 2)
+    end
+    local h = {}
+    local st = {
+        false,
+        false,
+        n = 0,
+        reachable = false,
+        phase = false,
+        phase_id = phase_id,
+        name = name or false,
+        where = false,
+        reason = false,
+        fn = f
+    }
+    h[STATE] = st
+    setmetatable(h, HOOK_MT)
+
+    -- The common case, as in `attach`: one live anchor the runtime has
+    -- seen (a scope record always is). A new object may be anchored
+    -- during a destroy phase, so no phase test is needed here.
+    local count = select("#", ...)
+    if count == 1 then
+        local a = ...
+        local ast = type(a) == "table" and rawget(a, STATE)
+        if ast and not ast.phase then
+            st[1] = a
+            st[2] = link(a, ast, h, true)
+            st.n = 1
+            return h
+        end
+    end
+    local result = attach_general("lifetime.hook", h, true, count, ...)
+    return result
+end
+
+------------------------------------------------------------------------
+-- Scope records
+------------------------------------------------------------------------
+
+-- docs/03-runtime.md, "Scope records": "A scope record is a runtime table
+-- the generated block prologue creates (`lifetime.enter()`) and the
+-- epilogue destroys (`lifetime.exit(record, line)`): a cascade with the
+-- record as root, no body, reason `"anchor"` for its dependents."
+--
+-- A record is one table and is its own state record (`rec[STATE] ==
+-- rec`), so `enter` allocates nothing else (docs/03-runtime.md,
+-- "Performance": "one record (a small table) per entry"). It has the
+-- fields an anchor needs (`deps`, `strong`, `phase`) and those of the
+-- scope stack: `line`, the position of the block's `end` for the
+-- tombstones of an unwound record; `depth`, its index in the stack; and
+-- `stack`, the stack it is on. A record is never a dependent: it has no
+-- formula and no `n`.
+--
+-- `stack` is what keeps a suspended coroutine's stack alive. The table
+-- that finds a coroutine's stack (`stacks`, below) is weak in its values
+-- as well as its keys, so that the stack, and the hooks its records hold
+-- in `strong`, can never keep the coroutine itself alive: in Lua 5.1 a
+-- weak-keyed table marks its values strongly, and a hook that refers to
+-- its own coroutine would otherwise make it uncollectable. The records
+-- are held by the coroutine's frames (the generated locals), and they
+-- hold the stack, so the stack lives exactly while the coroutine has an
+-- active record or is running.
+--
+-- The line arguments are the positions the tombstones report
+-- (docs/02-semantics.md, "Tombstones": "`<where>` is the source position
+-- of the statement that caused the cascade"). The runtime stores them as
+-- given and renders them with `tostring`; the generated code passes the
+-- constant `"chunk:line"`, so no `debug.*` runs per block (CLAUDE.md,
+-- "Technical decisions"; the task file, "Spec issues found").
+
+-- docs/02-semantics.md, "Cascading death": "A scope has no body: scope
+-- exit destroys the objects anchored to it in reverse attachment order".
+-- The decide and destroy steps of `cascade` with the record as the root,
+-- reason `"anchor"` for every dependent. One scope exit with dependents
+-- is one destroy phase ("No moves during destruction"). The error rule is
+-- the caller's: `held` is set up by `exit` (the first error is raised at
+-- the exit) or by `unwind` (an error is propagating, so every error goes
+-- to `destroyerror`).
+--
+-- A record with one entry, the most common block, is walked without a
+-- loop, for the reason given at the tombstone step of `destroy_object`.
+local function decide_entry(deps, strong, i, id)
+    local dep = deps[i]
+    if dep == nil and strong then
+        dep = strong[i]
+    end
+    if dep ~= nil then
+        local dst = rawget(dep, STATE)
+        if not dst.phase then
+            decide(dep, dst, id)
+        end
+    end
+end
+
+local function destroy_entry(deps, strong, i, id, where)
+    local dep = deps[i]
+    if dep == nil and strong then
+        dep = strong[i]
+    end
+    if dep ~= nil then
+        local dst = rawget(dep, STATE)
+        if dst.phase_id == id and dst.phase == "dying" then
+            destroy_object(dep, dst, "anchor", where, false)
+        end
+    end
+end
+
+local function scope_cascade(rec, where)
+    rec.phase = "dying"
+    local deps = rec.deps
+    if deps then
+        local strong = rec.strong
+        local id = phase_counter + 1
+        phase_counter = id
+        local hi, lo = deps.seq - 1, deps.lo
+        local outer_id = phase_id
+        if hi == lo then
+            decide_entry(deps, strong, hi, id)
+            phase_id, phase_depth = id, phase_depth + 1
+            destroy_entry(deps, strong, hi, id, where)
+        else
+            for i = hi, lo, -1 do
+                decide_entry(deps, strong, i, id)
+            end
+            phase_id, phase_depth = id, phase_depth + 1
+            for i = hi, lo, -1 do
+                destroy_entry(deps, strong, i, id, where)
+            end
+        end
+        phase_id, phase_depth = outer_id, phase_depth - 1
+        -- Every dependent unlinked itself when it was tombstoned; a list
+        -- that is empty again (`seq` back at 1, which `unlink` guarantees
+        -- for both tables) is kept for the next first link. A dependent
+        -- this exit skipped (decided by another running cascade) or a
+        -- hole a collected dependent left keeps it from being reused.
+        if deps.seq == 1 then
+            deps.limit = MIN_LIMIT
+            spare_deps = deps
+            if strong then
+                spare_strong = strong
+            end
+        end
+        rec.deps = false
+        rec.strong = false
+    end
+    rec.phase = "dead"
+end
+
+-- docs/03-runtime.md, "The scope stack and the error path": "The block
+-- prologue `lifetime.enter(line)` creates the record, stores `line` (the
+-- line of the block's `end`, for the tombstones of an unwound record) and
+-- its depth, and pushes it". No `debug.*`, no `coroutine.running`, no
+-- `select`, no closure (CLAUDE.md, "Technical decisions").
+function lifetime.enter(line)
+    local s = stack
+    local n = s.n + 1
+    local rec = {deps = false, strong = false, phase = false, line = line, depth = n, stack = s}
+    rec[STATE] = rec
+    setmetatable(rec, SCOPE_MT)
+    s[n] = rec
+    s.n = n
+    return rec
+end
+
+-- docs/02-semantics.md, "Scopes: `lifetime.scope`": "A record that a
+-- catch the runtime could not see left behind dies at the next scope exit
+-- of the same coroutine that finds it above itself, innermost first";
+-- docs/03-runtime.md: "If `exit` finds records above `record` on the
+-- stack, a catch the runtime could not see left them behind: it unwinds
+-- them first, innermost first, then proceeds." The records left behind
+-- die as their blocks' ends would have destroyed them (their own `line`).
+-- The whole exit is one statement for the error rule: the first error of
+-- all of it is raised after the last record is done.
+local function exit_unwinding(s, rec, line)
+    local outer_held, outer_error = held, held_error
+    held, held_error = false, nil
+    local depth = rec.depth
+    if s[depth] == rec then
+        while s.n > depth do
+            local n = s.n
+            local left = s[n]
+            s[n] = nil
+            s.n = n - 1
+            scope_cascade(left, left.line)
+        end
+        s[depth] = nil
+        s.n = depth - 1
+        scope_cascade(rec, line)
+    elseif not rec.phase then
+        -- Not on the running coroutine's stack (a stack a hidden resume
+        -- did not swap): its dependents still die at this exit.
+        scope_cascade(rec, line)
+    end
+    local raise, err = held, held_error
+    held, held_error = outer_held, outer_error
+    if raise then
+        error(err, 0)
+    end
+end
+
+-- docs/03-runtime.md, "The scope stack and the error path": "the
+-- epilogue `lifetime.exit(record, line)` pops it and runs the cascade".
+-- The record is popped before its dependents die, so a destructor that
+-- enters and exits blocks of its own sees a consistent stack. The first
+-- destructor error is raised here, at the block exit, after the whole
+-- cascade (docs/02-semantics.md, "Errors in destructors": it "propagates
+-- to the statement that caused the death: ... the block exit"). A record
+-- nothing was ever attached to has no `deps` and needs no cascade: nothing
+-- else can name it.
+function lifetime.exit(rec, line)
+    local s = stack
+    local n = s.n
+    if s[n] ~= rec then
+        return exit_unwinding(s, rec, line)
+    end
+    s[n] = nil
+    s.n = n - 1
+    if rec.deps then
+        local outer_held, outer_error = held, held_error
+        held, held_error = false, nil
+        scope_cascade(rec, line)
+        local raise, err = held, held_error
+        held, held_error = outer_held, outer_error
+        if raise then
+            error(err, 0)
+        end
+    end
+end
+
+-- The error path: every record of `s` above `depth` dies, innermost
+-- first, each popped before its cascade. An error is propagating, so
+-- every destructor error goes to `destroyerror` and the original error
+-- continues (docs/02-semantics.md, "Errors in destructors": "Every error
+-- raised while an error is already propagating (... or any destructor
+-- running because a scope is unwinding) goes to `destroyerror`"). The
+-- `<where>` of the dependents is the line of the block's `end` given to
+-- `enter`.
+unwind = function(s, depth)
+    local outer_held, outer_error = held, held_error
+    held = true
+    while s.n > depth do
+        local n = s.n
+        local rec = s[n]
+        s[n] = nil
+        s.n = n - 1
+        scope_cascade(rec, rec.line)
+    end
+    held, held_error = outer_held, outer_error
+end
+
+------------------------------------------------------------------------
+-- The error path: pcall, xpcall, coroutine.resume, coroutine.wrap
+------------------------------------------------------------------------
+
+-- docs/03-runtime.md, "The scope stack and the error path": "When it is
+-- first required the runtime replaces four globals, keeping the
+-- originals as upvalues"; docs/05-decisions.md, "Scopes unwind at the
+-- catch site, not in a per-block `pcall` wrapper".
+--
+-- The originals keep their own names as upvalues (`pcall` is the local of
+-- the file's first line), so that an argument error they raise names
+-- them as a direct call would on Lua 5.1, where the name comes from the
+-- call site. The wrappers pass varargs through and allocate nothing ("a
+-- `pcall` costs one field read before and one compare after").
+local xpcall = xpcall
+local create, resume, status = coroutine.create, coroutine.resume, coroutine.status
+
+-- After a protected call: on an error, unwind what was pushed since the
+-- call began, then return exactly what the original returned.
+local function caught(depth, ok, ...)
+    if ok then
+        return ok, ...
+    end
+    if stack.n > depth then
+        unwind(stack, depth)
+    end
+    return ok, ...
+end
+
+-- "`pcall` and `xpcall` read `S.stack.n` before the call and, when the
+-- call returns `false`, unwind every record above that depth, innermost
+-- first ... then return what the original returned." An `xpcall` message
+-- handler runs at the raise point, before any record is unwound, as in
+-- Lua (docs/02-semantics.md, "Scopes: `lifetime.scope`").
+local function lifetime_pcall(...)
+    local depth = stack.n
+    return caught(depth, pcall(...))
+end
+
+local function lifetime_xpcall(...)
+    local depth = stack.n
+    return caught(depth, xpcall(...))
+end
+
+-- The stack of each coroutine resumed through the runtime, "created on
+-- first resume, held in a weak-keyed table by coroutine"; weak-valued
+-- too, see "Scope records" above.
+local stacks = setmetatable({}, {__mode = "kv"})
+
+-- After a resume: restore the resumer's stack, then, if the coroutine
+-- died of an error, unwind its whole stack in the resumer's context. A
+-- `false` from `resume` on a coroutine that is not dead (running or
+-- normal) is a refusal to resume, and its stack is left alone.
+local function resumed(co, saved, ok, ...)
+    local s = stack
+    stack = saved
+    if not ok and s.n > 0 and status(co) == "dead" then
+        unwind(s, 0)
+    end
+    return ok, ...
+end
+
+-- "`coroutine.resume` swaps `S.stack` to the target coroutine's stack
+-- ... for the duration of the call and restores it after, which covers
+-- the yield path without wrapping `coroutine.yield`; when the original
+-- returns `false` the coroutine is dead and its whole stack is unwound."
+--
+-- The lookup comes first: reading `stacks[co]` is legal for any `co`, and
+-- a coroutine resumed before has its stack there, so the common resume
+-- pays no `type` call. Anything else is passed to the original, which
+-- raises its own argument error.
+local function lifetime_resume(co, ...)
+    local s = stacks[co]
+    if s == nil then
+        if type(co) ~= "thread" then
+            return resume(co, ...)
+        end
+        s = {n = 0}
+        stacks[co] = s
+    end
+    local saved = stack
+    stack = s
+    return resumed(co, saved, resume(co, ...))
+end
+
+-- How `coroutine.wrap` re-raises, found once by asking the original
+-- (docs/03-runtime.md: the function "re-raises as Lua's does"). Both
+-- hosts prefix a string error with the position of the wrap function's
+-- caller; Lua 5.1 also turns a number into such a string, LuaJIT passes
+-- it on as it is. `error(e, level)` adds that prefix; the level that
+-- reaches the caller from a function entered by a tail call is 3 on Lua
+-- 5.1, which counts the tail call as a level, and 2 on LuaJIT.
+local WRAP_PREFIXES_NUMBERS, TAIL_CALLER_LEVEL
+do
+    local _, number_error = pcall(coroutine.wrap(function()
+        error(5, 0)
+    end))
+    WRAP_PREFIXES_NUMBERS = type(number_error) == "string"
+    local function raise_at_caller()
+        error("probe", 2)
+    end
+    local function tail_call()
+        return raise_at_caller()
+    end
+    local _, probe = pcall(function()
+        tail_call()
+    end)
+    TAIL_CALLER_LEVEL = probe == "probe" and 3 or 2
+end
+
+-- After a resume through a wrap function: as `resumed`, then return the
+-- values or re-raise the error as the original would. Entered by a tail
+-- call from the wrap function.
+local function wrapped(co, saved, ok, ...)
+    local s = stack
+    stack = saved
+    if ok then
+        return ...
+    end
+    if s.n > 0 and status(co) == "dead" then
+        unwind(s, 0)
+    end
+    local err = ...
+    local t = type(err)
+    if t == "string" or (t == "number" and WRAP_PREFIXES_NUMBERS) then
+        error(err, TAIL_CALLER_LEVEL)
+    end
+    error(err, 0)
+end
+
+-- "`coroutine.wrap` creates through the original and returns a function
+-- that resumes the same way and re-raises as Lua's does." The coroutine's
+-- stack is the one `coroutine.resume` would find for it.
+local function lifetime_wrap(f)
+    local co = create(f)
+    return function(...)
+        local s = stacks[co]
+        if s == nil then
+            s = {n = 0}
+            stacks[co] = s
+        end
+        local saved = stack
+        stack = s
+        return wrapped(co, saved, resume(co, ...))
+    end
+end
+
+-- "`coroutine.running`, `coroutine.status`, `coroutine.create`,
+-- `coroutine.yield` and `error` are untouched."
+rawset(_G, "pcall", lifetime_pcall)
+rawset(_G, "xpcall", lifetime_xpcall)
+rawset(coroutine, "resume", lifetime_resume)
+rawset(coroutine, "wrap", lifetime_wrap)
 
 return lifetime

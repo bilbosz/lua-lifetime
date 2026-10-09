@@ -1,12 +1,12 @@
 ---
 id: 003
 title: Runtime: scope records, hooks
-status: todo
+status: review
 depends: [002]
-branch:
-pr:
+branch: task/003-runtime-scopes-hooks
+pr: https://github.com/bilbosz/lua-lifetime/pull/22
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -152,4 +152,109 @@ sees; a block with no record, which never calls the runtime.
 
 ## Spec issues found
 
+Found by the implementer, round 1. None changes the semantics; each says
+what the code does and why, for the reviewer and the human to decide.
+
+1. **`chunk:line` from `enter(line)` and `exit(record, line)`.** The
+   acceptance criteria want `<where>` to be `chunk:line` of the exit (or of
+   the block's `end` for an unwound record), while `docs/04-transpiler.md`,
+   "Blocks", writes `lifetime.enter(<line of end>)` and `lifetime.exit(__s1,
+   <line>)`. The runtime cannot learn the chunk name without `debug.*`,
+   which CLAUDE.md forbids on a per-block path. Implemented: the argument
+   is the position the tombstone reports, stored as given and rendered
+   with `tostring`; the tests pass `"chunk:line"` strings. Task 006 should
+   emit the position as one constant string (`lifetime.enter("f.lt:12")`),
+   which costs nothing per entry. 04 could say "the position of the
+   block's `end`, as the constant `"chunk:line"`".
+2. **The coroutine-stack table would keep coroutines alive.**
+   `docs/03-runtime.md`, "The scope stack and the error path", keeps a
+   coroutine's stack "in a weak-keyed table by coroutine whose values never
+   refer to the key". They can: a stack holds its records, a record holds
+   its hooks strongly (`strong`), and a hook that closes over its own
+   coroutine refers back to the key. Lua 5.1 has no ephemerons, so such a
+   coroutine, suspended and dropped, would never be collected and its
+   hooks never run (CLAUDE.md, rule 6). Implemented: the table is weak in
+   keys and values, and every record holds its stack (`stack` field), so a
+   stack lives exactly while its coroutine is running or has an active
+   record; test "a suspended coroutine whose hook refers to it can still
+   be collected". Consequences: a coroutine's stack table is re-created on
+   the next resume after a collection found it empty (one small table, not
+   per resume); and records a hidden catch left in a suspended coroutine
+   with no active record are then reached only through their sentinels
+   (task 004), not at a later exit. 03's sentence could read "weak in keys
+   and values; each record refers to its stack".
+3. **The marker outside the anchor position.** 02 and 03 say `@` refuses
+   `lifetime.scope` with `attempt to anchor to lifetime.scope through a
+   variable`, and say nothing about the marker as the *left* operand, or
+   passed to `destroy`, `discard`, `lifetime.of` or `lifetime.format`.
+   Implemented: the same message for both operands of `@` and `!@`;
+   `destroy`, `discard` and `lifetime.of` raise `bad argument #1 to 'NAME'
+   (object expected, got lifetime.scope)` and `lifetime.format` `(lifetime
+   expected, got lifetime.scope)`, after task 002's `got lifetime` for a
+   lifetime value; `lifetime.dependents` returns `{}` as for a value.
+   `getmetatable(lifetime.scope)` is `"lifetime.scope"` (03 says only "a
+   private metatable"). A scope record reached through a lifetime value
+   (`lifetime.of(x)[1]`, the only way to name one) is refused by `destroy`
+   (`object expected, got scope`, from "`destroy` of a scope is
+   impossible") and by `@` as the moved object (`attempt to anchor a scope
+   value`); anchoring *to* it through the value works while the block is
+   active. None of these texts is in the spec.
+4. **Where Lua 5.1 makes the replacements differ from the originals.**
+   "Re-raise exactly what the originals would" holds for every value and
+   error the comparison test checks, on both hosts, with two exceptions on
+   Lua 5.1 only, both host limits of a Lua function standing in for a C
+   function: (a) an argument error the original raises inside the
+   replacement (`pcall()`, `xpcall(f)`, `coroutine.resume(5)`,
+   `coroutine.wrap(5)`) carries the runtime's position instead of the
+   caller's, and `wrap`'s names `create`; LuaJIT's messages carry no
+   position, so they match there. (b) A string error re-raised by a wrap
+   function that its caller *tail-called* (`return w()`): the original,
+   a C function, keeps the caller's frame and prefixes its position; the
+   replacement's caller frame is gone and no prefix is added. Called
+   without a tail call, both hosts match. `wrap` finds once, at load, how
+   the host re-raises (whether a number gets the prefix, and the error
+   level across a tail call), so the runtime does not read `jit`.
+5. **Hooks are in `strong`, not `hooks`.** The acceptance criteria say
+   hooks are attached "through their `hooks` lists"; `docs/05-decisions.md`,
+   "Pinned dependents are held by their anchors", names that table
+   `strong`, which is what is implemented. Pinned dependents (a formula
+   without the `reachable` term, `attach(x, true, ...)` today) go there
+   too, as 03 says, so task 004 has only `lifetime.pin` to add.
+6. **`<where>` of records a hidden catch left behind.** 02 says they die
+   "at the next scope exit ... that finds it above itself". Implemented:
+   their dependents' tombstones report the record's own `line` (its
+   block's `end`), as for an unwound record, not the line of the exit that
+   found them; that exit is one statement for the error rule, so its first
+   destructor error is raised after all of them.
+7. **`lifetime.alive(h)`** is task 004's; the test of "afterwards
+   `lifetime.alive(h)` is `false`" checks it when it exists and checks the
+   tombstone (`getmetatable(h) == "dead"`) now.
+
 ## Review log
+
+- Implementer, round 1: test case 7 (a suspended coroutine dropped with a
+  record whose dependent dies `"unreachable"`) is not tested: it needs the
+  record's sentinel, which task 004 provides. A comment in
+  `tests/test-scopes.lua` marks the place.
+- Implementer, round 1, performance: with `luajit -jv`, the loops of
+  `scope/enter-exit-empty` and `scope/pcall-empty` compile with no trace
+  abort; those of `scope/loop-one-object` and `scope/hook-on-scope` abort
+  about 31 times during warm-up with "inner loop in root trace" at the
+  tombstone's `for k in next, obj` loop (task 002's), then run compiled
+  (`-jp=v`: no interpreted time for the hook loop, 4% for the one-object
+  loop). A loop-free tombstone (a tail-recursive clear) removed those
+  aborts but made `runtime/move` about 1.8 times as slow on LuaJIT after
+  `runtime/attach-destroy-100` in the same process, reproducibly, from
+  every load path tried (45 to 73 ns against master's 25), and was
+  reverted: task 002's benchmarks must stay within the threshold. The
+  scope loop's single entry and the single-anchor unlink stay loop-free.
+
+### Round 1: APPROVE
+
+Suite on `58c3447`: unit 202/202 under lua5.1 and luajit (five runs, no flakiness in the eleven latent cases), conformance 5/5 under both, lint clean (27 files). `make bench BASE=master` twice: nothing marked among task 002's, the transpiler's and the plain benchmarks; in-process `plain/transpiled` 0.978 to 1.026. Replacements against master's C originals, ns per 10 operations, Lua 5.1 / LuaJIT: `scope/pcall-empty` 1204 and 1230 vs 534 / 25.5 and 27.0 vs 21 (marked once); `scope/pcall-error` 2162 and 2139 vs 1227 / parity; `scope/resume-yield` 1760 and 1766 vs 752 / 641 vs 477 and 484 (marked both runs, both hosts). The orchestrator's decision: the forced cost of the catch-site design, recorded in `docs/03`, "Forced, and measured". Wrapper shape judged minimal: a wrapper and its continuation, two Lua vararg frames (a single frame cannot inspect `ok` without packing), +72 ns per `pcall` and +101 ns per `resume` on 5.1, +0.5 and +1.6 ns on LuaJIT. Trace aborts and the bisection confirmed: 37 warm-up aborts at the tombstone loop then compiled; the abort-free variant makes `runtime/move` 46 vs 25 ns; the loop is the right trade. Traced by hand: a scoped block with hooks and dependents unwound by `pcall` (`h2, a, b, h1`, tombstone at the `enter` line); nested coroutines main, A, B with records and yields at every level and B raising; a `__destroy` resuming a raising coroutine during a scope exit; yield across `pcall` under both hosts.
+
+- F1 (non-blocking): `lifetime.exit(nil, …)` on an empty stack pops before `rec.deps` raises, leaving `stack.n` at -1. Fix in task 004: move the pop after the `rec.deps` read (free). `exit` is emitter-facing.
+- F2 (non-blocking): nested-coroutine stack swapping is covered only by the reviewer's trace. Task 004 adds the main, A, B case.
+- Question for the spec: `f !@ lifetime.reachable` makes a hook with no anchor and no term that renders `()` and never runs; `docs/02`, "Hooks", says the collector may run it, `docs/03`, "The sentinel", says never a hook. Settled by the orchestrator in the done chore: a hook whose formula is `lifetime.reachable` alone carries a sentinel and runs with `"unreachable"` when collected; `format` renders `reachable`; task 004 implements it with the sentinel.
+- Docs brought in line in the done chore: 03 "weak-keyed" (weak in keys and values, each record holds its stack; hidden-catch records in a suspended coroutine die through their sentinels), "one wrapper frame", the marker's texts; 04 `enter` takes the position as a constant `"chunk:line"` string.
+- Follow-ups for task 004 besides F1 and F2: the eleven `tests/test-runtime.lua` cases that hold no reference to dependents with the term (lines 359 to 710); the LuaJIT-only gain of a plain `setmetatable` for an unprotected tombstone (470 to 355 ns on the one-object loop, 3 to 7% cost on 5.1's destroy-heavy benchmarks) left for a decision.
