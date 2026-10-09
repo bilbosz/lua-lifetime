@@ -4,7 +4,7 @@ title: Runtime: anchors, dependents inside the anchor, `destroy`, cascade order,
 status: review
 depends: [001, 010]
 branch: task/002-runtime-anchors-and-cascade
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/16
 commits:
 review: APPROVE (round 1)
 ---
