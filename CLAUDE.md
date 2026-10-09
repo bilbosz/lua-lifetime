@@ -14,7 +14,7 @@ documents are derived from `xd/docs/10-lua-lifetime-decisions.md` in the
 | Path | What |
 | --- | --- |
 | `docs/01-overview.md` | What lua-lifetime is, the one-screen taste, where the semantics come from, the relation to `xd` and `teal-lifetime`. Read once. |
-| `docs/02-semantics.md` | **The spec** of the language extension: `@` and the list form, the implicit `reachable` term and `lifetime.pin`, `scope`, hooks and the `!@` operator, tokens, `destroy`, the cascade order, `__destroy`, tombstones, errors, reachability, program end. |
+| `docs/02-semantics.md` | **The spec** of the language extension: `@` and the list form, the implicit `reachable` term and `lifetime.pin`, `lifetime.scope`, hooks and the `!@` operator, tokens, `destroy`, the cascade order, `__destroy`, tombstones, errors, reachability, program end. |
 | `docs/03-runtime.md` | The design of the `lifetime` module: state records inside the anchor, the sentinel, the cascade, scope records, tokens. |
 | `docs/04-transpiler.md` | The grammar and the code generation: what `@` expands to, block epilogues on every exit path, the `pcall` wrapper, the command. |
 | `docs/05-decisions.md` | Decision log of this repository. Check here before proposing a change. |
@@ -83,7 +83,7 @@ Skills, invoked with `/name`:
 5. **Performance is a priority, second only to correctness.** The order
    is: the spec, then ownership order, then speed, then brevity. Code that
    does not use the extension pays nothing: a plain Lua chunk transpiles
-   to itself, a block with no `@ scope` and no bare hook gets no scope
+   to itself, a block with no `@ lifetime.scope` and no bare hook gets no scope
    record, an object never anchored gets no state, a pinned object gets no
    proxy. Code that does use it pays as little as the design allows, and
    the cost is measured, not guessed: a task that touches a hot path adds
@@ -165,22 +165,24 @@ Skills, invoked with `/name`:
 - A reachable death is the collector's: nothing is destroyed at the end of
   the statement that dropped the last reference. Tests call
   `collectgarbage("collect")`, twice when a weak table must have cleared.
-- `local tmp = {} @ scope` followed by `tmp = nil` is collected whenever
+- `local tmp = {} @ lifetime.scope` followed by `tmp = nil` is collected whenever
   the collector runs, not at the block exit.
 - `destroy` on a dead or dying object is a no-op, so a destructor may
   destroy its own dependents by hand.
 - `f !@ x` is pinned by `x` even though every other `@ x` is not, and
   stays pinned when moved with `@`.
 - A hook has no default lifetime: block-exit cleanup is written
-  `f !@ scope`.
-- `defer` and `token` are ordinary names; hooks are made with `!@`, tokens
-  with `lifetime.token([name])`.
+  `f !@ lifetime.scope`.
+- `defer`, `token`, `scope` and `caller` are ordinary names; hooks are
+  made with `!@`, tokens with `lifetime.token([name])`, and the block
+  anchor is the spelling `lifetime.scope` after `@` or `!@`.
 - `lifetime.token("p") @ self` dies early if nothing holds it, like any
   `@ self`; keep it in a field or anchor it with `lifetime.pin(self)`.
-- `scope` cannot be stored or passed; there is no scope value and no
-  loop-iteration trap.
+- `lifetime.scope` is syntax after `@`, not a value: stored in a
+  variable it is a marker that cannot be anchored to. There is no scope
+  value and no loop-iteration trap.
 - There is no `caller`: a function returns an object on the default
-  lifetime and the receiver anchors it (`local x = f() @ scope`).
+  lifetime and the receiver anchors it (`local x = f() @ lifetime.scope`).
 - A plain table the runtime never saw is collected silently, `__destroy`
   or not; `x @ lifetime.reachable` registers it.
-- `return x` from a block where `x @ scope` hands the caller a tombstone.
+- `return x` from a block where `x @ lifetime.scope` hands the caller a tombstone.

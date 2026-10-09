@@ -11,7 +11,7 @@ design follows decisions 5, 6, 10 and 11 of
 source (.lt)  →  lexer  →  parser (AST)  →  emit  →  Lua 5.1 source
 ```
 
-- `lifetime/lexer.lua`: Lua 5.1 tokens plus `@` and the keywords.
+- `lifetime/lexer.lua`: Lua 5.1 tokens plus `@` and `!@`.
 - `lifetime/parser.lua`: a recursive-descent parser for the grammar
   below, producing a plain table AST that records the line of every node.
 - `lifetime/emit.lua`: code generation from the AST.
@@ -33,9 +33,10 @@ Lua 5.1 (`lparser.c`, the manual's §8) plus:
 exp        ::= … | exp '@' anchor | exp '!@' anchor
 stat       ::= … | prefixexp '@' anchor
              | prefixexp '!@' anchor | functiondef '!@' anchor
-anchor     ::= prefixexp | 'scope' | '(' anchorlist ')'
+anchor     ::= scopeanchor | prefixexp | '(' anchorlist ')'
 anchorlist ::= anchoritem { ',' anchoritem }
-anchoritem ::= exp | 'scope'
+anchoritem ::= scopeanchor | exp
+scopeanchor ::= 'lifetime' '.' 'scope'
 ```
 
 - `@` has the lowest precedence of any operator and is postfix.
@@ -45,12 +46,16 @@ anchoritem ::= exp | 'scope'
   near '!' (use '~=' for inequality)`.
 - A statement may start with `function (`, an anonymous function, which
   must then be followed by `!@`; `function name` keeps its Lua meaning.
-- `scope` is valid only where `anchor` and `anchoritem` name it. `@()` is
-  a syntax error. Lists do not nest.
-- Reserved words: none added; `defer` and `token` are ordinary names.
-  Whether `scope` is reserved everywhere is open ([06-open-questions.md](06-open-questions.md),
-  "Reserved words"); until settled, the parser treats it as a keyword only
-  where the grammar names it.
+- `scopeanchor` is the two Names `lifetime` and `scope` joined by `.`,
+  with nothing after them that would continue a `prefixexp` (no `.x`, `[`,
+  `(`, `:` or string argument). The parser tries it before `prefixexp`
+  where `anchor` and `anchoritem` name it and matches by spelling, whatever
+  `lifetime` names at that point; anywhere else `lifetime.scope` is an
+  ordinary `prefixexp` and `lifetime.scope.x` or `lifetime.scope()` are
+  ordinary expressions. `@()` is a syntax error. Lists do not nest.
+- Reserved words: none added. `defer`, `token`, `scope` and `caller` are
+  ordinary names ([05-decisions.md](05-decisions.md), "The scope anchor is
+  spelled `lifetime.scope`").
 
 ## The generated chunk header
 
@@ -76,11 +81,11 @@ these names gets what it wrote.
 | --- | --- |
 | `e @ a` | `__lt_attach(e, false, a)` |
 | `e @ (a, b)` | `__lt_attach(e, false, a, b)` |
-| `e @ scope` | `__lt_attach(e, false, <scope local>)` |
+| `e @ lifetime.scope` | `__lt_attach(e, false, <scope local>)` |
 | `e @ lifetime.pin(a, b)` | `__lt_attach(e, false, lifetime.pin(a, b))` (the value carries no term) |
 | `x @ a` as a statement | the same call as a statement |
 | `f !@ a` | `lifetime.hook(f, nil, a)` |
-| `f !@ scope` | `lifetime.hook(f, nil, <scope local>)` |
+| `f !@ lifetime.scope` | `lifetime.hook(f, nil, <scope local>)` |
 | `f !@ (a, b)` | `lifetime.hook(f, nil, a, b)` |
 | `local h = f !@ a`, `h = f !@ a`, `t.h = f !@ a` | `… = lifetime.hook(f, "h", a)`: the name of the binding target ([02-semantics.md](02-semantics.md), "Named hooks") |
 
@@ -96,7 +101,7 @@ tasks; this table fixes the shape.
 ## Blocks: prologue and epilogue on every exit path
 
 A block **needs a scope record** if it contains, directly (not in a nested
-function), `scope` as an anchor (after `@` or `!@`, alone or in a list). Only such
+function), `lifetime.scope` as an anchor (after `@` or `!@`, alone or in a list). Only such
 blocks get code; every
 other block is emitted verbatim. For a block that needs one:
 
@@ -153,7 +158,7 @@ end
 - Message handlers of an enclosing `xpcall` run at the raise point, before
   the epilogue, as they would in Lua.
 - The wrapper is emitted only for blocks that need a scope record; a block
-  with no `scope` anchor costs nothing. Where it is
+  with no `lifetime.scope` anchor costs nothing. Where it is
   emitted it allocates a closure per entry into the block, the most
   expensive thing the transpiler generates; the benchmarks of task 010
   measure it, and "Catch-site unwinding" in
@@ -173,7 +178,7 @@ per-block wrapper.
 
 A function body is a block and gets code only under the block rule above:
 a record, an epilogue on fall-through and before every `return`, and the
-wrapper, when and only when the body anchors to `scope`. A function that
+wrapper, when and only when the body anchors to `lifetime.scope`. A function that
 does not is emitted verbatim, and a call costs what it costs in Lua.
 There is no per-function prologue: the anchor for the caller's block that
 would have needed one is not part of the language

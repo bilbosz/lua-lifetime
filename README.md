@@ -12,7 +12,7 @@ transpiles yet except a plain Lua file to itself.
 
 ```lua
 local function serve(socket)
-  local conn = Connection.open(socket) @ scope      -- dies at block exit
+  local conn = Connection.open(socket) @ lifetime.scope      -- dies at block exit
   local buf = Buffer.new(64 * 1024) @ conn          -- dies with conn, or earlier if unreferenced
   local header = Slice.new(buf, 0, 512) @ (buf, conn)
   function() metrics.connections = metrics.connections - 1 end !@ conn
@@ -22,7 +22,7 @@ end
 -- most recently attached first: the hook, then header, then buf.
 ```
 
-Lua source with `@`, the hook operator `!@` and `scope` goes in,
+Lua source with `@`, the hook operator `!@` and `lifetime.scope` goes in,
 plain Lua 5.1 comes out, and the generated code calls into the runtime
 module `lifetime`, which is the language's own `lifetime` table.
 Ownership is deterministic: anchored lifetimes, scope exit, `destroy`,

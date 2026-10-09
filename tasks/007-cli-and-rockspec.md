@@ -41,7 +41,7 @@ returns.
   == "a"`, and the chunk name `FILE`; the program's `return` value is
   ignored; exit status 0.
 - After the chunk returns, its own scope epilogue having destroyed the
-  objects anchored to the main chunk's `scope` (reason `"anchor"`), `run`
+  objects anchored to the main chunk's `lifetime.scope` (reason `"anchor"`), `run`
   sets the exit flag; a global with a
   `__destroy` registered through `@` prints at exit with reason `"exit"`.
 - An uncaught error prints `lifetime: <message>` and a traceback on stderr

@@ -161,10 +161,15 @@ allocated lazily: on the first `@` that makes the object need one, not at
 A **scope record** is a runtime table the generated block prologue
 creates (`lifetime.enter()`) and the epilogue destroys
 (`lifetime.exit(record, line)`): a cascade with the record as root, no
-body, reason `"anchor"` for its dependents. `@ scope` in the block compiles
-to an attachment to that record. The transpiler resolves `scope`
+body, reason `"anchor"` for its dependents. `@ lifetime.scope` in the block compiles
+to an attachment to that record. The transpiler resolves `lifetime.scope`
 statically, so a record exists only for a block that anchors to it, and
-only while that block is active.
+only while that block is active. The runtime's own field `lifetime.scope`
+is the marker of 02, "Scopes: `lifetime.scope`": a table with a private
+metatable whose `__index`, `__newindex` and `__call` raise `attempt to
+index lifetime.scope`, whose `__tostring` is `lifetime.scope`, and which
+`attach` refuses with `attempt to anchor to lifetime.scope through a
+variable`. It is never a scope record.
 
 Nothing runs per call. There is no anchor for the calling function's
 block ([05-decisions.md](05-decisions.md), "`caller` is removed"), so the
@@ -212,7 +217,7 @@ same work by hand.
 - a plain Lua chunk transpiles to itself;
 - an object never anchored, hooked, created by `lifetime.token` or passed to
   `destroy`, `discard` or `lifetime.of` has no state record and no proxy;
-- a block with no `@ scope` and no `!@ scope` gets no scope record and no
+- a block with no `@ lifetime.scope` and no `!@ lifetime.scope` gets no scope record and no
   wrapper;
 - a function call costs what it costs in Lua: no generated function has
   a prologue or an epilogue of its own ("Scope records").
