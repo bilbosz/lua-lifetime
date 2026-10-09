@@ -17,7 +17,8 @@ local TEST_MODULES = {
     "tests.test-lexer",
     "tests.test-parser",
     "tests.test-emit",
-    "tests.test-cli"
+    "tests.test-cli",
+    "tests.test-bench"
 }
 
 local what = arg and arg[1] or "all"

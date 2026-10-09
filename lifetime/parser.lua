@@ -64,7 +64,11 @@ local parser = {}
 -- Under LuaJIT, run this module in the interpreter: a recursive walk
 -- with a dispatch per node makes the trace compiler abort and flush its
 -- machine code over and over, which made a build several times slower
--- than with no compiler at all (task 001, handoff). Lua 5.1 has no `jit`.
+-- than with no compiler at all (task 001, handoff). The number is the
+-- benchmark `build/lifetime-largest` in bench/bench-build.lua, `cli.build`
+-- on the largest file under lifetime/ (`make bench`): about 4 ms with
+-- this call under LuaJIT, about 30 ms without (task 010). Lua 5.1 has no
+-- `jit`.
 if jit then
     jit.off(true, true)
 end
