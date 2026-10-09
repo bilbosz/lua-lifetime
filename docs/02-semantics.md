@@ -108,7 +108,7 @@ Grammar (`xd/docs/04-syntax.md` as changed by decision 11):
 
 ```ebnf
 exp    ::= … | exp '@' anchor
-stat   ::= … | prefixexp '@' anchor
+stat   ::= … | prefixexp '@' anchor { '@' anchor }
 anchor ::= scopeanchor | prefixexp | '(' anchorlist ')'
 anchorlist ::= anchoritem { ',' anchoritem }
 anchoritem ::= scopeanchor | exp
