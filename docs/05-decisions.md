@@ -416,3 +416,56 @@ its instances in its constructor (one line in Treflove's
 `setmetatable`. This is a consequence of decision 2 that file 10 does not
 state; the human carries it back to `xd`.
 → [02-semantics.md](02-semantics.md), "`__destroy` and reasons", rule 7
+
+## The lexer accepts LuaJIT's lexical extensions
+
+Decided in task 005, which task 001 left the question to (its *Spec
+issues found*, item 2). The transpiler's input is "Lua 5.1 plus" the
+extension ([04-transpiler.md](04-transpiler.md), "Grammar"), and
+LuaJIT's documented extensions count where LuaJIT differs
+([01-overview.md](01-overview.md)). The rule: the lexer keeps Lua 5.1's
+reading unless accepting a LuaJIT extension costs nothing on the plain
+path and cannot change the meaning of a valid Lua 5.1 chunk. Every
+extension on task 001's list passes it, because each is an error in Lua
+5.1, so no valid Lua 5.1 chunk contains it, and the output carries the
+source spelling of every token on its line, so each interpreter reads
+the token its own way and Lua 5.1 rejects a LuaJIT-only token when it
+loads the output, at the same line. This extends what the lexer already
+did where the two interpreters disagree (`[[` inside a long string,
+unknown escapes such as `\q`): accept the union.
+
+Accepted:
+
+- a UTF-8 byte order mark at the start, and then a first line starting
+  with `#` (both skipped, the line break kept so lines keep their
+  numbers); LuaJIT's lexer skips both in every chunk, Lua 5.1's
+  `luaL_loadfile` skips the `#` line in a file. This moves the `#!`
+  handling that task 001's review assigned to task 007 into the lexer;
+- bytes >= 128 in names;
+- `\z` followed by white space that contains a line break, read as
+  LuaJIT reads it (the white space is skipped); `\z` elsewhere is still
+  Lua 5.1's `z`, since Lua 5.1 accepts it there;
+- binary numerals (`0b101`) and the FFI suffixes: `LL`, `ULL` (and
+  `LLU`), any case, on a decimal, hex or binary integer, and `i` on any
+  numeral. The lexer checks these shapes itself rather than asking
+  `tonumber`, which reads `0b101` under LuaJIT and not under Lua 5.1, so
+  the transpiler accepts the same chunks whichever interpreter runs it.
+
+`\x41` and `\u{41}` needed nothing: Lua 5.1 reads them as the unknown
+escapes `x41` and `u{41}`, so they already passed. A token's decoded
+`value` is Lua 5.1's reading wherever Lua 5.1 accepts the token; nothing
+in the output depends on it.
+
+Not accepted: numerals keep Lua 5.1's delimiting, so `0x1p-4` is the
+malformed `0x1p` and `0x1.8` is `0x1` followed by `.8`. Accepting them as
+one token would change a valid Lua 5.1 chunk (`0x1..8` is `"18"` in Lua
+5.1).
+
+LuaJIT's `goto NAME` and `::NAME::` are in the grammar
+([04-transpiler.md](04-transpiler.md), "Grammar"). As in LuaJIT, `goto`
+starts a statement only when a Name follows it, so `goto` stays an
+ordinary name wherever Lua 5.1 allows one; `::` is one token, which no
+valid Lua 5.1 chunk contains. The parser does not resolve labels: LuaJIT
+reports an undefined or duplicate label when it loads the output, at the
+same line, and Lua 5.1 rejects the `goto`.
+→ [04-transpiler.md](04-transpiler.md), "Pipeline" and "Grammar"

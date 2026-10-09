@@ -161,6 +161,10 @@ function parser.parse(tokens, chunkname)
     -- The index of the token a table constructor looked at after a Name
     -- that turned out to start an expression (see `constructor`).
     local looked_ahead
+    -- The number of Hook nodes made so far: a statement that binds names
+    -- looks for hooks to name only when its values made one, so that plain
+    -- Lua pays nothing for named hooks.
+    local hooks = 0
 
     -- Raise a syntax error near the current token, at the line Lua names:
     -- the line where the lexer stands after reading it.
@@ -195,12 +199,6 @@ function parser.parse(tokens, chunkname)
     -- or a symbol.
     local function is(s)
         return tok.value == s and tok.type ~= "string"
-    end
-
-    -- Is the current token the operator `@` or `!@`? Returns its text.
-    local function anchor_operator()
-        local v = tok.value
-        return (v == "@" or v == "!@") and tok.type == "symbol" and v
     end
 
     -- Consume the keyword or symbol `s`, record its line in `lines`.
@@ -250,7 +248,7 @@ function parser.parse(tokens, chunkname)
         return t.type == "eof"
     end
 
-    local block, expr, primaryexp, suffixedexp
+    local block, expr, primaryexp
 
     -- explist1: expr {',' expr}; the commas go into `lines`.
     local function explist(lines)
@@ -393,9 +391,10 @@ function parser.parse(tokens, chunkname)
         raise("unexpected symbol")
     end
 
-    -- The suffixes of a primaryexp after its prefixexp `e`:
-    -- { '.' NAME | '[' exp ']' | ':' NAME funcargs | funcargs }.
-    function suffixedexp(e)
+    -- primaryexp: prefixexp { '.' NAME | '[' exp ']' | ':' NAME funcargs |
+    -- funcargs }. With `e`, the prefixexp is `e`, already read.
+    function primaryexp(e)
+        e = e or prefixexp()
         while true do
             local t = tok
             if t.type == "string" then
@@ -424,11 +423,6 @@ function parser.parse(tokens, chunkname)
                 return e
             end
         end
-    end
-
-    -- primaryexp: prefixexp { '.' NAME | '[' exp ']' | ':' NAME funcargs | funcargs }.
-    function primaryexp()
-        return suffixedexp(prefixexp())
     end
 
     -- Would the token `t` continue a prefixexp: `.`, `[`, `:`, `(`, `{`
@@ -490,7 +484,10 @@ function parser.parse(tokens, chunkname)
     -- anchor ::= scopeanchor | prefixexp | '(' anchorlist ')'
     -- (docs/04-transpiler.md, "Grammar"). Returns the Anchor or Hook node.
     local function apply_anchor(e)
-        local node = {tag = tok.value == "@" and "Anchor" or "Hook", line = e.line, lines = {tok.line}, expr = e}
+        local node = {tag = "Anchor", line = e.line, lines = {tok.line}, expr = e}
+        if tok.value == "!@" then
+            node.tag, hooks = "Hook", hooks + 1
+        end
         advance()
         local item = scopeanchor()
         if item then
@@ -528,7 +525,7 @@ function parser.parse(tokens, chunkname)
             end
             local paren = {tag = "Paren", line = open, lines = {open, lines[3]}, expr = inner}
             lines[2], lines[3] = nil, nil
-            node.anchors = {suffixedexp(paren)}
+            node.anchors = {primaryexp(paren)}
             return node
         end
         node.anchors, node.list = items, true
@@ -607,8 +604,11 @@ function parser.parse(tokens, chunkname)
     -- the expression they end is no operand of a binary operator.
     function expr()
         local e = subexpr(0)
-        while anchor_operator() do
+        -- Inlined: this runs once per expression.
+        local v = tok.value
+        while (v == "@" or v == "!@") and tok.type == "symbol" do
             e = apply_anchor(e)
+            v = tok.value
         end
         return e
     end
@@ -738,7 +738,7 @@ function parser.parse(tokens, chunkname)
             -- followed by `!@`" (stat ::= functiondef '!@' anchor).
             advance()
             local func = body({tag = "Function", line = line, lines = {line}}, tok.line)
-            if anchor_operator() ~= "!@" then
+            if not is("!@") then
                 raise_expected("!@")
             end
             return {tag = "HookStat", line = line, expr = apply_anchor(func)}
@@ -785,10 +785,13 @@ function parser.parse(tokens, chunkname)
         if is("=") then
             lines[#lines + 1] = tok.line
             advance()
+            local before = hooks
             local exprs, names = explist(lines), node.names
             node.exprs = exprs
-            for i = 1, #exprs < #names and #exprs or #names do
-                name_hook(exprs[i], names[i].name)
+            if hooks ~= before then
+                for i = 1, #exprs < #names and #exprs or #names do
+                    name_hook(exprs[i], names[i].name)
+                end
             end
         end
         return node
@@ -819,8 +822,8 @@ function parser.parse(tokens, chunkname)
     -- operator, as the grammar has it: `x @ a @ b` is no statement.
     local function exprstat(line)
         local e = primaryexp()
-        local op = anchor_operator()
-        if op then
+        local op = tok.value
+        if (op == "@" or op == "!@") and tok.type == "symbol" then
             return {tag = op == "@" and "AnchorStat" or "HookStat", line = line, expr = apply_anchor(e)}
         end
         if e.tag == "Call" or e.tag == "Invoke" then
@@ -840,14 +843,17 @@ function parser.parse(tokens, chunkname)
             targets[#targets + 1] = primaryexp()
         end
         check_next("=", lines)
+        local before = hooks
         local exprs = explist(lines)
         node.exprs = exprs
-        for i = 1, #exprs < #targets and #exprs or #targets do
-            local target = targets[i]
-            -- `NAME =` (an Id) and `t.NAME =` (a Member) name a hook,
-            -- `t[k] =` (an Index) does not.
-            if target.tag ~= "Index" then
-                name_hook(exprs[i], target.name)
+        if hooks ~= before then
+            for i = 1, #exprs < #targets and #exprs or #targets do
+                local target = targets[i]
+                -- `NAME =` (an Id) and `t.NAME =` (a Member) name a hook,
+                -- `t[k] =` (an Index) does not.
+                if target.tag ~= "Index" then
+                    name_hook(exprs[i], target.name)
+                end
             end
         end
         return node

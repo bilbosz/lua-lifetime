@@ -99,6 +99,8 @@ BASE=master`, none beyond the threshold, and six alternating runs of
 | `build/plain.lt` | `bench-build.lua` | `cli.build` on `examples/plain.lt` | `loadstring` of the same text |
 | `build/generated-5000` | `bench-build.lua` | `cli.build` on a generated 5 000-line plain Lua file | `loadstring` of the same text |
 | `build/lifetime-largest` | `bench-build.lua` | `cli.build` on the largest file under `lifetime/` (today `lifetime/parser.lua`); cited by the `jit.off` comments in `lifetime/parser.lua` and `lifetime/emit.lua` | `loadstring` of the same text |
+| `parse/lifetime-largest` | `bench-build.lua` | the lexer and the parser alone on the same file as `build/lifetime-largest` (task 005) | `loadstring` of the same text |
+| `parse/extension-5000` | `bench-build.lua` | the lexer and the parser on a generated 5 000-line file that uses `@`, the list form, `!@` and `lifetime.scope` on most lines (task 005); a base without the extension cannot run it | `loadstring` of the same file with the extension left out |
 | `plain/transpiled` | `bench-plain.lua` | running the transpiled output of `bench/plain/workload.lua` | running the same source loaded directly; ratio 1.0 within noise |
 
 ## Adding a benchmark
