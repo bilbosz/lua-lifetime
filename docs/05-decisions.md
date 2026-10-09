@@ -466,3 +466,55 @@ that continue a `prefixexp` after `lifetime.scope`, which "Grammar"
 intended and the parenthetical omitted.
 → [04-transpiler.md](04-transpiler.md), "Grammar";
 [02-semantics.md](02-semantics.md), "Acquiring a lifetime"
+
+## `destroy` by hand inside a destructor
+
+Decided by the orchestrator on 2026-10-09 on the human's standing
+authority, closing the reading task 002 found (*Spec issues found*, item
+1). "Explicit destruction" said `destroy` on a dying object is a no-op
+"so a destructor body may destroy its own dependents by hand", but with
+decide-then-destroy every dependent is already marked dying when the
+body runs, so the two halves of the sentence contradicted each other.
+Decided: the no-op covers an object whose own destruction has begun
+(its body started, or it is being tombstoned) and a dead object; a
+dependent that is decided but not yet reached is destroyed now, as a
+cascade of its own, so a body can order its dependents' deaths by hand
+and the runtime's later walk skips them. This is what the task's test
+case 3 pinned and what the sentence meant; ownership order stays the
+attachment order unless a body chooses otherwise for its own
+dependents, which decision 10 allows.
+→ [02-semantics.md](02-semantics.md), "Explicit destruction: `destroy`
+and `discard`"
+
+## A tombstone keeps its state record
+
+Decided by the orchestrator on 2026-10-09 on the human's standing
+authority, closing task 002's item 2. "Tombstones" said `next` and
+`pairs` see an empty table; "The tombstone" in 03 keeps the reduced
+state record in the emptied table, and "The state record's key is a
+private table" already accepts that `next(t) == nil` is not "empty" for
+a seen table. A tombstone is a seen table, so 03 wins: `next(dead)`
+returns the private key and nothing else, `lifetime.is_state(k)` skips
+it, `#dead` is 0. Keeping the record is what lets the tombstone's
+message name the object, where and why it died, without a side table,
+which rule 6 forbids. With it, 03's rule for `<where>` is corrected:
+`destroy` and `discard` read the position once per call, because every
+tombstone's message carries it, not only when the object has
+dependents or a destructor.
+→ [02-semantics.md](02-semantics.md), "Tombstones and `lifetime.alive`";
+[03-runtime.md](03-runtime.md), "The cascade"
+
+## Pinned dependents are held by their anchors
+
+Decided by the orchestrator on 2026-10-09 on the human's standing
+authority, closing task 002's item 4 for task 004. "The implicit
+`reachable` term" promises that `x @ lifetime.pin(a)` is alive while
+`a` is, referenced or not, but 03 gave anchors only a weak-valued
+`dependents` table and a strong `hooks` table, so nothing said where
+the strong reference to a pinned dependent lives. Decided: the strong
+table holds every pinned dependent, hooks included, and is named
+`strong`; the weak table holds every dependent with the term; both share
+one sequence counter and are merged by sequence number. Rule 6 is kept:
+the runtime holds strongly exactly what the language says cannot be
+collected while its anchor lives, and nothing else.
+→ [03-runtime.md](03-runtime.md), "The state of an object", "Attachment"
