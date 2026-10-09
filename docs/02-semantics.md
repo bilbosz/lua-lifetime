@@ -531,9 +531,9 @@ end
    the runtime never saw is collected silently, as Lua collects it; `x @
    lifetime.reachable` is the way to register an object on the default
    lifetime so that its destructor runs when the collector finds it. This
-   follows from decision 2 (the host owns the heap) and is listed under
-   [06-open-questions.md](06-open-questions.md), "Registering plain
-   objects", for confirmation.
+   follows from decision 2 (the host owns the heap) and was confirmed by
+   the human ([05-decisions.md](05-decisions.md), "Registration is
+   `x @ lifetime.reachable`").
 
 ## Tombstones and `lifetime.alive`
 
@@ -605,10 +605,11 @@ rule, whatever caused the death:
 - One cascade is one `destroy()` or `discard()` call, one scope exit, one
   finalizer run, or the whole program-end sweep; a `destroy()` inside a
   destructor is a cascade of its own and raises to that call.
-- A destructor run by the collector (reason `"unreachable"`) has no
-  statement to raise at; what happens to its error is open
-  ([06-open-questions.md](06-open-questions.md), "Errors in finalizer-run
-  destructors").
+- A destructor run by the collector (reason `"unreachable"`, or `"exit"`
+  at program end) has no statement to raise at: the sentinel's finalizer
+  runs the cascade in protected mode and every error of it goes to
+  `destroyerror`, the first included ([05-decisions.md](05-decisions.md),
+  "Errors in finalizer-run destructors go to `destroyerror`").
 
 `destroyerror(obj, err)` is a global function, looked up raw in `_G` at the
 moment an error is routed, called with the dying object (still usable) and
@@ -702,14 +703,15 @@ not close the state, so step 2 does not run after it; LuaJIT's
 | `lifetime.of(obj)` | `obj`'s current formula as a lifetime value, a snapshot: a later move of `obj` does not change it. Error on `nil`, a value, a dead object. |
 | `lifetime.alive(x)` | The liveness check ("Tombstones"). |
 | `lifetime.dependents(obj)` | A fresh array of the live objects and hooks whose formula mentions `obj`, in attachment order. |
-| `lifetime.format(v)` | A string rendering of a lifetime value, an object's formula, a token or a hook: `(conn, reachable)`, `conn` (pinned), `reachable`, `token period`, `scope`, `hook cleanup` for a named hook and `hook` for an anonymous one, `none` for a value whose anchors all died. Object anchors render through `tostring`. |
+| `lifetime.format(v)` | A string rendering of a lifetime value, an object's formula, a token or a hook: `(conn, reachable)`, `conn` (pinned), `reachable`, `token period`, `scope`, `hook cleanup` for a named hook and `hook` for an anonymous one. Object anchors render through `tostring`, so a dead anchor in a snapshot renders as `dead <name>`. |
 
 A **lifetime value** is a table with the private metatable `"lifetime"`:
 no fields, no lifetime of its own. It holds its anchors strongly, so
-holding a value keeps its anchors reachable. It is a one-way gate: an
-anchor that dies drops out of every value that mentioned it, and a value
-left with no anchor is the empty lifetime, which cannot be used after `@`
-(`attempt to anchor to an empty lifetime`). `==` on two values compares
+holding a value keeps its anchors reachable. It is an immutable snapshot:
+an anchor that dies stays in the value, and `@` on a value that mentions
+a dead anchor raises `attempt to anchor to a dead table` (or `dead
+token`), as writing that anchor directly would ([05-decisions.md](05-decisions.md),
+"Lifetime values are immutable snapshots"). `==` on two values compares
 structure. `lifetime.of(x)` on the default lifetime returns
 `lifetime.reachable`, which when spliced refers to the reachability of the
 object being anchored, not of `x`.

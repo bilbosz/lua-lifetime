@@ -137,7 +137,10 @@ proxy and everything it references for the finalizer, and the finalizer
 reaches the table through `getmetatable(proxy).owner`. No side table is
 needed, which is what decision 3 requires.
 
-The finalizer runs `cascade(obj, "unreachable", "collector")` if the
+The finalizer runs `cascade(obj, "unreachable", "collector")` in
+protected mode, routing every error of the cascade to `destroyerror` (02,
+"Errors in destructors": a finalizer has no statement to raise at, and
+Lua 5.1 would surface the error at an unrelated allocation), if the
 object is still `"dying"`-eligible (not already dead through an earlier
 walk of the same collection, which the reverse-creation order makes
 common), with the exit flag of "Program end" turning the reason into
