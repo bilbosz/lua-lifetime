@@ -106,4 +106,61 @@ generated file.
 
 ## Spec issues found
 
+1. **The exit flag after an uncaught error.** 03, "Program end", sets the
+   flag "after the main chunk has returned and its scope epilogue has
+   run"; 04 says "set after the chunk returns". Neither says what the
+   finalizers of the closing state report when the chunk ended with an
+   uncaught error, although the state closes then too (the standalone
+   interpreter reports, then closes it). Implemented: `run` sets the flag
+   after the report as well, so they report `"exit"` (checked against
+   task 004's runtime: `destroy local (anchor)`, the report, then
+   `destroy global (exit)`). The other reading, `"unreachable"` after an
+   error, is one line in `lifetime/cli.lua`. 03 could say which.
+2. **The exit flag's name.** Nothing in `docs/` names it; task 004
+   implements `lifetime.set_exiting(flag)` (its spec issue 2) and `run`
+   calls it when it exists. Until task 004 merges, the test of test case
+   1 checks the main-scope half of `tests/fixtures/exit_order.lt` and
+   prints a note; the fixture moves to `examples/exit_order.lt` once both
+   tasks are on `master` (every example must pass, so it cannot wait in
+   `examples/`). Run by hand against task 004's `lifetime/init.lua`
+   (`origin/task/004-...` at `6199bf1`), `tests/test-cli.lua` and
+   the conformance suite pass under both interpreters, test case 1
+   included.
+3. **A plain chunk under `lifetime run` pays the runtime's `pcall`.**
+   04 says `run` calls the chunk through the runtime's `pcall`, so `run`
+   requires the runtime whatever the chunk is, and the runtime replaces
+   `pcall`, `xpcall`, `coroutine.resume` and `coroutine.wrap`. A plain
+   chunk run as `lua FILE` keeps the originals; under `lifetime run` each
+   of its `pcall`s costs the wrapper (`scope/pcall-empty`: ratio about
+   1.7 under LuaJIT, 1.0 under Lua 5.1). Requiring the runtime only for a
+   chunk with a header would miss scopes left open by transpiled modules
+   that a plain main chunk requires; unwinding those after the fact needs
+   a runtime entry point that does not exist (an unwind to depth 0). The
+   task's *Performance* line ("must not add per-call or per-block cost
+   over loading the generated file directly") holds for a chunk that uses
+   the extension, which requires the runtime itself; for a plain chunk it
+   holds except for this. Kept on the spec's side; the human decides.
+4. **How the uncaught error is reported, where the standalone
+   interpreters differ or the spec is silent.** Choices, each one line in
+   `lifetime/cli.lua`: the chunk name is `@FILE`, as `luaL_loadfile`
+   gives it (positions read `FILE:LINE:`, a name over 60 bytes keeps its
+   tail); a syntax error under `run` reads `lifetime: FILE:LINE:
+   <message>` with no traceback, as `lua` reports a load error behind its
+   name (`build` keeps the bare shape of 04); a non-string error object
+   is rendered as LuaJIT's interpreter renders it (`__tostring`, else
+   `(error object is a <type> value)`, `nil` included, where both
+   interpreters print nothing for `nil`); the traceback is the raise
+   point's, cut below the main chunk (the frames of `lifetime/cli.lua`,
+   the runtime's `xpcall` and `bin/lifetime`), so it ends at `FILE:LINE:
+   in main chunk` without the interpreter's last `[C]: ?`.
+5. **`luarocks` is not installed on this machine**, so the criterion
+   "`luarocks make lua-lifetime-dev-1.rockspec` succeeds on both
+   configurations" is untested. Tested instead: the rockspec's fields
+   and its module list against `lifetime/*.lua` (read as luarocks reads
+   the file), and the command run from outside the checkout in the
+   layout a builtin rock installs (modules under the tree's
+   `share/lua/5.1`, `lifetime` as `lifetime/init.lua`, the script under
+   the rock's `bin/`, the tree put on `package.path` by `-e` as the
+   luarocks wrapper does), under both interpreters.
+
 ## Review log
