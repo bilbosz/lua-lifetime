@@ -126,4 +126,50 @@ numbers in the handoff.
 
 ## Spec issues found
 
+- **`@ (a, (b, c))` and Lua's wording (task text vs. Lua 5.1).** The
+  criterion says this raises `unexpected symbol near ','`. A nested list
+  is Lua's parenthesised expression (the criterion says so too), and for
+  that Lua 5.1 and LuaJIT both report `')' expected near ','` (`x = (b,
+  c)`), with `(to close '(' at line N)` when the `(` is on an earlier
+  line. The parser follows Lua (CLAUDE.md, rule 1), as task 001 did for
+  `x @ y`; `tests/test-parser.lua` pins the message. Decision needed:
+  correct the criterion's wording.
+- **A statement carries one operator.** The grammar's `stat ::= prefixexp
+  '@' anchor | prefixexp '!@' anchor | functiondef '!@' anchor` has no
+  chain, so `x @ a @ b` and `f !@ a @ b` as statements are syntax errors
+  (`unexpected symbol near '@'` at the second operator); as expressions
+  they chain (`local m = f !@ a @ b` is `Anchor(Hook(f, a), b)`). The
+  parser follows the grammar. If a statement should chain, the grammar
+  needs `stat ::= prefixexp ('@' | '!@') anchor {('@' | '!@') anchor}`;
+  the parser change is two lines. Question, current choice: no chain.
+- **`{` after `lifetime.scope`.** `docs/04-transpiler.md`, "Grammar",
+  defines the scope anchor as the spelling "with nothing after them that
+  would continue a `prefixexp` (no `.x`, `[`, `(`, `:` or string
+  argument)". A table argument (`lifetime.scope {…}`, a call) continues
+  a prefixexp too, so the parser treats `{` like `(` and the string
+  argument. Suggest adding `{` to the parenthesis; no decision needed.
+- **Named hooks through `@` and parentheses.** "Named hooks" names the
+  hook of `local NAME = f !@ …`. The parser also names it when the hook
+  is moved or parenthesised in the bound value (`local h = f !@ a @ b`,
+  `local h = (f !@ a)`), since the value bound is the hook in both. A
+  hook anywhere else in the value (an argument, a table field, an
+  operand) stays anonymous. Question, current choice: name through `@`
+  and `( )`.
+- **`lifetime.scope` followed by an operator in a list** (no decision
+  needed, recorded so the reviewer can check the reading). The parser
+  tries the scope anchor before `exp` in `anchoritem`, and an operator
+  does not continue a prefixexp, so `x @ (lifetime.scope + 1)` and `x @
+  (lifetime.scope or a)` are syntax errors (`')' expected near '+'`).
+  Anchoring to an expression of the marker would raise at run time
+  anyway (02, "Scopes: `lifetime.scope`").
+- **For task 006: an anchor item is one value.** `x @ f()` and `x @ (a,
+  f())` hold a call as the last item. Emitted as the last argument of
+  `__lt_attach`, a call or `...` would pass all its results; 02,
+  "Acquiring a lifetime", evaluates "each element", so the emitter has to
+  truncate (parenthesise) a multi-value last item.
+- **For task 007: the `#` first line.** The decision recorded on this
+  branch (05, "The lexer accepts LuaJIT's lexical extensions") moves the
+  skipping of a `#` first line into the lexer, which task 001's review
+  had assigned to task 007's command.
+
 ## Review log
