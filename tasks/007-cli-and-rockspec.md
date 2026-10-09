@@ -40,9 +40,9 @@ returns.
 - `lifetime run FILE a b` runs the program with `arg[0] == FILE`, `arg[1]
   == "a"`, and the chunk name `FILE`; the program's `return` value is
   ignored; exit status 0.
-- After the chunk returns, `run` destroys the main record (objects
-  anchored to the main chunk's `scope` or to `caller` from a top-level
-  call die, reason `"anchor"`) and sets the exit flag; a global with a
+- After the chunk returns, its own scope epilogue having destroyed the
+  objects anchored to the main chunk's `scope` (reason `"anchor"`), `run`
+  sets the exit flag; a global with a
   `__destroy` registered through `@` prints at exit with reason `"exit"`.
 - An uncaught error prints `lifetime: <message>` and a traceback on stderr
   and exits 1, after the main scope's cascade has run.

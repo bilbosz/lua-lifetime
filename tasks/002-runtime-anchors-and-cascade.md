@@ -122,7 +122,7 @@ state of an object").
 ## Out of scope
 
 - The `reachable` term's effect (the sentinel, finalizers): task 004.
-- Scopes, `caller`, hooks: task 003. Tokens and `pin`: task 004.
+- Scopes, hooks: task 003. Tokens and `pin`: task 004.
 - Non-table dependents (functions, coroutines, userdata): a follow-up once
   `docs/06-open-questions.md`, "Non-table anchors" is settled.
 - Base-class destructors (open question).

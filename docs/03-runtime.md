@@ -156,43 +156,23 @@ destructors; a program that pins everything pays nothing. The proxy is
 allocated lazily: on the first `@` that makes the object need one, not at
 `setmetatable`, and never again for the same object.
 
-## Scope records and `caller`
+## Scope records
 
 A **scope record** is a runtime table the generated block prologue
 creates (`lifetime.enter()`) and the epilogue destroys
 (`lifetime.exit(record, line)`): a cascade with the record as root, no
 body, reason `"anchor"` for its dependents. `@ scope` in the block compiles
-to an attachment to that record.
+to an attachment to that record. The transpiler resolves `scope`
+statically, so a record exists only for a block that anchors to it, and
+only while that block is active.
 
-`caller` uses a **depth counter**, per coroutine, as decision 5
-describes. For speed the counter is not reached through a call: the
-runtime keeps one table `D` per coroutine, with the current depth in
-`D.n` and the record of the activation at depth `d`, if one was asked
-for, in `D[d]`, and a state table `S` whose field `S.D` is the `D` of the
-running coroutine. The generated prologue and epilogue are inline
-([04-transpiler.md](04-transpiler.md), "Functions: prologue and epilogue
-for `caller`"):
-
-```lua
-local __D = __lt_S.D; local __d = __D.n + 1; __D.n = __d     -- prologue
-if __D[__d] then __lt_drop(__D, __d) end; __D.n = __d - 1    -- epilogue
-```
-
-A call that never uses `caller` costs two field reads, two field writes
-and one indexed read: no function call, no allocation. The epilogue
-*assigns* the depth rather than decrementing it, so an error that skipped
-inner epilogues and was caught inside this function is corrected when
-this function returns. A callee's `@ caller` calls `lifetime.caller()`,
-which returns `D[D.n - 1]`, allocating it on first use. `S.D` follows the
-running coroutine because the runtime wraps `coroutine.resume`,
-`coroutine.wrap` and `coroutine.yield` when it is first required and
-swaps `S.D` on each switch; `coroutine.running` is never called on the
-hot path. Two things this design leaves open are recorded in
-[06-open-questions.md](06-open-questions.md): the record belongs to the
-calling function's activation, not to its innermost block as decision 5
-words it; and a record left behind by an error that was not caught until
-an outer function is destroyed late, by the next prologue that reaches
-its depth or by the catching function's epilogue.
+Nothing runs per call. There is no anchor for the calling function's
+block ([05-decisions.md](05-decisions.md), "`caller` is removed"), so the
+runtime keeps no depth counter, gives generated functions no prologue or
+epilogue of their own, and does not wrap `coroutine.resume`,
+`coroutine.wrap` or `coroutine.yield`: a coroutine switch is invisible to
+the runtime, and the records of a suspended coroutine are reached only
+through its stack and its sentinels ("The sentinel").
 
 ## Tokens
 
@@ -232,9 +212,10 @@ same work by hand.
 - a plain Lua chunk transpiles to itself;
 - an object never anchored, hooked, created by `lifetime.token` or passed to
   `destroy`, `discard` or `lifetime.of` has no state record and no proxy;
-- a block with no `@ scope` and no bare hook gets no scope record and no
+- a block with no `@ scope` and no `!@ scope` gets no scope record and no
   wrapper;
-- a function whose body contains no call gets no `caller` prologue.
+- a function call costs what it costs in Lua: no generated function has
+  a prologue or an epilogue of its own ("Scope records").
 
 **Cheap.** What the extension costs where it is used:
 
@@ -244,7 +225,6 @@ same work by hand.
 | `x @ b`, a move | one unlink, one link; no allocation |
 | cascade over `n` objects | `O(n)` plus the holes in the walked ranges; no sort, no allocation except the tombstone's state |
 | `lifetime.dependents(a)` | one numeric loop over `a`'s range and the result array |
-| `caller` prologue and epilogue | inline field updates, no call (above) |
 | a block with a scope record | one record (a small table) per entry, plus the wrapper ([04-transpiler.md](04-transpiler.md), "The error path") |
 
 **Forced, and measured.** Two costs follow from the spec and are paid
@@ -262,7 +242,7 @@ Rules the implementation follows on hot paths: runtime functions are
 locals of the module, and the generated chunk binds the ones it calls to
 locals; numeric `for` loops, not `pairs`, over runtime tables; no
 `debug.*`, `coroutine.running` or `select("#", …)` on a path that runs per
-call or per block entry (the line number for a tombstone's message is a
+block entry (the line number for a tombstone's message is a
 constant the emitter passes, not `debug.getinfo`); one state record per
 object, its fields fixed so LuaJIT keeps the table shape stable.
 

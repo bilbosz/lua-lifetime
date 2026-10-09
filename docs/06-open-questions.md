@@ -33,15 +33,6 @@ and a third to `__destroy`; `nil` for `"destroy"`, `"unreachable"` and
 Proposal C of `xd/docs/09-lessons-from-treflove.md`. *Leaning:* a library
 table in the runtime with a hook per member, not a change to arrays.
 
-### `caller` across coroutine boundaries
-
-Decision 5. The depth counter is per coroutine, so the calling function of
-a coroutine body is the resumer or nothing. *Leaning:* the scope that was
-active when the coroutine body started, as `xd/docs/05-open-questions.md`
-leans for the caller's scope; that needs the record to be captured at
-`coroutine.create`, which the runtime cannot see without wrapping
-`coroutine`.
-
 ### Errors in finalizer-run destructors
 
 Decision 2. Lua 5.1 propagates an error raised in `__gc` into whatever
@@ -90,23 +81,11 @@ runtime has seen. *Leaning:* a private table as the key, which no
 serializer can mistake for data, and a documented `lifetime.is_state(k)`
 rule for skipping it; to be settled by task 002 with the human.
 
-### `caller`: function granularity and the error path
-
-Decision 5 says `caller` is "the innermost block of the calling function"
-and that a function epilogue destroys the record, which is only possible at
-function granularity: the record lives until the calling function returns,
-not until its innermost block exits. And an error that unwinds through
-generated prologues without a `pcall` wrapper leaves the depth counter too
-high. *Leaning:* function granularity, stated as such; for the error path,
-the runtime wraps `pcall`, `xpcall`, `coroutine.resume` and
-`coroutine.wrap` at `require` time to save and restore the counter and to
-destroy stale records innermost first. Both touch decision 5's wording and
-go to the human.
-
 ### Catch-site unwinding instead of per-block `pcall` wrappers
 
-If the runtime wraps `pcall` and friends anyway (above), scope records can
-be kept on a per-coroutine stack and unwound at the catching `pcall`,
+If the runtime wrapped `pcall`, `xpcall`, `coroutine.resume` and
+`coroutine.wrap` at `require` time, scope records could be kept on a
+per-coroutine stack and unwound at the catching `pcall`,
 which removes the closure rewrite of `return`, `break` and `...`, the lost
 tail calls inside wrapped blocks, and the yield restriction on plain 5.1.
 The observable difference is only where an uncaught error leaves records
@@ -128,11 +107,11 @@ The extension adds no reserved word: hooks are made with the `!@`
 operator ([05-decisions.md](05-decisions.md)), so `defer` is an ordinary
 name and Treflove's `events/defer-manager.lua` keeps its local `defer`.
 Tokens come from `lifetime.token`, so `token` is an ordinary name too
-(Treflove uses it 41 times). Treflove uses `scope` and `caller` nowhere.
-*Leaning:* `scope` and `caller` are keywords only after `@` or `!@` and
-inside the list form, where a variable of that name could not be
-anchored to anyway. Decision 5 calls them keywords without saying
-reserved; settled by the parser task with the human.
+(Treflove uses it 41 times). Treflove uses `scope` nowhere. *Leaning:*
+`scope` is a keyword only after `@` or `!@` and inside the list form,
+where a variable of that name could not be anchored to anyway. Decision 5
+calls it a keyword without saying reserved; settled by the parser task
+with the human.
 
 ### Teal and `!@`
 
@@ -163,22 +142,6 @@ to be listed among its anchors' dependents and skipped by
 `lifetime.dependents`. *Leaning:* list them; alternatively, refuse a value
 with a dead anchor at `@` and keep snapshots immutable. Task 004 decides
 with the human.
-
-### The cost of `caller` on every call
-
-Decision 5 gives every generated function a prologue and an epilogue so
-that any callee can ask for `caller`. Inlined
-([03-runtime.md](03-runtime.md), "Scope records and `caller`") that is a
-handful of field operations per call, paid by programs that never write
-`caller`, against the rule that code not using the extension pays nothing.
-The transpiler cannot see across modules whether a callee uses `caller`.
-Options: (a) keep the prologue everywhere; (b) a build flag, so a program
-that does not use `caller` is built without it, and `@ caller` in a
-module built with the flag reaching a caller built without it is the main
-scope; (c) a pragma per module. *Leaning:* measure first (task 010); if
-the prologue costs more than a few percent on a call-heavy benchmark,
-(b). Touches decision 5's "every generated function prologue increments
-it"; goes to the human.
 
 ### Iterating dependents without `pairs`
 

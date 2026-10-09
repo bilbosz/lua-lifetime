@@ -77,8 +77,9 @@ parent` with a back-reference is collectable as a cycle. Case 3 pins it.
 
 Measure the Treflove slice: time for one connect-login-disconnect cycle
 transpiled against Treflove's hand-written version under LuaJIT, and the
-per-frame cost of the event dispatch with the `caller` prologue in place.
-Report both; they are the first numbers from a real program.
+per-frame cost of the event dispatch, which must equal the hand-written
+version wherever no block anchors to `scope`. Report both; they are the
+first numbers from a real program.
 
 ## Out of scope
 

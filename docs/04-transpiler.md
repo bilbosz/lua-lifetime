@@ -33,9 +33,9 @@ Lua 5.1 (`lparser.c`, the manual's §8) plus:
 exp        ::= … | exp '@' anchor | exp '!@' anchor
 stat       ::= … | prefixexp '@' anchor
              | prefixexp '!@' anchor | functiondef '!@' anchor
-anchor     ::= prefixexp | 'scope' | 'caller' | '(' anchorlist ')'
+anchor     ::= prefixexp | 'scope' | '(' anchorlist ')'
 anchorlist ::= anchoritem { ',' anchoritem }
-anchoritem ::= exp | 'scope' | 'caller'
+anchoritem ::= exp | 'scope'
 ```
 
 - `@` has the lowest precedence of any operator and is postfix.
@@ -45,12 +45,12 @@ anchoritem ::= exp | 'scope' | 'caller'
   near '!' (use '~=' for inequality)`.
 - A statement may start with `function (`, an anonymous function, which
   must then be followed by `!@`; `function name` keeps its Lua meaning.
-- `scope` and `caller` are valid only where `anchor` and `anchoritem` name
-  them. `@()` is a syntax error. Lists do not nest.
+- `scope` is valid only where `anchor` and `anchoritem` name it. `@()` is
+  a syntax error. Lists do not nest.
 - Reserved words: none added; `defer` and `token` are ordinary names.
-  Whether `scope` and `caller` are reserved everywhere is open ([06-open-questions.md](06-open-questions.md),
-  "Reserved words"); until settled, the parser treats them as keywords only
-  where the grammar names them.
+  Whether `scope` is reserved everywhere is open ([06-open-questions.md](06-open-questions.md),
+  "Reserved words"); until settled, the parser treats it as a keyword only
+  where the grammar names it.
 
 ## The generated chunk header
 
@@ -58,7 +58,7 @@ Every output chunk that uses the extension begins with one line that
 binds the runtime, and the runtime functions the chunk calls, to locals:
 
 ```lua
-local lifetime = require("lifetime"); local destroy, discard = lifetime.destroy, lifetime.discard; local __lt_attach, __lt_S, __lt_drop = lifetime.attach, lifetime.S, lifetime.drop
+local lifetime = require("lifetime"); local destroy, discard = lifetime.destroy, lifetime.discard; local __lt_attach = lifetime.attach
 ```
 
 so that `destroy(x)`, `discard(x)` and `lifetime.*` in the source resolve
@@ -77,7 +77,6 @@ these names gets what it wrote.
 | `e @ a` | `__lt_attach(e, false, a)` |
 | `e @ (a, b)` | `__lt_attach(e, false, a, b)` |
 | `e @ scope` | `__lt_attach(e, false, <scope local>)` |
-| `e @ caller` | `__lt_attach(e, false, lifetime.caller())` |
 | `e @ lifetime.pin(a, b)` | `__lt_attach(e, false, lifetime.pin(a, b))` (the value carries no term) |
 | `x @ a` as a statement | the same call as a statement |
 | `f !@ a` | `lifetime.hook(f, nil, a)` |
@@ -170,26 +169,15 @@ recorded in [06-open-questions.md](06-open-questions.md), "Catch-site
 unwinding"; it is not the design here because decisions 5 and 10 name the
 per-block wrapper.
 
-## Functions: prologue and epilogue for `caller`
+## Functions
 
-Every generated function whose body contains a call expression gets an
-inline prologue and epilogue, on the lines of `function` and `end`:
-
-```lua
-function f(...) local __D = __lt_S.D; local __d = __D.n + 1; __D.n = __d
-  …
-if __D[__d] then __lt_drop(__D, __d) end; __D.n = __d - 1 end
-```
-
-with the epilogue also inserted before every `return` of the function
-(the values evaluated first, as for block epilogues). No call into the
-runtime happens unless a callee asked for `caller`; the cost per call is
-in [03-runtime.md](03-runtime.md), "Performance". The counter is what
-`lifetime.caller()` in a callee resolves against
-([03-runtime.md](03-runtime.md), "Scope records and `caller`"). A function
-whose body contains no call cannot be anyone's caller and gets no
-prologue. The error path of the counter is open
-([06-open-questions.md](06-open-questions.md)).
+A function body is a block and gets code only under the block rule above:
+a record, an epilogue on fall-through and before every `return`, and the
+wrapper, when and only when the body anchors to `scope`. A function that
+does not is emitted verbatim, and a call costs what it costs in Lua.
+There is no per-function prologue: the anchor for the caller's block that
+would have needed one is not part of the language
+([05-decisions.md](05-decisions.md), "`caller` is removed").
 
 ## The command
 
