@@ -1,12 +1,12 @@
 ---
 id: 010
 title: Benchmark harness: `make bench`, comparison with plain Lua and with `master`
-status: in-progress
+status: review
 depends: [001]
 branch: task/010-benchmark-harness
 pr:
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -104,3 +104,13 @@ the reviewer's threshold is not tripped by a busy machine.
   human prefers another.
 
 ## Review log
+
+### Round 1: APPROVE
+
+Suite on `eaa2933`: unit 61/61 under lua5.1 and luajit, conformance 5/5 under both, lint clean (23 files, `bench/` included). `make bench BASE=master` twice (base `51d071c`): no `SLOWER` mark; `plain/transpiled` in-process ratio 0.97 to 1.02 under both interpreters, the "free" rule holds; `build/lifetime-largest` 7.15 to 7.59 ms lua5.1, 3.87 to 4.07 ms luajit, consistent with task 001's baselines; `make clean` removes `build/` and prunes the worktree.
+
+- Traced: `--lifetime DIR` isolates the base's `lifetime/` (loader ahead of the path searcher, a missing module raises, never falls through to `./lifetime/`); the base run uses the branch's benchmark files and inputs; median of 5 with interleaved baseline runs; `bench-plain` times the loaded chunk functions, not `loadstring`. The `jit.off` comments' numbers reproduce (28.5 ms without, 3.9 ms with).
+- Orchestrator's decision on the spec issue: `os.clock` (process CPU time) satisfies "a fixed wall-clock budget"; stated in the README.
+- F1 (non-blocking): `make bench BASE=` ignores the exit status of the base run and of `compare.lua`; a base that cannot load a benchmark file exits 0. Follow-up task 011.
+- F2 (non-blocking): the README's noise range is narrower than observed: cross-process branch/base for identical code ranged 0.90 to 1.10, in-process interleaved ratio within ±3%. Follow-up task 011 (and the reviewer's suggestion to alternate branch and base runs, A B A B, and mark `SLOWER` only when both pairings exceed the threshold).
+- Noted for task 005: `jit.off` costs about 25% on small inputs under luajit while saving 7x on `lifetime/parser.lua`; the lexer is superlinear on `generated-5000`.
