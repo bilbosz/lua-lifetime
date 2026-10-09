@@ -420,9 +420,15 @@ Errors raised by the function follow the destructor error rule below.
 - `destroy(obj)` ends `obj`'s lifetime now, whatever its formula, with
   the full cascade. It works on any object the runtime can see, including
   one on the default lifetime. `destroy(nil)` is a no-op. `destroy` on a
-  dead or dying object is a no-op, so a destructor body may destroy its own
-  dependents by hand, early, and the runtime's later pass skips them (C++
-  makes the double delete undefined; the no-op is the safe reading).
+  dead object, or on one whose own destruction has begun (its body has
+  started or it is being tombstoned), is a no-op. On a dependent that the
+  decide phase has marked dying but the destroy phase has not reached
+  yet, `destroy` runs it now, as a cascade of its own: a destructor body
+  may therefore destroy its own dependents by hand, early and in the
+  order it chooses, and the runtime's later pass skips them (C++ makes
+  the double delete undefined; the no-op is the safe reading;
+  [05-decisions.md](05-decisions.md), "`destroy` by hand inside a
+  destructor").
   `destroy(5)` is `bad argument #1 to 'destroy' (object expected, got
   number)`.
 - `discard(obj)` does the same but skips `obj`'s own destructor (its
@@ -558,7 +564,11 @@ dead objects are still different, and `t[dead]` still finds the entry.
   or `collector` for a death the collector found); `<reason>` is the reason
   of "`__destroy` and reasons".
 - `rawget`, `rawset`, `next`, `pairs`, `#` and `==` do not raise: they see
-  an empty table. `tostring(dead)` is `dead <name>`. `getmetatable(dead)`
+  a table that holds nothing but the reduced state record under the
+  private key (`next(dead)` returns that key; `lifetime.is_state(k)`
+  skips it; `#dead` is 0), as every table the runtime has seen does
+  ([05-decisions.md](05-decisions.md), "A tombstone keeps its state
+  record"). `tostring(dead)` is `dead <name>`. `getmetatable(dead)`
   is the string `"dead"`; `setmetatable` on it raises Lua's "cannot change
   a protected metatable".
 - `lifetime.alive(x)` is the liveness check that replaces `if x then`:

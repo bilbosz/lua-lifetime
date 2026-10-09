@@ -48,8 +48,15 @@ holds:
   densely from `lo`, in order, updates each dependent's stored sequence
   number, and resets `seq`. Compaction is amortised over the detaches that
   made the holes and never runs during a cascade.
-- `hooks`: a **strong-valued** table, sequence number to hook (decision
-  4: a hook is pinned by its anchor).
+- `strong`: a **strong-valued** table, sequence number to hook or pinned
+  dependent. A hook is pinned by its anchor (decision 4), and a dependent
+  whose formula carries no `reachable` term (`@ lifetime.pin(a)`) is
+  "alive while `a` is, referenced or not" (02), so the anchor is what
+  holds it; everything with the term lives in the weak `dependents`
+  table instead. The two tables share one sequence counter and are
+  merged by sequence number wherever the attachment order matters
+  ([05-decisions.md](05-decisions.md), "Pinned dependents are held by
+  their anchors").
 - `sentinel`: the `newproxy(true)` sentinel, or `nil` ("The sentinel").
 - `phase`: `nil`, `"dying"` or `"dead"`.
 - `name`: `tostring(obj)` captured when the object starts dying, for the
@@ -84,8 +91,8 @@ holding anchors and the term flag.
 5. Install the sentinel if the formula has the `reachable` term and the
    object is a table ("The sentinel").
 
-Hooks go into `hooks` instead of `dependents` under the same sequence
-counter, so `lifetime.dependents` and the cascade can merge the two lists
+Hooks and pinned dependents go into `strong` instead of `dependents`
+under the same sequence counter, so `lifetime.dependents` and the cascade can merge the two lists
 by sequence number into one attachment order (02, "Hooks: the `!@` operator").
 
 ## The cascade
@@ -94,7 +101,7 @@ by sequence number into one attachment order (02, "Hooks: the `!@` operator").
 function, `cascade(root, reason, where)`, which implements 02, "Cascading
 death":
 
-- **Decide.** Depth-first from `root` over `dependents` and `hooks`,
+- **Decide.** Depth-first from `root` over `dependents` and `strong`,
   marking `phase = "dying"`. With conjunction only there is no formula to
   re-evaluate: every dependent of a dying anchor dies. The dying set is
   closed when the walk returns.
@@ -115,10 +122,12 @@ death":
   which objects are exempt.
 
 `where` is the source position of the statement that caused the death:
-`destroy` reads it with `debug.getinfo(2, "Sl")` only when the object it
-destroys has dependents or a destructor to report about, which is off the
-plain-Lua path; the generated epilogue passes the line of the block exit
-as a constant; the finalizer passes `"collector"`.
+`destroy` and `discard` read it with `debug.getinfo(2, "Sl")` once per
+call, since every tombstone's message carries it (02, "Tombstones"); that
+is one `debug` call per explicit destruction, never per block entry or
+per attach, and it is off the plain-Lua path; the generated epilogue
+passes the line of the block exit as a constant; the finalizer passes
+`"collector"`.
 
 ## The tombstone
 
