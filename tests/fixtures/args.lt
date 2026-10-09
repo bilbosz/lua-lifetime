@@ -1,0 +1,16 @@
+-- args.lt: what `lifetime run FILE [ARGS]` gives the chunk
+-- (docs/04-transpiler.md, "The command": "the chunk name `FILE`, `arg`
+-- set as the standalone interpreter sets it"). tests/test-cli.lua runs
+-- it as `<interpreter> bin/lifetime run tests/fixtures/args.lt a b`.
+print("arg[0]", arg[0])
+print("arg[1]", arg[1])
+print("arg[2]", arg[2])
+print("#arg", #arg)
+print("arg[-1]", arg[-1])
+print("arg[-2]", arg[-2])
+print("...", select("#", ...), ...)
+print("source", debug.getinfo(1, "S").source)
+print("position", select(2, pcall(function() error("here") end)))
+local t = {} @ lifetime.scope
+print("scoped", lifetime.format ~= nil)
+return 1, 2, 3

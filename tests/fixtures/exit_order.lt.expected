@@ -1,0 +1,5 @@
+end of chunk	older global	newer global	first local	second local
+destroy second local (anchor)
+destroy first local (anchor)
+destroy newer global (exit)
+destroy older global (exit)
