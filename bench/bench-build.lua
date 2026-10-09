@@ -10,12 +10,21 @@
 --                           lifetime/parser.lua): the benchmark the
 --                           `jit.off(true, true)` comments in
 --                           lifetime/parser.lua and lifetime/emit.lua cite
+--   parse/lifetime-largest  the same file, lexer and parser only (task 005)
+--   parse/extension-5000    lexer and parser on a generated 5 000-line file
+--                           that uses `@`, the list form, `!@` and
+--                           `lifetime.scope` on most lines; the baseline
+--                           is `loadstring` of the same file with the
+--                           extension left out (task 005). A base that
+--                           predates the extension cannot run it.
 --
 -- Input files are read relative to the current directory, so under `make
 -- bench BASE=<ref>` the base's transpiler gets the same text as the
 -- branch's (bench/run.lua).
 local bench = require("bench.lib.bench")
 local cli = require("lifetime.cli")
+local lexer = require("lifetime.lexer")
+local parser = require("lifetime.parser")
 
 local function read_file(path)
     local f = assert(io.open(path, "rb"))
@@ -78,7 +87,52 @@ local function add_build(name, source, chunkname)
     })
 end
 
+-- A chunk of exactly `lines` lines (a multiple of 10) in groups of ten
+-- lines, most of which use the extension: with `extended` false, the same
+-- chunk with every `@ …` and `!@ …` left out, which is plain Lua.
+local function generate_extended(lines, extended)
+    assert(lines % 10 == 0, "generate_extended: lines must be a multiple of 10")
+    local function ext(text)
+        return extended and text or ""
+    end
+    local out = {}
+    for k = 1, lines / 10 do
+        out[#out + 1] = table.concat({
+            string.format("do -- group %d", k),
+            string.format("    local owner = {id = %d, list = {}}", k),
+            "    local a, b = {1, 2}" .. ext(" @ lifetime.scope") .. ", {name = \"b\"}" .. ext(" @ (owner, lifetime.scope)"),
+            "    local h = function(reason) owner.closed = reason end" .. ext(" !@ owner"),
+            extended and string.format("    function() print(%d) end !@ lifetime.scope", k) or string.format("    local _ = function() print(%d) end", k),
+            "    owner.child = setmetatable({}, owner)" .. ext(" @ lifetime.pin(owner, a)"),
+            "    for i = 1, 3 do local t = {i}" .. ext(" @ (a, b)") .. "; owner.list[i] = t end",
+            "    local c = owner.list[1] or a" .. ext(" @ a @ b"),
+            extended and "    owner.close !@ (a, lifetime.scope)" or "    local _ = owner.close",
+            "end"
+        }, "\n")
+    end
+    return table.concat(out, "\n") .. "\n"
+end
+
+-- The lexer and the parser on `source`, against loadstring of `plain`.
+local function add_parse(name, source, chunkname, plain)
+    bench.add(name, function()
+        parser.parse(lexer.tokenize(source, chunkname, true), chunkname)
+    end, {
+        baseline = function()
+            loadstring(plain, "=" .. chunkname)
+        end
+    })
+end
+
 add_build("build/plain.lt", read_file("examples/plain.lt"), "examples/plain.lt")
 add_build("build/generated-5000", generate_plain_lua(5000), "generated-5000.lua")
 local largest = largest_lifetime_file()
-add_build("build/lifetime-largest", read_file(largest), largest)
+local largest_source = read_file(largest)
+add_build("build/lifetime-largest", largest_source, largest)
+add_parse("parse/lifetime-largest", largest_source, largest, largest_source)
+-- No build up front: a base without the extension raises inside the
+-- benchmark, which the harness reports, and the other benchmarks of this
+-- file still run.
+local plain_5000 = generate_extended(5000, false)
+assert(loadstring(plain_5000, "=extension-5000.lt"))
+add_parse("parse/extension-5000", generate_extended(5000, true), "extension-5000.lt", plain_5000)
