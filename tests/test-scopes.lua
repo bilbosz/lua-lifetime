@@ -272,6 +272,39 @@ test.case("a dependent of a record cannot be moved during the scope exit; a fres
     test.assert_true(move_err:find("attempt to move", 1, true) ~= nil, move_err)
 end)
 
+test.case("a record's list is reused only when its exit emptied it", function()
+    -- `x` is anchored to the record and to `a`; `a`'s destructor exits
+    -- the block, so `x` is already decided by `a`'s cascade, the exit
+    -- skips it and its entry stays in the record's list. A later anchor
+    -- must not inherit that list.
+    local log = {}
+    local s = enter("t.lt:110")
+    local a
+    a = new_logged(log, "a", function()
+        exit(s, "t.lt:110")
+        log[#log + 1] = "exited"
+    end)
+    lifetime.of(a)
+    local x = attach(new_logged(log, "x"), false, a, s)
+    destroy(a)
+    test.assert_deep_eq(log, {"a (destroy)", "exited", "x (anchor)"})
+    test.assert_eq(getmetatable(x), "dead")
+    local b = {}
+    local y = attach({}, false, b)
+    test.assert_deep_eq(lifetime.dependents(b), {y})
+    -- And a list that was emptied is reused without carrying anything.
+    local s2 = enter("t.lt:111")
+    attach({}, false, s2)
+    hook(function()
+    end, nil, s2)
+    exit(s2, "t.lt:111")
+    local c = {}
+    local z = attach({}, false, c)
+    local h = hook(function()
+    end, nil, c)
+    test.assert_deep_eq(lifetime.dependents(c), {z, h})
+end)
+
 test.case("enter in a loop allocates the records and nothing else; an empty record costs no cascade", function()
     local function run(n)
         for _ = 1, n do

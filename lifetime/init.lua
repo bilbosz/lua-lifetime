@@ -55,6 +55,14 @@ local WEAK_VALUES = {__mode = "v"}
 -- links that grew the range.
 local MIN_LIMIT = 16
 
+-- An emptied dependents list, kept for the next anchor's first link: the
+-- `deps` and `strong` tables of a scope record whose exit left both
+-- empty. A loop body that anchors to its block then allocates no list per
+-- iteration (docs/03-runtime.md, "Performance": "a block with a scope
+-- record: one record (a small table) per entry"). Empty tables refer to
+-- nothing, so this holds no user object (CLAUDE.md, rule 6).
+local spare_deps, spare_strong = false, false
+
 -- The phase guard (docs/03-runtime.md, "The cascade", "Phase guard").
 -- `phase_depth` counts the destroy phases running; `phase_id` is the id
 -- of the innermost one (0 when none runs); `phase_counter` hands out ids.
@@ -406,7 +414,12 @@ end
 local function link(anchor, ast, obj, pinned)
     local deps = ast.deps
     if not deps then
-        deps = setmetatable({seq = 1, lo = 1, limit = MIN_LIMIT}, WEAK_VALUES)
+        deps = spare_deps
+        if deps then
+            spare_deps = false
+        else
+            deps = setmetatable({seq = 1, lo = 1, limit = MIN_LIMIT}, WEAK_VALUES)
+        end
         ast.deps = deps
     end
     local s = deps.seq
@@ -416,7 +429,12 @@ local function link(anchor, ast, obj, pinned)
     if pinned then
         local strong = ast.strong
         if not strong then
-            strong = {}
+            strong = spare_strong
+            if strong then
+                spare_strong = false
+            else
+                strong = {}
+            end
             ast.strong = strong
         end
         strong[s] = obj
@@ -549,6 +567,22 @@ local function decide(obj, st, id)
     end
 end
 
+-- Clear every field of `obj` from the key `k` on in traversal order,
+-- except the state record (docs/03-runtime.md, "The tombstone": "Clearing
+-- the table ..., legal in Lua while iterating"). A proper tail call per
+-- field: no loop for LuaJIT to make a trace of its own (see the tombstone
+-- step below), and no stack growth on either host.
+local function clear_from(obj, k)
+    if k == nil then
+        return
+    end
+    local after = next(obj, k)
+    if k ~= STATE then
+        obj[k] = nil
+    end
+    return clear_from(obj, after)
+end
+
 -- docs/02-semantics.md, "Cascading death", step 2, **Destroy**, for one
 -- object: (1) its own body, with every dependent alive; (2) its
 -- dependents, most recently attached first, each by this same rule,
@@ -616,21 +650,40 @@ local function destroy_object(obj, st, reason, where, skip_body)
     -- 2.3: the tombstone (docs/03-runtime.md, "The tombstone"): unlink
     -- from the anchors' lists, clear every field, set the dead metatable,
     -- reduce the record to what the message needs.
-    for j = 1, 2 * st.n, 2 do
-        unlink(rawget(st[j], STATE), st[j + 1])
-        st[j] = nil
-        st[j + 1] = nil
-    end
-    for k in next, obj do
-        if k ~= STATE then
-            obj[k] = nil
+    --
+    -- The common cases run no loop: one anchor, and the fields cleared by
+    -- `clear_from` rather than a `for` over `next`. A loop that runs once
+    -- or twice per destruction becomes hot before the user's loop around
+    -- it, and LuaJIT then aborts the user's trace on it ("inner loop in
+    -- root trace") until side traces cover it; without the loop the
+    -- user's loop body compiles at once (bench/README.md,
+    -- `scope/loop-one-object`).
+    local n = st.n
+    if n == 1 then
+        unlink(rawget(st[1], STATE), st[2])
+        st[1] = nil
+        st[2] = nil
+    else
+        for j = 1, 2 * n, 2 do
+            unlink(rawget(st[j], STATE), st[j + 1])
+            st[j] = nil
+            st[j + 1] = nil
         end
     end
+    local field = next(obj)
+    if field == STATE then
+        field = next(obj, field)
+    end
+    clear_from(obj, field)
     debug_setmetatable(obj, DEAD_MT)
     st.n = 0
-    st.deps = false
-    -- A dead anchor holds nothing strongly; a dead hook lets its function
-    -- go ("After it runs the hook is dead: a hook runs at most once").
+    -- Written only when set, so that a record without the field (a hook)
+    -- does not grow at death. A dead anchor holds nothing strongly; a dead
+    -- hook lets its function go ("After it runs the hook is dead: a hook
+    -- runs at most once").
+    if st.deps then
+        st.deps = false
+    end
     if st.strong then
         st.strong = false
     end
@@ -1086,9 +1139,10 @@ end
 -- the anchor holds it strongly; it never carries a sentinel. Its body
 -- calls `f(reason)`."
 --
--- The hook's record is an ordinary state record plus `fn`, with `strong`
--- in the constructor (a hook may be an anchor) and `name` holding the
--- name it was created with. docs/02-semantics.md, "Hooks: the `!@`
+-- The hook's record is an ordinary state record plus `fn`, with `name`
+-- holding the name it was created with, and without `deps` (a hook is
+-- rarely an anchor; `link` adds the field if it becomes one), so that its
+-- hash part keeps eight slots. docs/02-semantics.md, "Hooks: the `!@`
 -- operator": "The left operand must be a function: `attempt to defer a
 -- number value`. A hook is not a function, so `h !@ x` on a hook is
 -- `attempt to defer a hook value`".
@@ -1109,8 +1163,6 @@ function lifetime.hook(f, name, ...)
         false,
         n = 0,
         reachable = false,
-        deps = false,
-        strong = false,
         phase = false,
         phase_id = phase_id,
         name = name or false,
@@ -1182,6 +1234,35 @@ end
 -- the caller's: `held` is set up by `exit` (the first error is raised at
 -- the exit) or by `unwind` (an error is propagating, so every error goes
 -- to `destroyerror`).
+--
+-- A record with one entry, the most common block, is walked without a
+-- loop, for the reason given at the tombstone step of `destroy_object`.
+local function decide_entry(deps, strong, i, id)
+    local dep = deps[i]
+    if dep == nil and strong then
+        dep = strong[i]
+    end
+    if dep ~= nil then
+        local dst = rawget(dep, STATE)
+        if not dst.phase then
+            decide(dep, dst, id)
+        end
+    end
+end
+
+local function destroy_entry(deps, strong, i, id, where)
+    local dep = deps[i]
+    if dep == nil and strong then
+        dep = strong[i]
+    end
+    if dep ~= nil then
+        local dst = rawget(dep, STATE)
+        if dst.phase_id == id and dst.phase == "dying" then
+            destroy_object(dep, dst, "anchor", where, false)
+        end
+    end
+end
+
 local function scope_cascade(rec, where)
     rec.phase = "dying"
     local deps = rec.deps
@@ -1190,33 +1271,33 @@ local function scope_cascade(rec, where)
         local id = phase_counter + 1
         phase_counter = id
         local hi, lo = deps.seq - 1, deps.lo
-        for i = hi, lo, -1 do
-            local dep = deps[i]
-            if dep == nil and strong then
-                dep = strong[i]
-            end
-            if dep ~= nil then
-                local dst = rawget(dep, STATE)
-                if not dst.phase then
-                    decide(dep, dst, id)
-                end
-            end
-        end
         local outer_id = phase_id
-        phase_id, phase_depth = id, phase_depth + 1
-        for i = hi, lo, -1 do
-            local dep = deps[i]
-            if dep == nil and strong then
-                dep = strong[i]
+        if hi == lo then
+            decide_entry(deps, strong, hi, id)
+            phase_id, phase_depth = id, phase_depth + 1
+            destroy_entry(deps, strong, hi, id, where)
+        else
+            for i = hi, lo, -1 do
+                decide_entry(deps, strong, i, id)
             end
-            if dep ~= nil then
-                local dst = rawget(dep, STATE)
-                if dst.phase_id == id and dst.phase == "dying" then
-                    destroy_object(dep, dst, "anchor", where, false)
-                end
+            phase_id, phase_depth = id, phase_depth + 1
+            for i = hi, lo, -1 do
+                destroy_entry(deps, strong, i, id, where)
             end
         end
         phase_id, phase_depth = outer_id, phase_depth - 1
+        -- Every dependent unlinked itself when it was tombstoned; a list
+        -- that is empty again (`seq` back at 1, which `unlink` guarantees
+        -- for both tables) is kept for the next first link. A dependent
+        -- this exit skipped (decided by another running cascade) or a
+        -- hole a collected dependent left keeps it from being reused.
+        if deps.seq == 1 then
+            deps.limit = MIN_LIMIT
+            spare_deps = deps
+            if strong then
+                spare_strong = strong
+            end
+        end
         rec.deps = false
         rec.strong = false
     end
