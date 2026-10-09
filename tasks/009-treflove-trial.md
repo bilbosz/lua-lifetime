@@ -33,9 +33,9 @@ repository itself is not modified.
   (form_screen, self)`.
 - `xd/docs/09-lessons-from-treflove.md`, lessons 1 to 5 and 8: what to
   look for; under file 10 lessons 1 and 4 are expected to reverse.
-- `docs/05-decisions.md`, "Registration is `x @ lifetime.reachable`", and
-  `docs/06-open-questions.md`, "The hidden field is visible": the trial
-  is where both are measured; the handoff
+- `docs/05-decisions.md`, "Registration is `x @ lifetime.reachable`" and
+  "The state record's key is a private table": the trial is where both
+  are measured; the handoff
   reports what Treflove's `class()` and `table.to_string` needed.
 - `CLAUDE.md`, rule 3: the trial asserts order.
 

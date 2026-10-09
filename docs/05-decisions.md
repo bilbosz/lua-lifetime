@@ -416,3 +416,34 @@ its instances in its constructor (one line in Treflove's
 `setmetatable`. This is a consequence of decision 2 that file 10 does not
 state; the human carries it back to `xd`.
 → [02-semantics.md](02-semantics.md), "`__destroy` and reasons", rule 7
+
+## The state record's key is a private table
+
+Decided by the human on 2026-10-09 ("A, go with the private key"), after
+talking it through. Decision 3 of file 10 keeps an object's dependents
+inside the object, so every table the runtime has seen carries a state
+record in a field of its own, and Lua 5.1 shows that field to `pairs`,
+`next` and every serializer; Treflove's `table.to_string` would have
+written it into `save.lua`. The key is now one table the runtime creates
+at load time and never hands out: nothing outside the runtime can name
+it, no user field can collide with it, and a serializer that meets a
+table-typed key skips it or fails loudly instead of writing bookkeeping
+as data. `lifetime.is_state(k)` is the documented test, one comparison,
+so the one serializer and the few `next(t) == nil` checks in a program
+can skip the field; it is a function rather than an exported key so the
+representation can change without touching callers, and it is never on
+a hot path.
+
+Rejected: a string key such as `"__lifetime"`, readable in dumps but
+able to collide with a user field and silently serialized as data; a
+side table keyed by the object, which decision 3 forbids and which Lua
+5.1's lack of ephemerons would turn into a leak; and any patching of
+`pairs`, `next` or `#`, which the technical decisions forbid (`__pairs`
+is not honoured by 5.1 and would be magic in a frame loop). The cost
+that remains is documented: `next(t) == nil` is not "empty" for a table
+the runtime has seen, and a raw dump shows the record under a table key.
+Settles "The hidden field is visible"; task 009 measures what
+Treflove's `table.to_string` needs. The `lifetime` table grows by one
+name, `is_state`, which builds no formula, so decision 11 still holds.
+→ [03-runtime.md](03-runtime.md), "The state of an object";
+[02-semantics.md](02-semantics.md), "The `lifetime` table"
