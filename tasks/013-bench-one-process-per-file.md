@@ -1,12 +1,12 @@
 ---
 id: 013
 title: Benchmark harness: one process per benchmark file
-status: todo
+status: review
 depends: [011]
-branch:
-pr:
+branch: task/013-bench-one-process-per-file
+pr: https://github.com/bilbosz/lua-lifetime/pull/20
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -66,3 +66,10 @@ The instrument; its own time grows by one interpreter start per file
 ## Spec issues found
 
 ## Review log
+
+### Round 1: APPROVE
+
+Suite on `c6765bf`: unit 155/155 under lua5.1 and luajit, conformance 5/5 under both, lint clean (25 files). `make bench` twice: luajit `runtime/move` 25.1 and 25.0 ns against 24.8 to 25.2 stand-alone (within 1%; criterion asked 10%); the old single-process way reproduced at 90 to 101 ns. `make bench BASE=master`: exit 0, no `SLOWER` mark; one single-pairing outlier (`runtime/move` 79.9 ns) traced to a concurrent `make bench` by task 003's implementer, not marked by the two-pairing rule. Traced: a raising file is named on stderr, the other files still run in fresh processes, exit 1; the child is the same interpreter with the same options (`-O0`, `-e`, `-joff`, `-Ohotloop=5`, an interpreter path with a space) verified by hand; temp status files leave nothing behind, with file names and `TMPDIR` containing spaces; `BENCH_FILES`, `BENCH_OUT`, `BENCH_TIME`, `BASE_DIR` and `--lifetime` reach every child; task 011's cases pass unmodified; the five new cases leave nothing behind.
+
+- No findings. Question: if `io.popen` itself fails, the status temp file is left behind (could not be reproduced); worth a `pcall` around the loop some day.
+- Noted: a concurrent `make bench` on the same machine still produces single-pairing outliers; two implementers benchmarking at once should expect them. Follow-up candidate: a test that pins the forwarding of interpreter options to the child.
