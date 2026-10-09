@@ -165,3 +165,12 @@ generated file.
    luarocks wrapper does), under both interpreters.
 
 ## Review log
+
+### Round 1: REQUEST_CHANGES
+
+Suite on `b5edd6f`: unit 250/250 under lua5.1 and luajit, conformance 19/19 under both (with the `note:` line until task 004 merges), lint clean (28 files). `make bench BASE=master`: nothing marked; the new rows `build/extension-5000`, `build/scope-at-end-5000`, `run/plain.lt` present; `emit/return-*` LuaJIT ratios now 7.2 to 7.4 and 18.7 to 19.0; the restart comment names all five build benchmarks and the measured 1.4x. In a mixed tree with task 004's `lifetime/init.lua`: 250/250, 19/19, the full exit order under both interpreters, and after an uncaught error a registered global dies with `exit` after the report. Traced by hand: `uncaught_error.lt` (handler at the raise point, `inner`, `second`, `first` unwound, stdout flushed, the report, the traceback trimmed at the main chunk, `error(nil)` closing the state with exit 1); an error through `coroutine.wrap` (the coroutine's scope unwound in the resumer, then the main scope, then the report); a 40-deep recursion, a stack overflow, `error(nil)`, `error(42)`, `arg[-3]` and `arg[-1]`.
+
+- F1 (blocking): a syntax error with a non-ASCII `goto` label (`goto lä` into a scoped block; the lexer accepts bytes 128 to 255 in names) does not match `GOTO_ERROR` in `lifetime/cli.lua` (`[%a_][%w_]*` stops at the first high byte), so `cli.build` re-raises it as a transpiler bug and the interpreter reports it with a traceback instead of `FILE:LINE: <message>`. Fix: the name class of the lexer, `<goto [%a_\128-\255][%w_\128-\255]*>`, plus one in-process case in the marker test expecting `{nil, "x:1: <goto lä> jumps into the scope of a lifetime"}`.
+- Rulings 1 to 6 hold on the code as written. Ruling 3 (a chunk under `lifetime run` has the runtime loaded and pays its `pcall` wrapper) goes into `docs/04`, "The command", in the done chore.
+- Runtime notes for a follow-up, not this task: the default `destroyerror` handler writes to stderr without flushing stdout first; an error through `coroutine.wrap` shows the runtime's wrapper frames above the main chunk where the standalone interpreter shows `[C]: in function 'w'`.
+- After task 004 merges: move `tests/fixtures/exit_order.lt(.expected)` to `examples/` and drop the `set_exiting` conditional and the `note:` line.
