@@ -189,6 +189,9 @@ comparable with either: it depends on the files before it.
 | `scope/pcall-empty` | `bench-scopes.lua` | 10 `pcall`s of an empty function through the runtime's `pcall` | the original `pcall` (on a base without the replacement, both are the original) |
 | `scope/pcall-error` | `bench-scopes.lua` | 10 `pcall`s of a function that raises through no scoped block | the original `pcall` |
 | `scope/resume-yield` | `bench-scopes.lua` | 10 resumes of a coroutine that yields, through the runtime's `coroutine.resume` | the original `coroutine.resume` |
+| `sentinel/anchor-100` | `bench-sentinel.lua` | an anchor, 100 dependents with a `__destroy` attached with the implicit `reachable` term (each needs a sentinel, task 004), then `destroy(anchor)` | the same with the 100 dependents attached pinned (no sentinel): the ratio is the sentinel's cost |
+| `sentinel/collect-100` | `bench-sentinel.lua` | 100 objects with a `__destroy` registered with `@ lifetime.reachable`, dropped, then one `collectgarbage("collect")` that runs their cascades from the sentinels' finalizers; a base without sentinels cannot run it | the same 100 objects never seen, dropped and collected silently |
+| `sentinel/alive-10` | `bench-sentinel.lua` | 10 `lifetime.alive` checks of a live object the runtime has seen; a base without `lifetime.alive` cannot run it | 10 `x ~= nil` checks |
 
 ## Adding a benchmark
 

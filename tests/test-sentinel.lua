@@ -565,6 +565,67 @@ test.case("case 8: a metatable made in the same statement as its instance still 
     test.assert_deep_eq(log, {"inline (unreachable)"})
 end)
 
+test.case("a disarmed proxy is reused by the next owner, and newest first still holds", function()
+    -- The runtime keeps the proxy of an owner that died by a cascade for
+    -- the next owner (docs/03-runtime.md, "The sentinel": never twice for
+    -- the same object; the order of the finalizers stays the order of the
+    -- `@`s). x2 dies below the last slot (a hole), x4 and x3 from the
+    -- last slot (kept); the step down over the hole moves the kept
+    -- proxies down; y1 and y2 then take x3's and x4's proxies, in order.
+    local log = {}
+    local proxies = {}
+    local function make()
+        local x1 = attach(new_logged(log, "x1"), false, lifetime.reachable)
+        local x2 = attach(new_logged(log, "x2"), false, lifetime.reachable)
+        local x3 = attach(new_logged(log, "x3"), false, lifetime.reachable)
+        local x4 = attach(new_logged(log, "x4"), false, lifetime.reachable)
+        proxies[3], proxies[4] = sentinel_of(x3), sentinel_of(x4)
+        destroy(x2)
+        destroy(x4)
+        destroy(x3)
+        local y1 = attach(new_logged(log, "y1"), false, lifetime.reachable)
+        local y2 = attach(new_logged(log, "y2"), false, lifetime.reachable)
+        test.assert_true(rawequal(sentinel_of(y1), proxies[3]), "y1 took x3's proxy")
+        test.assert_true(rawequal(sentinel_of(y2), proxies[4]), "y2 took x4's proxy")
+        -- A proxy's metatable holds its owner: let go of them.
+        proxies[3], proxies[4] = nil, nil
+        return x1 ~= nil
+    end
+    make()
+    test.assert_deep_eq(log, {"x2 (destroy)", "x4 (destroy)", "x3 (destroy)"})
+    collect()
+    test.assert_deep_eq(log, {"x2 (destroy)", "x4 (destroy)", "x3 (destroy)", "y2 (unreachable)", "y1 (unreachable)", "x1 (unreachable)"})
+end)
+
+test.case("a proxy whose finalizer is pending is not handed to another owner", function()
+    -- `q`, a plain proxy made after X's sentinel, is finalized first in
+    -- the same collection: its `__gc` destroys X's anchor, so X dies by
+    -- that cascade while its own finalizer is pending, and then anchors W.
+    -- Had X's proxy been kept, W would take it and X's pending finalizer
+    -- would kill W, which the test holds.
+    -- W1 and W2 are two new owners, so that one of them would be given
+    -- X's slot (A's tombstone gives back A's slot too).
+    local log = {}
+    local A = new_logged(log, "A")
+    local W = {}
+    local function make()
+        attach(new_logged(log, "X"), false, A)
+        local q = newproxy(true)
+        getmetatable(q).__gc = function()
+            destroy(A)
+            W[1] = attach(new_logged(log, "W1"), false, lifetime.reachable)
+            W[2] = attach(new_logged(log, "W2"), false, lifetime.reachable)
+        end
+    end
+    make()
+    collect()
+    test.assert_deep_eq(log, {"A (destroy)", "X (anchor)"})
+    collect()
+    collect()
+    test.assert_deep_eq(log, {"A (destroy)", "X (anchor)"}, "neither W was killed")
+    test.assert_true(alive(W[1]) and alive(W[2]))
+end)
+
 test.case("an object already dead is skipped by its finalizer; its sentinel is disarmed", function()
     local log = {}
     local function make()

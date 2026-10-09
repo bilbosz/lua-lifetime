@@ -34,7 +34,7 @@
 --   scope stacks (the active scope records), all of which the spec makes
 --   strong. A sentinel's metatable holds its owner, and the owner holds
 --   the sentinel: an ordinary cycle the collector takes as a whole. The
---   runtime itself holds a sentinel only while it is disarmed (`spare`)
+--   runtime itself holds a sentinel only while it is disarmed (`kept`)
 --   or for the moment between the collector's call and the cascade
 --   (`queue`).
 
@@ -130,51 +130,81 @@ local unwind
 -- When an owner dies by a cascade its proxy is disarmed (`owner = nil`),
 -- so the finalizer finds nothing to do, and it is kept for a later owner
 -- when that keeps the order: handing out a kept proxy must put it after
--- every armed one, exactly as a fresh one would be. `armed` lists the
--- armed proxies in the order they were handed out (`mt.slot`), `armed_n`
--- being the last slot used. A proxy disarmed in the last slot is newer
--- than every proxy still armed, so it goes on the `spares` stack; the
--- spares are newer than every armed proxy and the top one is the oldest
--- of them, so the next owner takes the top one. A cascade tombstones its
--- objects newest first, so a scope exit or a `destroy` gives back every
--- proxy its objects had, and the next ones reuse them: a loop body that
--- owns objects allocates no proxy after its first iteration. Any other
--- disarmed proxy loses its `__gc`, so the collector frees it without a
--- finalizer call.
+-- every armed one, exactly as a fresh one would be. Proxies are handed
+-- out in numbered slots: `armed[slot]` is the proxy of a slot (its
+-- metatable's `slot`) and `armed_n` the last slot in use. A proxy
+-- disarmed in the last slot is newer than every proxy still armed: it
+-- stays in its slot, held in `kept[slot]`, and `armed_n` steps down. The
+-- kept proxies therefore fill the slots just above `armed_n`, in the
+-- order they were made, and the next owner takes the one in slot
+-- `armed_n + 1` where it lies, without a write to `armed` or to its
+-- `slot`. A fresh proxy is made only when that slot keeps none, which is
+-- when none is kept at all. A cascade tombstones its objects newest
+-- first, so a scope exit or a `destroy` gives back every proxy its
+-- objects had, and the next ones reuse them: a loop body that owns
+-- objects allocates no proxy after its first iteration. A proxy disarmed
+-- below the last slot leaves a hole and loses its `__gc`, so the
+-- collector frees it without a finalizer call; when `armed_n` steps down
+-- onto a hole it steps over every hole below, and the kept proxies move
+-- down with it so that they stay just above it (`close_holes`).
 --
 -- `armed` is weak-valued: it keeps no proxy alive, and a proxy the
 -- collector has scheduled for finalization is cleared from it (a
 -- finalized userdata is removed from weak values on both hosts), so such
 -- a proxy, which its pending `__gc` will still be called on, is never
--- kept. The spares hold nothing but their own proxies.
+-- kept. `kept` holds disarmed proxies' metatables only, which refer to
+-- nothing but their proxies.
 local armed = setmetatable({}, WEAK_VALUES)
 local armed_n = 0
-local spares, spares_n = {}, 0
+local kept = {}
 
 -- The finalizer, defined with the cascade below.
 local finalize
 
 -- A sentinel for `owner` (docs/03-runtime.md, "The sentinel"); returns
--- the proxy's metatable, which the owner's record keeps.
+-- the proxy's metatable, which the owner's record keeps. Called inside a
+-- `busy` operation (below), so no finalizer changes the slots while a
+-- fresh proxy is allocated.
 local function new_sentinel(owner)
-    local mt
-    local s = spares_n
-    if s > 0 then
-        mt = spares[s]
-        spares[s] = nil
-        spares_n = s - 1
+    local n = armed_n + 1
+    armed_n = n
+    local mt = kept[n]
+    if mt then
+        kept[n] = nil
     else
         local p = newproxy(true)
         mt = getmetatable(p)
         mt.__gc = finalize
         mt.proxy = p
+        mt.slot = n
+        armed[n] = p
     end
     mt.owner = owner
-    local n = armed_n + 1
-    armed_n = n
-    armed[n] = mt.proxy
-    mt.slot = n
     return mt
+end
+
+-- `armed_n` has stepped down onto a hole at `slot`: step over every hole
+-- below, and move the kept proxies, which start at `slot + 1`, down to
+-- just above the new `armed_n`, in order. Off the common path: holes come
+-- from objects the collector found and from disarms below the last slot.
+local function close_holes(slot)
+    local to = slot - 1
+    while to > 0 and armed[to] == nil do
+        to = to - 1
+    end
+    armed_n = to
+    local from = slot + 1
+    local mt = kept[from]
+    while mt do
+        to = to + 1
+        kept[from] = nil
+        armed[from] = nil
+        kept[to] = mt
+        armed[to] = mt.proxy
+        mt.slot = to
+        from = from + 1
+        mt = kept[from]
+    end
 end
 
 -- Disarm the sentinel of an owner that died by a cascade.
@@ -183,17 +213,15 @@ local function drop_sentinel(mt)
     local slot = mt.slot
     if armed[slot] == mt.proxy then
         if slot == armed_n then
+            kept[slot] = mt
             slot = slot - 1
-            while slot > 0 and armed[slot] == nil do
-                slot = slot - 1
-            end
             armed_n = slot
-            local s = spares_n + 1
-            spares_n = s
-            spares[s] = mt
+            if slot > 0 and armed[slot] == nil then
+                close_holes(slot)
+            end
             return
         end
-        -- Below the last slot: a hole the next skip passes over.
+        -- Below the last slot: a hole.
         armed[slot] = nil
     end
     mt.__gc = nil
@@ -723,6 +751,14 @@ end
 -- The dependents are the merge of `deps` and `strong` by sequence number.
 -- A hook or a token needs no capture: its name is fixed at creation
 -- (`hook_name`, `token_name`).
+--
+-- A dependent's record, and an anchor's in a dependent's formula, is read
+-- as `x[STATE]`, not `rawget(x, STATE)`: every object in a dependents list
+-- or a formula has the key, and an index that finds its key consults no
+-- metamethod (Lua 5.1 reference manual, 2.8, "index"), so the two read the
+-- same; the index is an instruction where `rawget` is a C call, which on
+-- Lua 5.1 is several times dearer. Where the key may be missing (an object
+-- or anchor the runtime may not have seen yet) `rawget` stays.
 local function decide(obj, st, id)
     st.phase = "dying"
     st.phase_id = id
@@ -745,7 +781,7 @@ local function decide(obj, st, id)
                 dep = strong[i]
             end
             if dep ~= nil then
-                local dst = rawget(dep, STATE)
+                local dst = dep[STATE]
                 if not dst.phase then
                     decide(dep, dst, id)
                 end
@@ -822,7 +858,7 @@ local function destroy_object(obj, st, reason, where, skip_body)
                 dep = strong[i]
             end
             if dep ~= nil then
-                local dst = rawget(dep, STATE)
+                local dst = dep[STATE]
                 if dst.phase_id == id and dst.phase == "dying" then
                     destroy_object(dep, dst, "anchor", where, false)
                 end
@@ -847,12 +883,12 @@ local function destroy_object(obj, st, reason, where, skip_body)
     local term = st.reachable
     local n, pinned = st.n, not term
     if n == 1 then
-        unlink(rawget(st[1], STATE), st[2], pinned)
+        unlink(st[1][STATE], st[2], pinned)
         st[1] = nil
         st[2] = nil
     else
         for j = 1, 2 * n, 2 do
-            unlink(rawget(st[j], STATE), st[j + 1], pinned)
+            unlink(st[j][STATE], st[j + 1], pinned)
             st[j] = nil
             st[j + 1] = nil
         end
@@ -882,20 +918,16 @@ local function destroy_object(obj, st, reason, where, skip_body)
     -- collection (docs/03-runtime.md, "The sentinel": the finalizer skips
     -- an object already dead).
     if term ~= true and term then
-        -- `drop_sentinel`, its common case (the newest armed) inlined.
+        -- `drop_sentinel`, its common case (the last slot) inlined.
         local slot = term.slot
         if slot == armed_n and armed[slot] == term.proxy then
-            -- The slot above `armed_n` keeps its stale entry until the
-            -- next sentinel takes it; nothing reads above `armed_n`.
             term.owner = nil
+            kept[slot] = term
             slot = slot - 1
-            while slot > 0 and armed[slot] == nil do
-                slot = slot - 1
-            end
             armed_n = slot
-            slot = spares_n + 1
-            spares_n = slot
-            spares[slot] = term
+            if slot > 0 and armed[slot] == nil then
+                close_holes(slot)
+            end
         else
             drop_sentinel(term)
         end
@@ -1174,7 +1206,7 @@ local function attach_general(fname, obj, pin, count, ...)
     local old = 2 * st.n
     local had = st.reachable
     for j = 1, old, 2 do
-        unlink(rawget(st[j], STATE), st[j + 1], not had)
+        unlink(st[j][STATE], st[j + 1], not had)
     end
     local k = 1
     if count == 1 then
@@ -1252,24 +1284,44 @@ function lifetime.attach(obj, pin, ...)
                 local mt = debug_getmetatable(obj)
                 if mt ~= VALUE_MT then
                     busy = busy + 1
-                    st = new_state(obj)
-                    st[1] = a
-                    st[2] = link(a, ast, obj, pin)
-                    st.n = 1
-                    if pin then
-                        st.reachable = false
-                    elseif mt ~= nil and rawget(mt, "__destroy") ~= nil then
-                        -- `new_sentinel`, its common case (a spare) inlined.
-                        local s = spares_n
-                        if s > 0 then
-                            local smt = spares[s]
-                            spares[s] = nil
-                            spares_n = s - 1
-                            smt.owner = obj
-                            local n = armed_n + 1
+                    -- `new_state`, inlined, with the formula filled in.
+                    st = {
+                        a,
+                        false,
+                        n = 1,
+                        reachable = not pin,
+                        deps = false,
+                        phase = false,
+                        phase_id = phase_id,
+                        name = false,
+                        where = false,
+                        reason = false
+                    }
+                    rawset(obj, STATE, st)
+                    -- `link`, its common case inlined: an unpinned link
+                    -- to an anchor that has its list (outside any destroy
+                    -- phase, so compaction may run).
+                    local deps = ast.deps
+                    if deps and not pin then
+                        local s = deps.seq
+                        if s - deps.lo >= deps.limit then
+                            s = compact(a, ast, deps)
+                        end
+                        deps[s] = obj
+                        deps.seq = s + 1
+                        st[2] = s
+                    else
+                        st[2] = link(a, ast, obj, pin)
+                    end
+                    -- Pinned: no term, no sentinel.
+                    if not pin and mt ~= nil and rawget(mt, "__destroy") ~= nil then
+                        -- `new_sentinel`, its common case (a kept proxy) inlined.
+                        local n = armed_n + 1
+                        local smt = kept[n]
+                        if smt then
+                            kept[n] = nil
                             armed_n = n
-                            armed[n] = smt.proxy
-                            smt.slot = n
+                            smt.owner = obj
                             st.reachable = smt
                         else
                             st.reachable = new_sentinel(obj)
@@ -1287,13 +1339,13 @@ function lifetime.attach(obj, pin, ...)
                 -- grows a table runs no collector step on either host), so
                 -- no finalizer can run in between and `busy` is not needed.
                 if ast.deps then
-                    unlink(rawget(st[1], STATE), st[2], false)
+                    unlink(st[1][STATE], st[2], false)
                     st[1] = a
                     st[2] = link(a, ast, obj, false)
                     return obj
                 end
                 busy = busy + 1
-                unlink(rawget(st[1], STATE), st[2], false)
+                unlink(st[1][STATE], st[2], false)
                 st[1] = a
                 st[2] = link(a, ast, obj, false)
                 busy = busy - 1
@@ -1360,7 +1412,12 @@ function lifetime.of(obj)
     end
     st = new_state(obj)
     if has_destroy(debug_getmetatable(obj)) then
+        busy = busy + 1
         st.reachable = new_sentinel(obj)
+        busy = busy - 1
+        if busy == 0 and queue_tail ~= 0 then
+            drain()
+        end
     end
     return REACHABLE
 end
@@ -1681,7 +1738,7 @@ local function decide_entry(deps, strong, i, id)
         dep = strong[i]
     end
     if dep ~= nil then
-        local dst = rawget(dep, STATE)
+        local dst = dep[STATE]
         if not dst.phase then
             decide(dep, dst, id)
         end
@@ -1694,7 +1751,7 @@ local function destroy_entry(deps, strong, i, id, where)
         dep = strong[i]
     end
     if dep ~= nil then
-        local dst = rawget(dep, STATE)
+        local dst = dep[STATE]
         if dst.phase_id == id and dst.phase == "dying" then
             destroy_object(dep, dst, "anchor", where, false)
         end

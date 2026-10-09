@@ -142,4 +142,75 @@ state record).
 
 ## Spec issues found
 
+Found by the implementer, round 1. None changes the semantics; each says
+what the code does and why, for the reviewer and the human to decide.
+
+1. **Test case 3 contradicts the acceptance criterion and 02.** Case 3
+   expects a collected subtree (`parent @ lifetime.reachable`, `child @
+   parent`, `child.parent = parent`, both `__destroy`) to log `parent
+   (unreachable), child (anchor)`. But `child` has the term and a
+   `__destroy`, so by 03, "The sentinel", it carries a sentinel of its
+   own, made after `parent`'s (the `@` that made it need one came later);
+   the host finalizes newest first, so `child`'s finalizer runs first.
+   02, "Reachability is the collector's", says exactly that ("objects are
+   finalized newest first by creation ..., each taking its whole subtree
+   in cascade order; an object already destroyed in an earlier walk is
+   skipped"), and so does this task's acceptance criterion ("the older
+   one's walk skips the younger one if it was its dependent"). Implemented
+   (02 and the criterion): the log is `child (unreachable), parent
+   (unreachable)`; the test "case 3: ..." in `tests/test-sentinel.lua`
+   pins it with a comment pointing here. The consequence worth a human
+   look: for a subtree the collector finds, a dependent's `__destroy` runs
+   **before** its owner's, the reverse of "Cascading death" ("my
+   dependents are still here and die right after me"), and the owner's
+   body sees that dependent as a tombstone. 02's "A subtree nobody
+   outside holds ... dies as a whole when the collector finds its root"
+   reads as if case 3's order were meant. The alternative is
+   implementable without a side table: a finalizer whose object has an
+   anchor that is itself pending finalization in the same collection (the
+   anchor's proxy has left the weak `armed` list while its owner is still
+   set) does nothing and lets the anchor's walk take the object with
+   `"anchor"`; that gives case 3's order and keeps the owner-first rule
+   for collected subtrees, and changes the meaning of "newest first" to
+   "newest root first". Not done: it is a choice between two readings of
+   02, so it is the human's. Pinned dependents and hooks carry no
+   sentinel, so a subtree of those already dies root first (test "the
+   cascade takes the dependents with reason anchor, at collector").
+2. **The exit flag's name.** 03, "Program end", and 04, "The command",
+   say `lifetime run` sets "an exit flag"; nothing names it, and 06 leaves
+   the embedding host's spelling open. Implemented:
+   `lifetime.set_exiting(flag)`, a function on the runtime table (task
+   007 calls it). 03 could name it.
+3. **`lifetime.alive` of a lifetime value or the `lifetime.scope`
+   marker.** 02 says `alive` is `true` for an object alive or dying,
+   `false` for a tombstone, `nil` or `false`, and an argument error for a
+   value that is not an object, while `destroy`, `of` and `format` refuse
+   a lifetime value and the marker with `object expected, got lifetime`
+   (or `lifetime.scope`). Implemented: `alive` reads any table without a
+   tombstone as alive, so both give `true`, with no extra test on the hot
+   path. If they should raise, `alive` needs one more branch on tables
+   without a state record.
+4. **Sentinel reuse.** 03 says the proxy is "allocated lazily: on the
+   first `@` that makes the object need one ... and never again for the
+   same object", and "Performance" counts "one `newproxy(true)` per
+   table". The runtime keeps the proxy of an owner that died by a cascade
+   for a later owner when that keeps the finalization order (the proxy was
+   in the last slot handed out; `armed`, `kept` in `lifetime/init.lua`),
+   so a loop that owns objects allocates no proxy after its first
+   iteration. Never twice for the same object still holds, and the order
+   the host finalizes in is the order of the `@`s, as for fresh proxies;
+   a proxy whose finalizer is already pending is never kept (test "a
+   proxy whose finalizer is pending is not handed to another owner"). The
+   runtime holds the kept proxies (each refers to nothing but itself):
+   their number is bounded by the most sentinels ever disarmed newest
+   first. Without the reuse a fresh `newproxy` per object made
+   `attach`+`destroy` of an object with a sentinel about 600 ns dearer on
+   Lua 5.1 and 400 ns on LuaJIT. 03 could mention it.
+5. **More dependents with the term held by nobody.** Besides the eleven
+   cases of `tests/test-runtime.lua` that task 003's review named, twenty
+   statements in `tests/test-scopes.lua` attached a logging dependent to a
+   scope record without keeping it, inside frames that an error unwinds.
+   With the sentinel any of them could die `"unreachable"` before the
+   exit. They are held now (`hold` in that file; CLAUDE.md, rule 6).
+
 ## Review log

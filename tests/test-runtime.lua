@@ -566,6 +566,32 @@ test.case("a __newindex on the object does not stop the runtime", function()
     test.assert_eq(getmetatable(x), "dead")
 end)
 
+test.case("an __index on anchors and dependents is never consulted by the runtime", function()
+    -- The cascade reads a dependent's record as `dep[STATE]`: the key is
+    -- there, so no metamethod runs (Lua 5.1 reference manual, 2.8).
+    local log = {}
+    local function guarded(name)
+        return setmetatable({}, {
+            __index = function()
+                error("__index consulted")
+            end,
+            __destroy = function(_, reason)
+                log[#log + 1] = name .. " (" .. reason .. ")"
+            end
+        })
+    end
+    local a, b = guarded("a"), guarded("b")
+    local x = attach(guarded("x"), false, a)
+    local y = attach(guarded("y"), false, a, b)
+    attach(x, false, b)
+    attach(x, false, a)
+    destroy(a)
+    test.assert_deep_eq(log, {"a (destroy)", "x (anchor)", "y (anchor)"})
+    destroy(b)
+    test.assert_deep_eq(log, {"a (destroy)", "x (anchor)", "y (anchor)", "b (destroy)"})
+    test.assert_eq(getmetatable(y), "dead")
+end)
+
 test.suite("runtime: tombstones")
 
 test.case("a tombstone is empty, has the dead metatable and raises with name, where and reason", function()
