@@ -57,6 +57,13 @@ the harness, the threshold, and the benchmarks for what exists after task
   rule).
 - `make bench` is not part of `make test` (it is slow and noisy); `make
   lint` covers `bench/`.
+- `bench/bench-build.lua` also measures `cli.build` on the largest file
+  under `lifetime/` (today `lifetime/parser.lua`); this is the transpiler
+  benchmark that the `jit.off(true, true)` comments in
+  `lifetime/parser.lua` and `lifetime/emit.lua` cite, so update those
+  comments to name it (task 001, review finding F2). Baselines from task
+  001's review: lua5.1 7.5 to 7.8 ms, luajit 3.6 to 3.7 ms steady, 27 ms
+  under luajit without `jit.off`.
 
 ## Test cases
 

@@ -40,6 +40,17 @@ labels in the input. The extension adds no reserved word
 - `docs/05-decisions.md`, "Tokens are created by `lifetime.token`":
   there is no token syntax; `token` is an ordinary name.
 
+- `tasks/001-skeleton-and-conformance-runner.md`, *Spec issues found*,
+  item 2: the lexical points where Lua 5.1 and LuaJIT differ and the
+  LuaJIT-only lexical extensions (`\z`, `\x41`, `\u{...}`, `1LL`/`1ULL`/`1i`,
+  bytes >= 128 in identifiers, a BOM, a `#!` first line). This task decides
+  whether any of them beyond `goto` is in scope and records the answer in
+  `docs/05-decisions.md`; task 001's lexer follows Lua 5.1 for all of them.
+- `tasks/001-skeleton-and-conformance-runner.md`, review round 1: the AST
+  records, on nodes that own tokens, the lines of those tokens (`lines`);
+  new nodes of this task follow that convention so the emitter keeps every
+  token on its line.
+
 ## Acceptance criteria
 
 - `e @ a`, `e @ (a, b, c)`, `e @ lifetime.scope`, `e @ (a, lifetime.scope)`
