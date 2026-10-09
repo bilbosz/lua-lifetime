@@ -1,9 +1,9 @@
 ---
 id: 004
 title: Runtime: `lifetime.token`, `lifetime.pin`, `lifetime.alive`, reachable-only destructors via `newproxy`, `collectgarbage`
-status: todo
+status: in-progress
 depends: [002]
-branch:
+branch: task/004-runtime-tokens-pin-alive-sentinel
 pr:
 commits:
 review:
