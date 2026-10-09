@@ -121,10 +121,16 @@ How large the noise is. It is between processes, not within one: on the
 machine where tasks 010 and 011 were written, `branch/base` for
 **identical** code (a branch whose `lifetime/` matched `master` up to
 comments) ranged from **0.90 to 1.10** across separate `bench/run.lua`
-processes, while the in-process interleaved `ratio` of `plain/transpiled`
-stayed **within 3%** of 1.0. That is why `make bench BASE=` alternates
-processes and asks both pairings to agree rather than timing more runs
-in one process: a single pairing near 1.10 says nothing, two do.
+processes (task 010's review), while the in-process interleaved `ratio`
+of `plain/transpiled` stayed **within 3%** of 1.0. Task 011's two
+invocations of `make bench BASE=master` on identical `lifetime/` (sixteen
+processes) agree, with one outlier each way: one pairing of
+`build/generated-5000` under luajit read 1.143 while the other pairing of
+the same invocation read 0.988 (not marked), and one `plain/transpiled`
+`ratio` read 0.957 among fifteen between 0.984 and 1.018. That is why
+`make bench BASE=` alternates processes and asks both pairings to agree
+rather than timing more runs in one process: a single pairing beyond
+1.10 says nothing, two do.
 
 ## The benchmarks
 
