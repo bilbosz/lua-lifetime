@@ -25,7 +25,9 @@ local find, match, sub = string.find, string.match, string.sub
 -- one; its only syntax error, the `goto` into a scoped block
 -- (docs/04-transpiler.md, "Blocks"), is recognised by its whole shape.
 local MARKER = "\0lifetime syntax error\0"
-local GOTO_ERROR = "^:%d+: <goto [%a_][%w_]*> jumps into the scope of a lifetime$"
+-- The label is a name as the lexer reads it: bytes 128 to 255 included
+-- (LuaJIT's lexical extension, lifetime/lexer.lua).
+local GOTO_ERROR = "^:%d+: <goto [%a_\128-\255][%w_\128-\255]*> jumps into the scope of a lifetime$"
 
 local function build(source, chunkname)
     local marked = MARKER .. chunkname

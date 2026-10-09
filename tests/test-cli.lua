@@ -84,6 +84,9 @@ test.case("a syntax error is recognised by its marker, not by the chunkname pref
     test.assert_deep_eq({cli.build("x = 0x", "lifetime/emit.lua")}, {nil, "lifetime/emit.lua:1: malformed number near '0x'"})
     test.assert_deep_eq({cli.build("x @ ()", "lifetime/emit.lua")}, {nil, "lifetime/emit.lua:1: empty anchor list near ')'"})
     test.assert_deep_eq({cli.build("goto l\ndo local r = {} @ lifetime.scope ::l:: end", "x:1")}, {nil, "x:1:1: <goto l> jumps into the scope of a lifetime"})
+    -- A label with bytes >= 128, which the lexer accepts in names (task
+    -- 007, review round 1, F1).
+    test.assert_deep_eq({cli.build("goto lä\ndo local r = {} @ lifetime.scope ::lä:: end", "x")}, {nil, "x:1: <goto lä> jumps into the scope of a lifetime"})
 end)
 
 ------------------------------------------------------------------------
