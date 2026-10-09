@@ -1,12 +1,12 @@
 ---
 id: 011
 title: Benchmark harness: bake the two-run rule into `make bench BASE=`, base exit status, README noise range
-status: in-progress
+status: review
 depends: [010]
 branch: task/011-bench-two-run-rule
 pr:
 commits:
-review:
+review: APPROVE (round 2)
 ---
 
 ## Goal
@@ -101,3 +101,10 @@ Suite on `6188b63`: unit 70/70 under lua5.1 and luajit, conformance 5/5 under bo
 - `BASE_DIR` safety traced: the only `rm -rf` is reachable solely for the literal `build/base`. Subprocess tests leave nothing outside `build/test-bench/` and create no worktree.
 - Nit: `Makefile`, `bench_to`'s `return $$code` returns 0 if the status file vanished; `return $${code:-1}`.
 - Orchestrator's decision on the reviewer's question: a `SLOWER` mark in one invocation is a finding to confirm, not yet a finding; the README states that a mark must appear in two consecutive invocations to count (a mark in one of two is noise), given that both pairings above 1.10 on identical code is a percent-level event per benchmark per invocation. The in-process range is stated as "within 3%, with occasional outliers to 0.94".
+
+### Round 2: APPROVE
+
+Suite on `73f098c`: unit 70/70 under lua5.1 and luajit, conformance 5/5 under both, lint clean (23 files). Without `make` on PATH (standard tools present) both interpreters print the one skip line and report 66/66, exit 0; the suite is not registered, nothing counted as passed. `bench_to`'s default checked in isolation under dash and bash: a missing status file now returns 1, a killed command its signal status. `make bench BASE=master` not re-run: the only change on that path alters nothing when the status file exists; round 1's two invocations stand.
+
+- F1 fixed in `73f098c` as specified. The README states the confirmation rule as decided: a `SLOWER` mark counts when the same benchmark is marked in two consecutive invocations; one of two is noise; in-process ratio within 3% with occasional outliers to 0.94. `bench.THRESHOLD`'s comment says the same.
+- Later notes: `tests/test-harness.lua` and `tests/test-emit.lua` list files through the shell, so a PATH with literally only the interpreters fails two pre-existing cases (not this task's); `.claude/skills/review/SKILL.md`, "Performance", could point at the confirmation rule in `bench/README.md` (a `chore/` edit).
