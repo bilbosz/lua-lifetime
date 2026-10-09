@@ -1,9 +1,9 @@
 ---
 id: 007
 title: CLI `lifetime build` and `lifetime run`; the rockspec installs and runs
-status: todo
+status: in-progress
 depends: [006]
-branch:
+branch: task/007-cli-and-rockspec
 pr:
 commits:
 review:
