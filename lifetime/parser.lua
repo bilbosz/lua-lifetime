@@ -107,7 +107,6 @@ local RIGHT = {
     ["^"] = 9
 }
 local UNARY_PRIORITY = 8
-parser.LEFT, parser.RIGHT, parser.UNARY_PRIORITY = LEFT, RIGHT, UNARY_PRIORITY
 
 -- The text Lua shows for a token in "near '...'" (llex.c, txtToken): the
 -- spelling of names and numbers, a string with its delimiters around the

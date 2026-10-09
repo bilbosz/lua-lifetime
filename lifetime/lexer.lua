@@ -45,7 +45,6 @@ local KEYWORDS = {}
 for word in ("and break do else elseif end false for function if in local nil not or repeat return then true until while"):gmatch("%a+") do
     KEYWORDS[word] = true
 end
-lexer.KEYWORDS = KEYWORDS
 
 -- The escapes of manual §2.1 that stand for one control character.
 local ESCAPES = {
