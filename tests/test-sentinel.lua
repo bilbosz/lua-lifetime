@@ -588,20 +588,22 @@ end)
 -- owner that died by a cascade for the next owner (docs/03-runtime.md,
 -- "The sentinel": never twice for the same object, "so the position of
 -- each proxy, and with it the host's finalization order, is the order of
--- the `@`s that armed them"). x2 dies below the last slot (a hole), x4
--- and x3 from the last slot (kept); `armed_n` steps down to 2, below
--- x3's and x4's slots, where their proxies stay kept; y1 and y2 then
--- take x3's and x4's proxies, in order.
+-- the `@`s that armed them"). x2 dies below the last slot and its proxy
+-- stays kept in its slot (task 017: a cascade now disarms an owner's
+-- older dependents first, see `drop_sentinel`); x4 dies from the last
+-- slot (kept), and `armed_n` steps down to x3's armed slot; x3 dies from
+-- the last slot, and `armed_n` steps down over x2's kept slot to x1's.
+-- y1 and y2 then take x2's and x3's proxies, in order, where they lie.
 --
 -- Which "newest first" the expected log relies on: the host finalizes in
 -- reverse creation order of the *proxies* (docs/02-semantics.md, "Host"),
--- not of their owners. y2 holds x4's proxy, made after x3's, which y1
+-- not of their owners. y2 holds x3's proxy, made after x2's, which y1
 -- holds, made after x1's: y2, y1, x1. That is the order of the `@`s that
 -- armed them, as the pool promises, and here also the owners' creation
 -- order.
 --
 -- `collect_between` forces a full collection between `destroy(x3)` and
--- the first `attach`, which changes nothing: x3's and x4's proxies are
+-- the first `attach`, which changes nothing: x2's and x3's proxies are
 -- disarmed and held by the runtime (its `kept`, through their
 -- metatables) and by `proxies`, so the collection neither finalizes nor
 -- clears them, and the pool still hands them to y1 and y2 in order.
@@ -634,7 +636,7 @@ local function proxy_reuse_case(collect_between)
         local x2 = attach(new_logged(log, "x2"), false, lifetime.reachable)
         local x3 = attach(new_logged(log, "x3"), false, lifetime.reachable)
         local x4 = attach(new_logged(log, "x4"), false, lifetime.reachable)
-        proxies[3], proxies[4] = sentinel_of(x3), sentinel_of(x4)
+        proxies[2], proxies[3] = sentinel_of(x2), sentinel_of(x3)
         destroy(x2)
         destroy(x4)
         destroy(x3)
@@ -644,10 +646,10 @@ local function proxy_reuse_case(collect_between)
         end
         local y1 = attach(new_logged(log, "y1"), false, lifetime.reachable)
         local y2 = attach(new_logged(log, "y2"), false, lifetime.reachable)
-        test.assert_true(rawequal(sentinel_of(y1), proxies[3]), "y1 took x3's proxy")
-        test.assert_true(rawequal(sentinel_of(y2), proxies[4]), "y2 took x4's proxy")
+        test.assert_true(rawequal(sentinel_of(y1), proxies[2]), "y1 took x2's proxy")
+        test.assert_true(rawequal(sentinel_of(y2), proxies[3]), "y2 took x3's proxy")
         -- A proxy's metatable holds its owner: let go of them.
-        proxies[3], proxies[4] = nil, nil
+        proxies[2], proxies[3] = nil, nil
         held[1], held[2], held[3] = x1, y1, y2
     end
     run_dropped(make)
@@ -665,11 +667,11 @@ test.case("a disarmed proxy is reused by the next owner across a full collection
     proxy_reuse_case(true)
 end)
 
-test.case("a proxy disarmed below holes is kept as the newest; the kept ones move down over the holes", function()
-    -- x3 dies below the last slot (a hole), x4 from the last slot (kept),
-    -- then x2, below the hole x3 left: every slot above it is a hole, so
-    -- it is the newest armed proxy and is kept, x4's moving down next to
-    -- it. y1 and y2 take x2's and x4's proxies, in creation order.
+test.case("a proxy disarmed below the last slot waits in its slot; the kept ones are reused in creation order", function()
+    -- x3 dies below the last slot (kept in its slot), x4 from the last
+    -- slot (kept; `armed_n` steps down over x3's slot to x2's), then x2
+    -- from the last slot (kept; `armed_n` steps down to x1's). y1 and y2
+    -- take x2's and x3's proxies, in creation order; x4's waits above.
     local log = {}
     local proxies = {}
     local function make()
@@ -677,20 +679,68 @@ test.case("a proxy disarmed below holes is kept as the newest; the kept ones mov
         local x2 = attach(new_logged(log, "x2"), false, lifetime.reachable)
         local x3 = attach(new_logged(log, "x3"), false, lifetime.reachable)
         local x4 = attach(new_logged(log, "x4"), false, lifetime.reachable)
-        proxies[2], proxies[4] = sentinel_of(x2), sentinel_of(x4)
+        proxies[2], proxies[3] = sentinel_of(x2), sentinel_of(x3)
         destroy(x3)
         destroy(x4)
         destroy(x2)
         local y1 = attach(new_logged(log, "y1"), false, lifetime.reachable)
         local y2 = attach(new_logged(log, "y2"), false, lifetime.reachable)
         test.assert_true(rawequal(sentinel_of(y1), proxies[2]), "y1 took x2's proxy")
-        test.assert_true(rawequal(sentinel_of(y2), proxies[4]), "y2 took x4's proxy")
-        proxies[2], proxies[4] = nil, nil
+        test.assert_true(rawequal(sentinel_of(y2), proxies[3]), "y2 took x3's proxy")
+        proxies[2], proxies[3] = nil, nil
         return x1 ~= nil
     end
     run_dropped(make)
     collect()
     test.assert_deep_eq(log, {"x3 (destroy)", "x4 (destroy)", "x2 (destroy)", "y2 (unreachable)", "y1 (unreachable)", "x1 (unreachable)"})
+end)
+
+test.case("the kept proxies move down over a slot the collector emptied, and a fresh proxy goes above them", function()
+    -- Task 017's pool (`drop_sentinel`): x2 is collected, so the collector
+    -- takes its proxy and its slot is a hole. x3 dies below the last slot
+    -- (kept in its slot), then x4 from the last slot: `armed_n` steps
+    -- down over x3's kept slot and x2's hole to x1's, and the kept
+    -- proxies of x3 and x4 move down over the hole, in order. y1 and y2
+    -- take them; y3 gets a fresh proxy, above both. Newest first is then
+    -- y3, y2, y1, x1.
+    local log = {}
+    local proxies = {}
+    local held = {} -- luacheck: ignore 241
+    local function make()
+        local x1 = attach(new_logged(log, "x1"), false, lifetime.reachable)
+        run_dropped(function()
+            attach(new_logged(log, "x2"), false, lifetime.reachable)
+        end)
+        local x3 = attach(new_logged(log, "x3"), false, lifetime.reachable)
+        local x4 = attach(new_logged(log, "x4"), false, lifetime.reachable)
+        held[1], held[3], held[4] = x1, x3, x4
+    end
+    run_dropped(make)
+    collect()
+    test.assert_deep_eq(log, {"x2 (unreachable)"})
+    local x3, x4 = held[3], held[4]
+    held[3], held[4] = nil, nil
+    proxies[3], proxies[4] = sentinel_of(x3), sentinel_of(x4)
+    destroy(x3)
+    destroy(x4)
+    x3, x4 = nil, nil -- luacheck: ignore 311
+    local function attach_new()
+        local y1 = attach(new_logged(log, "y1"), false, lifetime.reachable)
+        local y2 = attach(new_logged(log, "y2"), false, lifetime.reachable)
+        local y3 = attach(new_logged(log, "y3"), false, lifetime.reachable)
+        test.assert_true(rawequal(sentinel_of(y1), proxies[3]), "y1 took x3's proxy")
+        test.assert_true(rawequal(sentinel_of(y2), proxies[4]), "y2 took x4's proxy")
+        local fresh = sentinel_of(y3)
+        test.assert_false(rawequal(fresh, proxies[3]) or rawequal(fresh, proxies[4]), "y3's proxy is a fresh one")
+        fresh = nil -- luacheck: ignore 311
+        proxies[3], proxies[4] = nil, nil
+        held[2], held[3], held[4] = y1, y2, y3
+    end
+    run_dropped(attach_new)
+    test.assert_deep_eq(log, {"x2 (unreachable)", "x3 (destroy)", "x4 (destroy)"})
+    held[1], held[2], held[3], held[4] = nil, nil, nil, nil
+    collect()
+    test.assert_deep_eq(log, {"x2 (unreachable)", "x3 (destroy)", "x4 (destroy)", "y3 (unreachable)", "y2 (unreachable)", "y1 (unreachable)", "x1 (unreachable)"})
 end)
 
 test.case("a proxy whose finalizer is pending is not handed to another owner", function()
@@ -1249,6 +1299,418 @@ test.case("F1: exit(nil) raises before it pops, on an empty stack and on a non-e
     end)
     assert(coroutine.resume(co))
     test.assert_deep_eq(results, {before = 0, ok1 = false, after1 = 0, ok2 = false, after2 = 1, after3 = 0})
+end)
+
+------------------------------------------------------------------------
+test.suite("sentinel: anchors first (task 017)")
+
+-- docs/02-semantics.md, "Reachability is the collector's": "Within one
+-- collection, an anchor is finalized before its dependents, and objects
+-- not ordered by ownership are finalized newest first by creation ... A
+-- subtree collected at once therefore dies as one cascade from its root,
+-- in ownership order: the root with reason "unreachable", its dependents
+-- with "anchor"". docs/03-runtime.md, "The sentinel", "Anchors first":
+-- the runtime exchanges proxies at each `@` so that an anchor's proxy is
+-- newer than its dependents'. Every case logs the deaths, compares the
+-- whole sequence before and after the `collect()` that causes them, and
+-- reads the proxies' ages (their slots) where the order of the proxies is
+-- the point.
+
+-- The age of a table's proxy (docs/03-runtime.md, "The sentinel": "A
+-- proxy's position is its age"): its slot, read through the state
+-- record; nil without one.
+local function slot_of(t)
+    local st = state_of(t)
+    if not st then
+        return nil
+    end
+    local mt = rawget(st, "reachable")
+    if type(mt) ~= "table" then
+        mt = rawget(st, "sentinel")
+    end
+    return type(mt) == "table" and rawget(mt, "slot") or nil
+end
+
+-- An object as a class library that registers every instance in its
+-- constructor makes it (docs/05-decisions.md, "Registration is `x @
+-- lifetime.reachable`"): its sentinel is armed before anything is
+-- attached to it or it to anything.
+local function registered(log, name, extra)
+    return attach(new_logged(log, name, extra), false, lifetime.reachable)
+end
+
+-- The number of active stack levels of the running coroutine.
+local function stack_depth()
+    local level = 1
+    while debug.getinfo(level + 1, "l") do
+        level = level + 1
+    end
+    return level
+end
+
+test.case("case 1: a registered tree with three children dies from its root; siblings most recently attached first", function()
+    -- Every object is registered before it is linked, parents before
+    -- children: left to the host's newest first, the children would die
+    -- first with "unreachable". The cascade from the root runs each body
+    -- before its dependents' and walks the root's children most recently
+    -- attached first (docs/02-semantics.md, "Cascading death"): among
+    -- siblings it is the cascade order that decides, not the proxies.
+    local log, seen = {}, {}
+    local function make()
+        local p = registered(log, "p", function(self)
+            local kids = self.kids
+            seen.p = {alive(kids[1]), alive(kids[2]), alive(kids[3]), alive(kids[2].kid)}
+        end)
+        p.kids = {}
+        for i = 1, 3 do
+            local extra = i == 2 and function(self)
+                seen.c2 = alive(self.kid)
+            end or nil
+            p.kids[i] = attach(registered(log, "c" .. i, extra), false, p)
+        end
+        local c2 = p.kids[2]
+        c2.kid = attach(registered(log, "g"), false, c2)
+        for i = 1, 3 do
+            test.assert_true(slot_of(p) > slot_of(p.kids[i]), "p's proxy is newer than c" .. i .. "'s")
+        end
+        test.assert_true(slot_of(c2) > slot_of(c2.kid), "c2's proxy is newer than g's")
+    end
+    run_dropped(make)
+    test.assert_deep_eq(log, {}, "nothing died before the collection")
+    collect()
+    test.assert_deep_eq(log, {"p (unreachable)", "c3 (anchor)", "c2 (anchor)", "g (anchor)", "c1 (anchor)"}, "one cascade, when collectgarbage returned")
+    test.assert_deep_eq(seen.p, {true, true, true, true}, "p's body saw its whole subtree alive")
+    test.assert_true(seen.c2, "c2's body saw g alive")
+end)
+
+test.case("the demonstration program prints the ownership order under the suite's interpreter, eager collector or not", function()
+    local interpreter = arg and arg[-1] or "lua5.1"
+    local expected = table.concat({"drop the root", "parent destroyed (unreachable), child alive: true", "child destroyed (anchor), child alive: true", "grandchild destroyed (anchor)", "done", ""}, "\n")
+    for _, mode in ipairs({"", " eager"}) do
+        local out = os.tmpname()
+        os.execute(string.format("%s bin/lifetime run tests/fixtures/order-tree.lt%s >%s 2>&1", shell_quote(interpreter), mode, shell_quote(out)))
+        local got = read_file(out)
+        os.remove(out)
+        test.assert_eq(got, expected, "tests/fixtures/order-tree.lt" .. mode)
+    end
+end)
+
+test.case("case 2: a parent armed lazily at the link needs no exchange: its proxy is the newer one", function()
+    local log = {}
+    local function make()
+        local c = registered(log, "c")
+        local before = sentinel_of(c)
+        local p = new_logged(log, "p") -- never seen: armed at its first link
+        attach(c, false, p)
+        test.assert_true(rawequal(sentinel_of(c), before), "c kept its own proxy")
+        before = nil -- luacheck: ignore 311
+        test.assert_true(slot_of(p) > slot_of(c), "the parent's proxy, made at the link, is newer")
+        p.c = c
+    end
+    run_dropped(make)
+    test.assert_deep_eq(log, {})
+    collect()
+    test.assert_deep_eq(log, {"p (unreachable)", "c (anchor)"})
+end)
+
+test.case("case 3: children created and registered before their parent die in the order of case 1", function()
+    -- Two shapes: the child, then the parent, then `c @ p`, then the
+    -- grandchild `g @ c` (an exchange at g's link climbs to p); and the
+    -- grandchild first, `g @ c`, then the parent, then `c @ p` (no
+    -- exchange needed).
+    local log = {}
+    local function child_then_parent()
+        local c = registered(log, "c")
+        local p = registered(log, "p")
+        attach(c, false, p)
+        p.c = c
+        c.g = attach(registered(log, "g"), false, c)
+        test.assert_true(slot_of(p) > slot_of(c) and slot_of(c) > slot_of(c.g), "p, c, g newest first")
+    end
+    run_dropped(child_then_parent)
+    collect()
+    test.assert_deep_eq(log, {"p (unreachable)", "c (anchor)", "g (anchor)"})
+    log = {}
+    local function bottom_up()
+        local g = registered(log, "g")
+        local c = registered(log, "c")
+        attach(g, false, c)
+        c.g = g
+        local p = registered(log, "p")
+        attach(c, false, p)
+        p.c = c
+    end
+    run_dropped(bottom_up)
+    collect()
+    test.assert_deep_eq(log, {"p (unreachable)", "c (anchor)", "g (anchor)"})
+end)
+
+test.case("case 4: x @ (a, b), a older than b and x newest: x dies anchor in the first cascade, never unreachable", function()
+    -- x's link exchanges with a (older than x) and then, holding a's old
+    -- proxy, finds b newer: a ends newest, then b, then x. a is finalized
+    -- first and its cascade takes x; b's walk then skips the dead x.
+    local log = {}
+    local function make()
+        local a = registered(log, "a")
+        local b = registered(log, "b")
+        local x = attach(registered(log, "x"), false, a, b)
+        a.x, b.x = x, x
+        test.assert_true(slot_of(a) > slot_of(x) and slot_of(b) > slot_of(x), "both anchors newer than x")
+        test.assert_true(slot_of(a) > slot_of(b), "a took x's proxy, the newest")
+    end
+    run_dropped(make)
+    test.assert_deep_eq(log, {})
+    collect()
+    test.assert_deep_eq(log, {"a (unreachable)", "x (anchor)", "b (unreachable)"})
+end)
+
+test.case("case 5: a cycle of anchors ends the climb; each object dies once, one unreachable, the others anchor", function()
+    -- docs/03-runtime.md, "Anchors first": "The climb marks the records it
+    -- has visited with the phase counter the cascade uses, so a cycle of
+    -- anchors ends it: the cycle's proxies keep their order and the host
+    -- picks the root." Each attach below returns (the climb ends), and the
+    -- destructors run at a bounded stack depth.
+    local log, depths = {}, {}
+    local function deep(self)
+        depths[#depths + 1] = stack_depth()
+    end
+    local function two()
+        local a = registered(log, "a", deep)
+        local b = registered(log, "b", deep)
+        attach(a, false, b)
+        attach(b, false, a)
+        -- b's link exchanged with a, and the climb from a stopped at b.
+        test.assert_true(slot_of(a) > slot_of(b))
+    end
+    run_dropped(two)
+    local base = stack_depth()
+    collect()
+    test.assert_deep_eq(log, {"a (unreachable)", "b (anchor)"})
+    for _, d in ipairs(depths) do
+        test.assert_true(d < base + 40, "a destructor ran " .. (d - base) .. " levels below the collection")
+    end
+    log, depths = {}, {}
+    local function three_and_a_dependent()
+        local a = registered(log, "a", deep)
+        local b = registered(log, "b", deep)
+        local c = registered(log, "c", deep)
+        attach(a, false, b)
+        attach(b, false, c)
+        attach(c, false, a)
+        local x = attach(registered(log, "x", deep), false, a)
+        a.x = x
+        -- A move inside the cycle climbs it again.
+        attach(b, false, c)
+    end
+    run_dropped(three_and_a_dependent)
+    base = stack_depth()
+    collect()
+    test.assert_eq(#log, 4, "four deaths")
+    local count, unreachable = {}, 0
+    for _, line in ipairs(log) do
+        local name, reason = line:match("^(%a+) %((%a+)%)$")
+        count[name] = (count[name] or 0) + 1
+        if reason == "unreachable" then
+            unreachable = unreachable + 1
+        end
+    end
+    test.assert_deep_eq(count, {a = 1, b = 1, c = 1, x = 1}, "each died once")
+    test.assert_eq(unreachable, 1, "one root")
+    test.assert_true(log[1]:match("unreachable") ~= nil, "the root first")
+    for _, d in ipairs(depths) do
+        test.assert_true(d < base + 60, "a destructor ran " .. (d - base) .. " levels below the collection")
+    end
+end)
+
+test.case("case 6: a move to an anchor older than the object exchanges at the move", function()
+    local log = {}
+    local held = {}
+    local function make()
+        local p2 = registered(log, "p2")
+        local p1 = registered(log, "p1")
+        local c = registered(log, "c")
+        attach(c, false, p1)
+        attach(c, false, p2)
+        p2.c = c
+        test.assert_true(slot_of(p2) > slot_of(c), "p2 took the newer proxy at the move")
+        held.p1 = p1
+    end
+    run_dropped(make)
+    collect()
+    test.assert_deep_eq(log, {"p2 (unreachable)", "c (anchor)"})
+    destroy(held.p1)
+    test.assert_deep_eq(log, {"p2 (unreachable)", "c (anchor)", "p1 (destroy)"}, "c is no longer p1's")
+end)
+
+test.case("case 7: a collected suspended coroutine's record takes its registered objects with reason anchor", function()
+    -- docs/03-runtime.md, "The scope stack and the error path", last
+    -- paragraph: the records' sentinels "run innermost first: the runtime
+    -- keeps each record's proxy newer than those of the records and
+    -- objects it anchors". y is new (armed before the record, which is
+    -- armed at y's link); x is registered after the record was armed, so
+    -- its link exchanges with the record (its `sentinel` field).
+    local log = {}
+    local probe = setmetatable({}, {__mode = "k"})
+    local function start()
+        local co = coroutine.create(function()
+            local s = enter("t.lt:10")
+            local y = attach(new_logged(log, "y"), false, s)
+            local x = registered(log, "x")
+            attach(x, false, s)
+            test.assert_true(slot_of(s) > slot_of(x) and slot_of(s) > slot_of(y), "the record's proxy is the newest")
+            coroutine.yield()
+            exit(s, "t.lt:10")
+            return x, y
+        end)
+        coroutine.resume(co)
+        probe[co] = true
+    end
+    start()
+    test.assert_deep_eq(log, {}, "suspended: alive")
+    collect()
+    collect()
+    test.assert_deep_eq(log, {"x (anchor)", "y (anchor)"})
+    collect()
+    test.assert_eq(next(probe), nil, "the coroutine was collected")
+end)
+
+test.case("case 8: unrelated subtrees still die newest first, each from its root", function()
+    local log = {}
+    local function make()
+        local pa = registered(log, "pa")
+        pa.c = attach(registered(log, "ca"), false, pa)
+        local pb = registered(log, "pb")
+        pb.c = attach(registered(log, "cb"), false, pb)
+        return pa ~= pb
+    end
+    run_dropped(make)
+    collect()
+    test.assert_deep_eq(log, {"pb (unreachable)", "cb (anchor)", "pa (unreachable)", "ca (anchor)"})
+end)
+
+test.case("a token with the term and a list form are ordered like tables; a sentinel-less pinned dependent is not compared", function()
+    local log = {}
+    local function make()
+        local t = token("t")
+        local holder = registered(log, "holder")
+        attach(t, false, holder)
+        local x = registered(log, "x")
+        attach(x, false, t, lifetime.reachable)
+        test.assert_true(slot_of(t) > slot_of(x), "the token took the newer proxy")
+        test.assert_true(slot_of(holder) > slot_of(t), "and the climb went on to its anchor")
+        local pinned = attach(new_logged(log, "pinned"), false, pin(holder))
+        test.assert_eq(slot_of(pinned), nil, "a pinned dependent has no proxy")
+        holder.t, holder.x, holder.pinned = t, x, pinned
+    end
+    run_dropped(make)
+    collect()
+    test.assert_deep_eq(log, {"holder (unreachable)", "pinned (anchor)", "x (anchor)"})
+end)
+
+test.case("an anchor armed lazily while it has anchors of its own climbs past them", function()
+    -- c has no `__destroy` and no dependents, so `c @ p` gives it no
+    -- proxy; g's link gives c its first dependent and a proxy, the newest,
+    -- which must not stay newer than p's.
+    local log, seen = {}, {}
+    local function make()
+        local p = registered(log, "p", function(self)
+            seen.c = alive(self.c)
+        end)
+        local c = attach({}, false, p)
+        p.c = c
+        test.assert_eq(slot_of(c), nil, "c has nothing to run yet")
+        c.g = attach(registered(log, "g"), false, c)
+        test.assert_true(slot_of(p) > slot_of(c) and slot_of(c) > slot_of(c.g), "p, c, g newest first")
+    end
+    run_dropped(make)
+    collect()
+    test.assert_deep_eq(log, {"p (unreachable)", "g (anchor)"})
+    test.assert_true(seen.c, "p's body saw c alive")
+end)
+
+test.case("random registered graphs built top down: every anchor's proxy is newer than its dependents', and they die in ownership order", function()
+    -- A generator that gives the same sequence on both hosts.
+    local seed = 20261010
+    local function rand(n)
+        seed = (seed * 16807) % 2147483647
+        return seed % n + 1
+    end
+    for round = 1, 12 do
+        local log = {}
+        local held = {} -- luacheck: ignore 241
+        local anchors_of = {}
+        local N = 24
+        local function make()
+            local nodes = {}
+            for i = 1, N do
+                local name = "n" .. i
+                local x = registered(log, name)
+                nodes[i] = x
+                local k = i == 1 and 0 or rand(4) - 1
+                local chosen, list = {}, {}
+                for _ = 1, k do
+                    local j = rand(i - 1)
+                    if not chosen[j] then
+                        chosen[j] = true
+                        list[#list + 1] = j
+                    end
+                end
+                if #list > 0 then
+                    local anchors = {}
+                    for m, j in ipairs(list) do
+                        anchors[m] = nodes[j]
+                        -- The anchor holds its dependent, as a parent does.
+                        nodes[j][name] = x
+                    end
+                    attach(x, false, unpack(anchors))
+                end
+                anchors_of[i] = list
+            end
+            -- Moves of objects without dependents to other anchors.
+            for _ = 1, 6 do
+                local i = rand(N)
+                if #lifetime.dependents(nodes[i]) == 0 and i > 1 then
+                    local j = rand(i - 1)
+                    nodes[j]["n" .. i] = nodes[i]
+                    attach(nodes[i], false, nodes[j])
+                    anchors_of[i] = {j}
+                end
+            end
+            for i = 1, N do
+                for _, dep in ipairs(lifetime.dependents(nodes[i])) do
+                    test.assert_true(slot_of(nodes[i]) > slot_of(dep), "round " .. round .. ": n" .. i .. " newer than its dependent")
+                end
+            end
+            held[1] = nodes
+        end
+        run_dropped(make)
+        test.assert_deep_eq(log, {})
+        held[1] = nil
+        collect()
+        test.assert_eq(#log, N, "round " .. round .. ": every object died once")
+        local at, reason = {}, {}
+        for index, line in ipairs(log) do
+            local name, why = line:match("^(n%d+) %((%a+)%)$")
+            test.assert_eq(at[name], nil, "round " .. round .. ": " .. name .. " died once")
+            at[name], reason[name] = index, why
+        end
+        -- A dependent dies in the cascade of the first of its anchors to
+        -- die (case 4), so after that one; a root dies by its own
+        -- finalizer.
+        for i = 1, N do
+            local name = "n" .. i
+            test.assert_eq(reason[name], #anchors_of[i] == 0 and "unreachable" or "anchor", "round " .. round .. ": " .. name)
+            local first
+            for _, j in ipairs(anchors_of[i]) do
+                if not first or at["n" .. j] < first then
+                    first = at["n" .. j]
+                end
+            end
+            if first then
+                test.assert_true(first < at[name], "round " .. round .. ": " .. name .. " died after its first anchor")
+            end
+        end
+    end
 end)
 
 return test
