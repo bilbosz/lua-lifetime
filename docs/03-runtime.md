@@ -185,8 +185,20 @@ common), with the exit flag of "Program end" turning the reason into
 
 Allocating a proxy per anchored object is the cost of reachable-only
 destructors; a program that pins everything pays nothing. The proxy is
-allocated lazily: on the first `@` that makes the object need one, not at
-`setmetatable`, and never again for the same object.
+armed lazily, on the first `@` that makes the object need one (an object
+seen only as an anchor gets its proxy at its first link), not at
+`setmetatable`; a move that drops the term disarms it and one that brings
+the term back arms another. As implemented (task 004): the record holds
+the proxy's metatable in its `reachable` field (a scope record in
+`sentinel`); a disarmed proxy is kept by the runtime in its slot and
+reused for a later owner, never twice for the same object and never while
+its finalizer is pending, so the position of each proxy, and with it the
+host's finalization order, is the order of the `@`s that armed them
+(a fresh `newproxy` per object costs 400 to 600 ns more). A finalizer
+that fires inside a runtime operation is queued and run when the
+operation ends; a foreign `__gc` that raises through such an operation
+leaves the guard set until the next operation, which delays, never
+loses, the finalizers queued in between.
 
 ## Scope records
 
@@ -271,9 +283,16 @@ constant per creation site and nothing per call.
 ## Program end
 
 `lifetime run` sets an exit flag after the main chunk has returned and its
-scope epilogue has run; from then on the sentinel finalizers that the
-closing state runs report `"exit"`. How an embedding host sets the flag is
-open ([06-open-questions.md](06-open-questions.md)).
+scope epilogue has run, and after an uncaught error has been reported;
+from then on the sentinel finalizers that the closing state runs report
+`"exit"`. The entry point is `lifetime.set_exiting(flag)`; `lifetime run`
+calls it, and an embedding host calls it from its own quit path (how a
+host such as LÖVE reaches it is still open:
+[06-open-questions.md](06-open-questions.md)). A suspended coroutine's
+scope record finalized at state close gives a dependent that has no
+sentinel of its own (a pinned object, a hook) the reason `"anchor"`, as the
+main scope's exit does; a dependent with its own, newer sentinel dies
+`"exit"` first.
 
 ## Performance
 
@@ -308,7 +327,15 @@ same work by hand.
 only where the spec asks for them:
 
 - the sentinel, one `newproxy(true)` per table that has the `reachable`
-  term and something to run at collection;
+  term and something to run at collection, armed and disarmed as the
+  formula changes; measured (task 004): about 50 ns per object on LuaJIT
+  and 120 ns on Lua 5.1 on top of the 350 ns an attach-and-destroy costs
+  without it, so `runtime/attach-destroy-100` and `runtime/cascade-tree`
+  read 1.13 to 1.16 under LuaJIT and 1.04 to 1.08 under Lua 5.1 against a
+  runtime without sentinels; `make bench` marks the LuaJIT rows `SLOWER`
+  against such a base, and that mark is the design's. A collection that
+  runs 100 cascades costs 10x (Lua 5.1) and 5x (LuaJIT) a silent one;
+  `lifetime.alive` is 111 ns per call on Lua 5.1 and 3 ns on LuaJIT;
 - the scope record and its push and pop, per entry into a block that
   anchors to `lifetime.scope`. Nothing the transpiler emits creates a
   closure or a `pcall`, so a loop whose body owns something stays
