@@ -293,6 +293,23 @@ for _, interpreter in ipairs(INTERPRETERS) do
         test.assert_eq(status, 0)
         test.assert_eq(out, read_file("examples/exit_order.lt.expected"))
     end)
+
+    case("examples calling lifetime.destroy and lifetime.discard run as expected with no builtin", function()
+        -- Task 016, test case 5 (also run by the conformance suite): the
+        -- header binds `lifetime` only, and `lifetime.destroy` passed as a
+        -- value (examples/destroy_errors.lt) is the runtime's
+        -- (docs/05-decisions.md, "`destroy` and `discard` are spelled
+        -- `lifetime.destroy` and `lifetime.discard`").
+        for _, path in ipairs({"examples/explicit_destroy.lt", "examples/hooks.lt", "examples/destroy_errors.lt"}) do
+            local out, err, status = lifetime(interpreter, "run " .. path)
+            test.assert_eq(err, "", path)
+            test.assert_eq(status, 0, path)
+            test.assert_eq(out, read_file(path .. ".expected"), path)
+            local built = assert(cli.build(read_file(path), path))
+            test.assert_false(built:find("local destroy", 1, true), path)
+            test.assert_false(built:find("local discard", 1, true), path)
+        end
+    end)
 end
 
 ------------------------------------------------------------------------

@@ -1,12 +1,12 @@
 ---
 id: 016
 title: Emitter: drop the `destroy`/`discard` builtin binding; `lifetime.destroy` and `lifetime.discard` are the only spelling
-status: todo
+status: review
 depends: []
-branch:
-pr:
+branch: task/016-no-destroy-builtin
+pr: https://github.com/bilbosz/lua-lifetime/pull/45
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -88,4 +88,43 @@ runtime change.
 
 ## Spec issues found
 
+- `examples/destroy_errors.lt` part 3 still passed the bare builtin as a
+  value, `print(pcall(destroy, e))`, which the spec change
+  (`spec/lifetime-destroy`) missed: it greps as `destroy, e`, not
+  `destroy(`. With the binding gone it calls a nil global. Rewritten to
+  `pcall(lifetime.destroy, e)` as `docs/05-decisions.md` ("The examples
+  ... are rewritten in the same commit") requires; the `.expected` is
+  unchanged. A token scan (the lexer over every `examples/*.lt`, the
+  trial's sources, `tests/test-{emit,cli,parser,lexer}.lua` and
+  `bench/bench-{emit,treflove}.lua`) finds no other free `destroy` or
+  `discard`. No semantic change.
+- `bench/bench-emit.lua`: the criterion "its source strings call
+  `lifetime.destroy`" rests on a misreading. The `.lt` sources never
+  called `destroy`; the `destroy(x, "anchor")` calls are in the plain-Lua
+  baselines, a local bound to `MT.__destroy` (the destructor called by
+  hand), loaded with `loadstring` and never transpiled. Making them
+  `lifetime.destroy` would put the runtime's cascade into the baseline
+  and change what the ratio measures, so they stay; a comment in the
+  file says why.
+
 ## Review log
+
+### Round 1: APPROVE
+
+Head `29ede33`. `make test` 363/363 under `lua5.1` and `luajit`,
+conformance 75/75, trial 8/8; `make lint` clean; `make bench` on
+`bench-emit.lua`: nothing marked, and every example builds
+byte-identically with the branch and the master emitter. The reviewer
+traced the shadow count through nested shadows, a shadow ending its
+block, `local lifetime = lifetime`, `local function lifetime`,
+assignment targets, loop variables, a nested function naming
+`lifetime`, and a chunk using `@` without naming `lifetime` (gets the
+binding); line preservation holds. No free `destroy`/`discard` left in
+any `.lt` under `examples/` or `trial/` (lexer-based scan).
+
+- F1 (non-blocking): the saved shadow count kept the old name `nd`.
+  Renamed to `saved` by the orchestrator in the approval commit.
+- Orchestrator rulings: the one-line fix of `examples/destroy_errors.lt`
+  (`pcall(lifetime.destroy, e)`, missed by the spec change, `.expected`
+  unchanged) belongs in this task; the `bench-emit` baselines' own
+  `local destroy = MT.__destroy` stays.
