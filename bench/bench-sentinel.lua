@@ -16,6 +16,18 @@
 --                         collected silently
 --   sentinel/alive-10     10 `lifetime.alive` checks of a live object the
 --                         runtime has seen; against 10 `x ~= nil` checks
+--   sentinel/register-tree  a tree of three levels, 10 children per node
+--                         (1 + 10 + 100 objects with a `__destroy`), every
+--                         object registered with `@ lifetime.reachable` at
+--                         construction and then linked `child @ parent`,
+--                         top down, then lifetime.destroy(root); against
+--                         the same tree linked without prior registration.
+--                         The ratio is what registering costs the tree,
+--                         the exchanges of "Anchors first" included (task
+--                         017, docs/03-runtime.md, "The sentinel"): each
+--                         registered child's proxy is newer than its
+--                         ancestors', so its link climbs to the root. On a
+--                         base before task 017 nothing is exchanged.
 --
 -- The objects of `sentinel/anchor-100` are held by the benchmark, as the
 -- baseline's are by their anchor: a dependent with the term that nothing
@@ -104,5 +116,39 @@ end, {
             end
         end
         return n
+    end
+})
+
+-- sentinel/register-tree. The tree is held by the benchmark until the
+-- destroy, as the baseline's is (CLAUDE.md, rule 6).
+local function tree(register)
+    local attach, reachable = lifetime.attach, lifetime.reachable
+    local function make()
+        local obj = setmetatable({}, MT)
+        if register then
+            attach(obj, false, reachable)
+        end
+        return obj
+    end
+    local root = make()
+    local held, n = {}, 0
+    for _ = 1, 10 do
+        local child = attach(make(), false, root)
+        n = n + 1
+        held[n] = child
+        for _ = 1, 10 do
+            n = n + 1
+            held[n] = attach(make(), false, child)
+        end
+    end
+    lifetime.destroy(root)
+    return held
+end
+
+bench.add("sentinel/register-tree", function()
+    return tree(true)
+end, {
+    baseline = function()
+        return tree(false)
     end
 })
