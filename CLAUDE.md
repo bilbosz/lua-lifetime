@@ -16,7 +16,7 @@ documents are derived from `xd/docs/10-lua-lifetime-decisions.md` in the
 | `docs/01-overview.md` | What lua-lifetime is, the one-screen taste, where the semantics come from, the relation to `xd` and `teal-lifetime`. Read once. |
 | `docs/02-semantics.md` | **The spec** of the language extension: `@` and the list form, the implicit `reachable` term and `lifetime.pin`, `lifetime.scope`, hooks and the `!@` operator, tokens, `destroy`, the cascade order, `__destroy`, tombstones, errors, reachability, program end. |
 | `docs/03-runtime.md` | The design of the `lifetime` module: state records inside the anchor, the sentinel, the cascade, scope records, tokens. |
-| `docs/04-transpiler.md` | The grammar and the code generation: what `@` expands to, block epilogues on every exit path, the error path at the catch site, the command. |
+| `docs/04-transpiler.md` | The grammar and the code generation: what `@` expands to, block epilogues on every exit path, the error path at the raise point, the command. |
 | `docs/05-decisions.md` | Decision log of this repository. Check here before proposing a change. |
 | `docs/06-open-questions.md` | Not decided yet. If a task hits one of these, stop and ask. |
 | `docs/07-conformance.md` | How the conformance suite relates to `xd/examples/`: ported, rewritten, deviations. |

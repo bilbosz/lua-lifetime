@@ -364,11 +364,13 @@ This departs from decisions 5 and 10 of
 `pcall` wrapper as the mechanism; "Every exit path" of decision 10 still
 holds, the mechanism differs. The human carries it back to `xd`. The open
 question "Catch-site unwinding" is closed. Tasks 003, 006 and 007
-updated.
+updated. The moment of the unwinding ("before the call returns `false`",
+after the original `pcall` has returned) is refined below by "Scopes
+unwind at the raise point"; the rest of this entry stands.
 → [02-semantics.md](02-semantics.md), "Scopes: `lifetime.scope`" and
 "Coroutines"; [03-runtime.md](03-runtime.md), "The scope stack and the
 error path"; [04-transpiler.md](04-transpiler.md), "The error path:
-unwinding at the catch site"
+unwinding at the raise point"
 
 ## Errors in finalizer-run destructors go to `destroyerror`
 
@@ -647,3 +649,66 @@ state lives inside the object, which a function cannot offer.
 → [02-semantics.md](02-semantics.md), "Tombstones and `lifetime.alive`",
 "Reachability is the collector's"; [03-runtime.md](03-runtime.md), "The
 state of an object"; task 012
+
+## Scopes unwind at the raise point
+
+Decided by the human on 2026-10-10, refining "Scopes unwind at the catch
+site" above; not a reversal of file 10. That entry has the runtime's
+`pcall` unwind "before the call returns `false`", which the runtime did
+after the original `pcall` had returned. By then the frames between the
+raise and the catch are gone, and a scope record holds its dependents
+weakly (the implicit `reachable` term, decision 4), so the collector may
+finalize a dependent that nothing but a dead frame referred to before
+the unwinding reaches it. Task 008 found it (spec issue 5): under
+`LUA_INIT='collectgarbage("setpause",10) collectgarbage("setstepmul",1000)'`
+on Lua 5.1, `examples/unwind.lt` prints `destroy a (unreachable)` first
+instead of `destroy b (anchor)`, `destroy a (anchor)`, and the
+orchestrator and the reviewer reproduced it. Two sentences of 02
+disagreed: "Scopes: `lifetime.scope`" promised the order ("die innermost
+first, each in its own reverse attachment order") and "Reachability is
+the collector's" allowed the earlier death.
+
+Decided: the runtime unwinds at the raise point. Its `pcall(f, ...)` is
+the original `xpcall` of `f` with a runtime message handler, and its
+`xpcall(f, h)` wraps `h`. Lua runs a message handler on top of the
+frames that raised, so the handler runs the user's `h` first, as in
+Lua, then unwinds every record pushed since the call began, innermost
+first, each in reverse attachment order, while the raising frames and
+their locals are alive, and returns what `h` returned, which is what
+the protected call returns. The order and reasons a program observes
+are the ones the catch-site entry promised (`handler`, then the
+dependents with reason `"anchor"`); what changes is that a dependent is
+reachable until its own destructor runs, so the collector cannot take
+it first. `coroutine.resume` and `coroutine.wrap` are unchanged: a
+coroutine that died of an error keeps its frames until it is collected,
+and the wrapper holds it while it unwinds in the resumer's context, so
+its dependents were reachable already. The fallback for a catch the
+runtime could not see is unchanged. Lua 5.1's `xpcall` passes no
+arguments to `f`, so the runtime's `pcall` carries them itself; the
+mechanism is the implementer's, bounded by the benchmark. The reasoning
+of the catch-site entry about per-block wrappers stands: the transpiler
+still emits nothing for the error path.
+
+One case keeps no order: a stack overflow, where the host runs the
+handler with little stack. A destructor that overflows again is caught
+by the cascade's protected call and routed to `destroyerror`, the
+unwinding goes on; the unwinding code itself overflowing ends the
+handler, the protected call returns `false` with the host's message
+(`error in error handling` on Lua 5.1, `stack overflow` on LuaJIT), and
+the records not reached die by the fallback. Measured on 2026-10-10
+with a probe: Lua 5.1 refills the Lua stack for the handler and leaves
+about twenty C levels after a C-stack overflow; LuaJIT leaves about a
+dozen Lua frames.
+
+Cost, measured by the orchestrator on 2026-10-10 with a stand-in
+(`xpcall(f, h)` with a pass-through handler against `pcall(f)`, 2e6
+calls): 53 against 59 ns per protected call on Lua 5.1, within noise of
+each other; nothing measurable on LuaJIT (both below the clock's
+resolution). Task 014 implements it and holds `scope/pcall-empty` and
+`scope/pcall-error` to the threshold of `bench/README.md`; the
+per-coroutine stack push stays as it is. `examples/unwind.lt.expected`
+does not change; the example's comment does.
+→ [02-semantics.md](02-semantics.md), "Scopes: `lifetime.scope`" and
+"Coroutines"; [03-runtime.md](03-runtime.md), "The scope stack and the
+error path" and "Performance"; [04-transpiler.md](04-transpiler.md),
+"The error path: unwinding at the raise point"

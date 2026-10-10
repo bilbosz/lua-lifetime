@@ -4,7 +4,7 @@
 -- reverse attachment order, and only then is it reported as `lifetime:
 -- <message>` with a traceback on standard error, exit status 1
 -- (docs/04-transpiler.md, "The command", "The error path: unwinding at the
--- catch site"; docs/02-semantics.md, "Program end").
+-- raise point"; docs/02-semantics.md, "Program end").
 
 local Res = {}
 function Res.__destroy(self, reason)

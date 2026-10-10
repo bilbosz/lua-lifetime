@@ -212,20 +212,35 @@ of `xd` replaced by syntax through decision 5. `xd`'s "The caller's scope"
   route. The transpiler emits an epilogue on every ordinary exit path
   (fall-through, `return`, `break`, `goto`;
   [04-transpiler.md](04-transpiler.md)). On the error path the runtime
-  unwinds at the **catch site**: the scopes of every block between the
+  unwinds at the **raise point**: the scopes of every block between the
   raise and the `pcall`, `xpcall`, `coroutine.resume` or `coroutine.wrap`
   that catches the error die innermost first, each in its own reverse
-  attachment order, before that call returns to its caller
-  ([05-decisions.md](05-decisions.md), "Scopes unwind at the catch site").
-  An `xpcall` message handler runs at the raise point, before any of them,
-  as in Lua. For this the runtime replaces those four functions in the
-  global environment when it is first required; a program must require
-  `lifetime` before any code captures them into a local, and `lifetime
-  run` does. A record that a catch the runtime could not see left behind
-  dies at the next scope exit of the same coroutine that finds it above
-  itself, innermost first, or at program end; that is the one observable
-  difference from unwinding at the block, and it is the error-path cost
-  of a capture the runtime did not see, not of a block.
+  attachment order, while the frames that raised are still on the stack
+  and before that call returns to its caller
+  ([05-decisions.md](05-decisions.md), "Scopes unwind at the raise
+  point"). The locals of those frames are alive while the scopes unwind,
+  so a dependent of an unwound scope is reachable until its own
+  destructor runs and the collector cannot take it first. An `xpcall`
+  message handler runs first, at the same point, before any of them, as
+  in Lua; what it returns is the error value the call returns, and a
+  handler that raises gives Lua's `error in error handling` with the
+  scopes unwound all the same. For this the runtime replaces those four
+  functions in the global environment when it is first required; a
+  program must require `lifetime` before any code captures them into a
+  local, and `lifetime run` does. A record
+  that a catch the runtime could not see left behind dies at the next
+  scope exit of the same coroutine that finds it above itself, innermost
+  first, or at program end; that is the one observable difference from
+  unwinding at the block, and it is the error-path cost of a capture the
+  runtime did not see, not of a block. One error keeps no order: a stack
+  overflow. The host runs the unwinding with little stack; a destructor
+  that overflows again is caught like any destructor error during
+  unwinding ("Errors in destructors and `destroyerror`") and the
+  unwinding goes on, but when the unwinding itself overflows the host
+  ends it and the protected call returns `false` with the host's message
+  (`error in error handling` on Lua 5.1, `stack overflow` on LuaJIT);
+  the records it did not reach die by the rule for a catch the runtime
+  could not see.
 - Each entry into a block is a new scope. A loop body gets a fresh scope
   every iteration, so `{} @ lifetime.scope` in a loop body dies at the end of that
   iteration. A function body is a scope; its parameters live in it. The
@@ -712,8 +727,13 @@ anchors to `lifetime.scope` may yield on both hosts: the runtime puts no
 unwinds the coroutine's scopes, innermost first, inside the
 `coroutine.resume` or the `coroutine.wrap` function that catches it,
 before `false, err` is returned or the error is re-raised ("Scopes:
-`lifetime.scope`"). A destructor body itself still cannot yield on plain
-5.1: the cascade calls it in protected mode to route its error.
+`lifetime.scope`"). A coroutine that died of an error keeps its frames
+until it is collected, and the runtime holds it while it unwinds, so
+the dependents of those scopes are reachable until their destructors
+run, as they are for a `pcall` ([03-runtime.md](03-runtime.md), "The
+scope stack and the error path"). A destructor body itself still cannot
+yield on plain 5.1: the cascade calls it in protected mode to route its
+error.
 
 ## Program end
 
