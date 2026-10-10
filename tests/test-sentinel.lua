@@ -424,14 +424,16 @@ test.case("the cascade takes the dependents with reason anchor, at collector, be
     end, "attempt to index a dead table (child, died at collector, anchor)")
 end)
 
-test.case("case 3: a subtree held only by itself; the newer dependent's sentinel runs first (see the task file)", function()
-    -- docs/02-semantics.md, "Reachability is the collector's": "objects are
-    -- finalized newest first by creation ..., each taking its whole
-    -- subtree in cascade order; an object already destroyed in an earlier
-    -- walk is skipped". The child's sentinel is newer than the parent's,
-    -- so the child dies first by its own; the parent's walk skips it. The
-    -- task's case 3 expects "parent (unreachable), child (anchor)"
-    -- instead: recorded under "Spec issues found".
+test.case("case 3: a subtree held only by itself dies as one cascade from its root", function()
+    -- docs/02-semantics.md, "Reachability is the collector's": "Within one
+    -- collection, an anchor is finalized before its dependents ... A
+    -- subtree collected at once therefore dies as one cascade from its
+    -- root, in ownership order: the root with reason "unreachable", its
+    -- dependents with "anchor"". The child's sentinel, armed after the
+    -- parent's, was exchanged with it at the `@` (docs/03-runtime.md, "The
+    -- sentinel", "Anchors first"; task 017). Task 004 pinned the old
+    -- order here, the child first; docs/05-decisions.md, "Anchors are
+    -- finalized before their dependents", reversed it.
     local log = {}
     local function make()
         local parent = attach(new_logged(log, "parent"), false, lifetime.reachable)
@@ -440,7 +442,7 @@ test.case("case 3: a subtree held only by itself; the newer dependent's sentinel
     end
     run_dropped(make)
     collect()
-    test.assert_deep_eq(log, {"child (unreachable)", "parent (unreachable)"})
+    test.assert_deep_eq(log, {"parent (unreachable)", "child (anchor)"})
 end)
 
 test.case("a dependent with the term and nothing to run carries no sentinel and dies by its anchor's walk", function()
@@ -490,7 +492,11 @@ test.case("newest first is the order of the @ that gave each its sentinel", func
     test.assert_deep_eq(log, {"created first (unreachable)", "created second (unreachable)"})
 end)
 
-test.case("the older one's walk skips the younger one if it was its dependent", function()
+test.case("an anchor armed before its dependents is still finalized first; its walk takes them most recently attached first", function()
+    -- Task 004 pinned the old order here (each dependent first, by its
+    -- own newer sentinel); docs/05-decisions.md, "Anchors are finalized
+    -- before their dependents", reversed it: the anchor's proxy is
+    -- exchanged with each newer dependent's at its `@` (task 017).
     local log = {}
     local function make()
         local older = attach(new_logged(log, "older"), false, lifetime.reachable)
@@ -500,7 +506,7 @@ test.case("the older one's walk skips the younger one if it was its dependent", 
     end
     run_dropped(make)
     collect()
-    test.assert_deep_eq(log, {"other (unreachable)", "younger (unreachable)", "older (unreachable)"})
+    test.assert_deep_eq(log, {"older (unreachable)", "other (anchor)", "younger (anchor)"})
 end)
 
 test.case("the walk of a newer anchor takes an older dependent; its own finalizer then skips it", function()
@@ -1138,7 +1144,14 @@ test.case("task 003 case 7: a collected suspended coroutine's records die throug
     test.assert_deep_eq(log, {}, "suspended: alive")
     collect()
     collect()
-    test.assert_deep_eq(log, {"x (unreachable)"})
+    -- The record's sentinel is newer than x's (docs/03-runtime.md, "The
+    -- scope stack and the error path", last paragraph: "the runtime keeps
+    -- each record's proxy newer than those of the records and objects it
+    -- anchors"), so the record's cascade takes x with "anchor". Task 004
+    -- pinned "x (unreachable)" here, x's own sentinel first; task 017
+    -- reversed it with docs/05-decisions.md, "Anchors are finalized
+    -- before their dependents".
+    test.assert_deep_eq(log, {"x (anchor)"})
     collect()
     test.assert_eq(next(probe), nil, "the coroutine was collected")
 end)

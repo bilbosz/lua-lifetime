@@ -245,6 +245,82 @@ local function drop_sentinel(mt)
     mt.__gc = nil
 end
 
+-- docs/03-runtime.md, "The sentinel", "Anchors first": "after every link,
+-- if the dependent's proxy is newer than an anchor's, the two records
+-- exchange proxies (two record writes and two `owner` writes, no
+-- allocation), and the exchange climbs through that anchor's own anchors
+-- while the proxy it now holds is newer than theirs." The host finalizes
+-- the newest proxy first (docs/02-semantics.md, "Host") and a proxy's age
+-- is its slot, so after the climb every anchor on the paths above `obj`
+-- is finalized before its dependents ("Reachability is the collector's":
+-- "an anchor is finalized before its dependents").
+--
+-- `obj` (record `st`) holds the proxy `mt`; its anchors are compared in
+-- formula order. An anchor holds its proxy in `reachable`, a scope record
+-- in `sentinel` ("A scope record's sentinel (`sentinel`) is ordered the
+-- same way"); a scope record has no anchors, so the climb ends there. A
+-- record without a proxy (`true`, `false`, or a main-thread scope
+-- record's missing field) is not compared.
+--
+-- "The climb marks the records it has visited with the phase counter the
+-- cascade uses, so a cycle of anchors ends it": `id` is 0 until the first
+-- exchange, which takes a fresh id from `phase_counter`; the mark is
+-- `deps.mark`, on the anchor side of a record, which every record a climb
+-- can reach again has (it is somebody's anchor) and which leaves the
+-- record's own `phase_id` to the phase guard. A marked anchor is not
+-- exchanged with again, so on a cycle the proxies keep the order the
+-- climb left them in and the host picks the root.
+--
+-- A proxy the collector has taken (`armed` no longer refers to it; its
+-- `__gc` is pending, for an owner a foreign finalizer resurrected) is
+-- never exchanged: its pending finalizer must find its own owner.
+--
+-- Called inside the `busy` region of the operation that linked, so no
+-- finalizer runs in between; allocates nothing. The last anchor's climb
+-- is a tail call, so a chain of single anchors climbs in constant stack.
+local function climb(obj, st, mt, id)
+    if armed[mt.slot] ~= mt.proxy then
+        return
+    end
+    local last = 2 * st.n - 1
+    for j = 1, last, 2 do
+        local a = st[j]
+        local ast = a[STATE]
+        local amt = ast.reachable
+        if amt == nil then
+            amt = ast.sentinel
+        end
+        if amt ~= true and amt and amt.slot < mt.slot and armed[amt.slot] == amt.proxy then
+            if id == 0 then
+                id = phase_counter + 1
+                phase_counter = id
+                local own = st.deps
+                if own then
+                    own.mark = id
+                end
+            end
+            local deps = ast.deps
+            if deps.mark ~= id then
+                deps.mark = id
+                st.reachable = amt
+                amt.owner = obj
+                mt.owner = a
+                if ast.n == nil then
+                    -- A scope record: no anchors above it.
+                    ast.sentinel = mt
+                else
+                    ast.reachable = mt
+                    if j == last then
+                        return climb(a, ast, mt, id)
+                    end
+                    climb(a, ast, mt, id)
+                end
+                mt = amt
+            end
+        end
+    end
+end
+
 -- docs/02-semantics.md, "Reachability is the collector's": "A destructor
 -- run by the collector runs at an arbitrary allocation point, in the
 -- middle of whatever the program was doing." That includes the runtime's
@@ -708,12 +784,19 @@ local function link(anchor, ast, obj, pinned)
         if deps then
             spare_deps = false
         else
-            deps = setmetatable({seq = 1, lo = 1, limit = MIN_LIMIT}, WEAK_VALUES)
+            deps = setmetatable({seq = 1, lo = 1, limit = MIN_LIMIT, mark = 0}, WEAK_VALUES)
         end
         ast.deps = deps
         local term = ast.reachable
         if term == true then
-            ast.reachable = new_sentinel(anchor)
+            -- The new proxy is the newest: newer than the dependent's, but
+            -- also than those of the anchor's own anchors, which it climbs
+            -- past ("Anchors first", `climb`).
+            local mt = new_sentinel(anchor)
+            ast.reachable = mt
+            if ast.n > 0 then
+                climb(anchor, ast, mt, 0)
+            end
         elseif term == nil and ast.stack ~= main_stack then
             ast.sentinel = new_sentinel(anchor)
         end
@@ -1511,6 +1594,31 @@ local function attach_general(fname, obj, pin, count, ...)
     local reachable = term and not pin
     local old = 2 * st.n
     local had = st.reachable
+
+    -- Step 5, the sentinel (docs/03-runtime.md, "The sentinel"), before
+    -- the links for anything but a hook, so that an anchor armed by one
+    -- of them (`link`) gets the newer proxy ("Anchors first"). A move that
+    -- keeps the term keeps the sentinel; one that drops the term drops
+    -- it; a pinned object carries none. A hook is armed after the links,
+    -- below: whether it carries one depends on how many anchors it got.
+    local hook = st.fn ~= nil
+    if not hook then
+        if reachable then
+            if had == true or had == false then
+                if st.deps or has_destroy(debug_getmetatable(obj)) then
+                    st.reachable = new_sentinel(obj)
+                else
+                    st.reachable = true
+                end
+            end
+        else
+            if had ~= true and had then
+                drop_sentinel(had)
+            end
+            st.reachable = false
+        end
+    end
+
     for j = 1, old, 2 do
         unlink(st[j][STATE], st[j + 1], not had)
     end
@@ -1528,30 +1636,29 @@ local function attach_general(fname, obj, pin, count, ...)
     local n = (k - 1) / 2
     st.n = n
 
-    -- The sentinel, after the anchors got theirs, so that it is the newest
-    -- (docs/03-runtime.md, "The sentinel"). A hook whose formula is the
-    -- term alone (`f !@ lifetime.reachable`) carries one and runs when
-    -- collected (docs/05-decisions.md, "A hook anchored to
-    -- `lifetime.reachable` alone runs when collected"); every other hook
-    -- and every pinned object carries none. A move that keeps the term
-    -- keeps the sentinel; one that drops the term drops it.
-    local hook = st.fn ~= nil
-    if hook and n == 0 then
-        reachable = true
-    end
-    if reachable then
-        if had == true or had == false then
-            if hook or st.deps or has_destroy(debug_getmetatable(obj)) then
+    if hook then
+        -- A hook whose formula is the term alone (`f !@
+        -- lifetime.reachable`) carries a sentinel and runs when collected
+        -- (docs/05-decisions.md, "A hook anchored to `lifetime.reachable`
+        -- alone runs when collected"); every other hook carries none. It
+        -- has no anchors then, so nothing to order.
+        if n == 0 then
+            if had == true or had == false then
                 st.reachable = new_sentinel(obj)
-            else
-                st.reachable = true
             end
+        else
+            if had ~= true and had then
+                drop_sentinel(had)
+            end
+            st.reachable = false
         end
-    else
-        if had ~= true and had then
-            drop_sentinel(had)
+    elseif n > 0 then
+        -- "Anchors first", over every anchor of the new formula (the list
+        -- form and lifetime values spliced into it included).
+        local smt = st.reachable
+        if smt ~= true and smt then
+            climb(obj, st, smt, 0)
         end
-        st.reachable = false
     end
     busy = 0
     if busy == 0 and queue_tail ~= 0 then
@@ -1604,6 +1711,24 @@ function lifetime.attach(obj, pin, ...)
                         reason = false
                     }
                     rawset(obj, STATE, st)
+                    -- The sentinel before the link, so that an anchor
+                    -- armed by this link (`link`) gets the newer proxy
+                    -- (docs/03-runtime.md, "The sentinel", "Anchors
+                    -- first"). Pinned: no term, no sentinel.
+                    local smt = false
+                    if not pin and mt ~= nil and rawget(mt, "__destroy") ~= nil then
+                        -- `new_sentinel`, its common case (a kept proxy) inlined.
+                        local n = armed_n + 1
+                        smt = kept[n]
+                        if smt then
+                            kept[n] = nil
+                            armed_n = n
+                            smt.owner = obj
+                        else
+                            smt = new_sentinel(obj)
+                        end
+                        st.reachable = smt
+                    end
                     -- `link`, its common case inlined: an unpinned link
                     -- to an anchor that has its list (outside any destroy
                     -- phase, so compaction may run).
@@ -1619,18 +1744,15 @@ function lifetime.attach(obj, pin, ...)
                     else
                         st[2] = link(a, ast, obj, pin)
                     end
-                    -- Pinned: no term, no sentinel.
-                    if not pin and mt ~= nil and rawget(mt, "__destroy") ~= nil then
-                        -- `new_sentinel`, its common case (a kept proxy) inlined.
-                        local n = armed_n + 1
-                        local smt = kept[n]
-                        if smt then
-                            kept[n] = nil
-                            armed_n = n
-                            smt.owner = obj
-                            st.reachable = smt
-                        else
-                            st.reachable = new_sentinel(obj)
+                    -- "Anchors first": one comparison; the exchange and
+                    -- the climb only when the anchor's proxy is older.
+                    if smt then
+                        local amt = ast.reachable
+                        if amt == nil then
+                            amt = ast.sentinel
+                        end
+                        if amt ~= true and amt and amt.slot < smt.slot then
+                            climb(obj, st, smt, 0)
                         end
                     end
                     busy = 0
@@ -1647,6 +1769,19 @@ function lifetime.attach(obj, pin, ...)
                 unlink(st[1][STATE], st[2], false)
                 st[1] = a
                 st[2] = link(a, ast, obj, false)
+                -- "Anchors first", as for a new object. The record is read
+                -- after the link: a cycle of anchors lets the climb of an
+                -- anchor armed by it reach this object.
+                local smt = st.reachable
+                if smt ~= true then
+                    local amt = ast.reachable
+                    if amt == nil then
+                        amt = ast.sentinel
+                    end
+                    if amt ~= true and amt and amt.slot < smt.slot then
+                        climb(obj, st, smt, 0)
+                    end
+                end
                 busy = 0
                 if busy == 0 and queue_tail ~= 0 then
                     drain()
