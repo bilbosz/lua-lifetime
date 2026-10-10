@@ -364,3 +364,45 @@ unreachable. Spec issue 7 verified on both hosts; for the human.
   LuaJIT `:538` failed with an extra line in the shared-metatable
   `__destroy` log, not reproduced in 20 runs; make the type logger at
   `:521` log only objects named in `names`.
+
+### Round 3
+
+Implementer, round 3 (tests only; `lifetime/` unchanged). Merged master
+(`bc628ab`, `trial/` from task 009).
+
+- F1: the five cases that compared a global count of the side table
+  (the reused scope list, case 5, the dead function's record, the silent
+  death, the table dependent) now snapshot the side table's keys into a
+  weak-keyed set (`side_keys`) and count only the keys not in it
+  (`count_added`, which returns a number so no stack slot holds a key
+  across a collection). The presence of the test's own records is
+  asserted on the objects (`side[f] ~= nil`) inside the coroutine that
+  makes them; a count of the added keys between that coroutine and the
+  collects would race an eager collector, so there is none. After the
+  collects each case asserts that none of its keys remain.
+- F2: the scope-exit case logs `alive(f)` from `u`'s body; the log is
+  `x2 (anchor)`, `f alive: true`, `u (anchor)`, `f alive: false`,
+  `x1 (anchor)`, which pins `f`'s death between `x2`'s body and `u`'s.
+- The question: `type_logger` logs only objects named in `names`, and
+  the shared-metatable case uses it (its anonymous function is now `h`,
+  named). The eager runs then showed a second cause in the same case:
+  `destroy(attach(h, false, {}))` logged `h (anchor)` in 1 of 10 eager
+  LuaJIT runs, because `h`'s record names the fresh `{}` weakly and the
+  collector may take it before the `destroy` (02, "Reachability is the
+  collector's"). The test now holds the anchor.
+- Runs at the head: `luajit tests/run.lua unit` 60 runs, 59 green; the
+  one failure is `tests/test-scopes.lua:349` (250.29 KB for 250), which
+  master's own tree shows too (2 of 150 runs of master's runtime,
+  scopes and sentinel suites under plain LuaJIT: `:349` and `:887`, both
+  0.29 KB). `lua5.1 tests/run.lua unit` 25 of 25. Eager collector (a
+  runner that sets `setpause` 10 and `setstepmul` 1000, then loads
+  `tests/run.lua` with `arg`): LuaJIT 18 of 20, the two failures
+  `tests/test-sentinel.lua:610` (order of `y1`, `x1`, `y2` in "a
+  disarmed proxy is reused by the next owner"), which master's tree
+  shows under the same runner (1 of 60); Lua 5.1 20 of 20.
+  `tests/test-functions.lua` alone: 150 of 150 plain and 150 of 150
+  eager on LuaJIT, 50 of 50 each on Lua 5.1. No failure of
+  `test-functions` in any full-suite run at the head. The two
+  pre-existing failures are outside this task's files and not touched.
+- `make test` 332/332 under both interpreters, conformance 75/75;
+  `make lint` clean. No benchmark: `lifetime/` is unchanged.
