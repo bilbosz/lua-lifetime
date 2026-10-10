@@ -16,6 +16,7 @@ local TEST_MODULES = {
     "tests.test-harness",
     "tests.test-runtime",
     "tests.test-scopes",
+    "tests.test-unwind",
     "tests.test-sentinel",
     "tests.test-functions",
     "tests.test-lexer",
