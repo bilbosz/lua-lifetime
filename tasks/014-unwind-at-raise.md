@@ -473,3 +473,14 @@ deepest nesting reached.
 - F6 (fixed): every scope stack is made with `handler = false,
   handler_depth = false` (`main_stack`, `lifetime_resume`,
   `lifetime_wrap`), one shape, no key added by the first `xpcall`.
+- Checks: `make test` and `make lint` green under both interpreters; 50
+  runs of `luajit tests/run.lua unit`, 50 green (360/360 each). `make
+  bench BASE=master BENCH_FILES=bench/bench-scopes.lua` twice,
+  branch/base (ns per 10 calls): Lua 5.1 `pcall-empty` 1.116 (1094 vs
+  980, not marked) and 0.950; `pcall-error` 1.145 (2098 vs 1833) and
+  1.126 (2116 vs 1879), marked both times as in round 1 (settled);
+  `pcall-args` 1.695 and 1.785, marked as in round 1 (settled);
+  `resume-yield` 0.989 and 0.909. LuaJIT: `pcall-empty` 1.070 and 0.989,
+  `pcall-error` 1.018 and 0.997, `pcall-args` 1.059 and 0.906,
+  `resume-yield` 1.036 and 0.991; none marked. F1's throw runs only when
+  records are unwound and does not show on `pcall-error`.
