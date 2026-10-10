@@ -180,26 +180,32 @@ local SCENARIOS = {
         expected = concat("> lifetime.destroy(period)", "FormScreen:release(anchor)", "TestInput destroyed (anchor) b", "TestInput destroyed (anchor) a", "inputs: {false, false}, form alive: false", END)
     },
     {
-        -- Test case 3. Within one collection the collector finalizes newest
-        -- first by creation (docs/02-semantics.md, "Reachability is the
-        -- collector's"); class() registers every instance before its init,
-        -- so the order is the reverse of the constructors' order and each
-        -- procedure dies before its owner, with "unreachable". Login's
-        -- nested release() then meets a tombstone, and the error goes to
-        -- destroyerror (a finalizer has no statement to raise at).
+        -- Test case 3. Within one collection an anchor is finalized before
+        -- its dependents (docs/02-semantics.md, "Reachability is the
+        -- collector's"; docs/05-decisions.md, "Anchors are finalized
+        -- before their dependents"). class() registers every instance
+        -- before its init, so each procedure gets its sentinel before it
+        -- is linked to its owner; the runtime then exchanges the two
+        -- owners' proxies at every `@` (docs/03-runtime.md, "The
+        -- sentinel", "Anchors first"), the connection's ends up the newest,
+        -- and its finalizer takes the whole subtree as one cascade in
+        -- ownership order: the connection "unreachable", everything below
+        -- it "anchor", Login's nested release() among live procedures, no
+        -- destroyerror. The later finalizers find their objects dead. The
+        -- same log as the unregistered run below (task 017).
         name = "collected",
-        expected = concat("sessions: 1, per-session upload entries: 1", "> the server drops the session from its table and forgets the connection, without destroy", "> collectgarbage(\"collect\")", rp("unreachable", "DownloadMissingAssetsRp"), rp("unreachable", "DownloadAssetRp"), rp("unreachable", "UploadAssetRp"), rp("unreachable", "GameDataRp"), rp("unreachable", "LogoutRp"), rp("unreachable", "LoginRp"), "Login:release(unreachable)", "destroyerror: trial/treflove/login/login.lt:50: attempt to index a dead table (table: 0x?, died at collector, unreachable)", "Session destroyed (unreachable)", "Connection:release(unreachable)", "> collectgarbage(\"collect\")", "per-session entries left: 0, in channel released: true", END)
+        expected = concat("sessions: 1, per-session upload entries: 1", "> the server drops the session from its table and forgets the connection, without destroy", "> collectgarbage(\"collect\")", "Connection:release(unreachable)", "Session destroyed (anchor)", session_procedures("anchor"), "> collectgarbage(\"collect\")", "per-session entries left: 0, in channel released: true", END)
     },
     {
         -- Test case 3 again, with utils/class.lt without the registration
         -- line (variants/unregistered/). Every instance is then armed at
         -- its first `@` (docs/03-runtime.md, "The sentinel"): a procedure
-        -- at its own `@ self`, an anchor at its first link, so the login
-        -- after its procedures, the session after its login, and the
+        -- at its own `@ self`, an anchor at its first link, and the
         -- connection, first seen at `Session(connection) @ connection`,
-        -- last of all. The connection's finalizer runs first and its
-        -- cascade takes the subtree in ownership order with "anchor"; the
-        -- later finalizers find their objects dead.
+        -- last of all, so its proxy is the newest here too. The
+        -- connection's finalizer runs first and its cascade takes the
+        -- subtree in ownership order with "anchor"; the later finalizers
+        -- find their objects dead.
         name = "collected",
         label = "collected, unregistered",
         unregistered = true,
