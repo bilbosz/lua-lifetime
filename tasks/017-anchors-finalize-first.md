@@ -136,4 +136,102 @@ the former. Report absolute numbers for both hosts.
 
 ## Spec issues found
 
+1. **The exchange can leave the linked object older than its own
+   dependents** (03, "Anchors first": "The invariant 'an anchor's proxy
+   is newer than every dependent's' then holds along every ownership
+   path"; it does not in this shape). The exchange gives the dependent
+   the anchor's older proxy. When the dependent already has dependents
+   with proxies (a subtree moved under an older anchor; a class whose
+   constructor attaches children `@ self` before the instance is
+   attached to its owner, Treflove's `Session(connection) @ connection`
+   with an older registered connection), those can end newer than it.
+   If the whole tree is collected the root is still the newest and the
+   order is right; if only the subtree is (the owner lives), the
+   subtree's dependents are finalized first, `"unreachable"`, against
+   02's "an anchor is finalized before its dependents". Reproduction
+   (registered = `@ lifetime.reachable` with a `__destroy`): `p =
+   reg(); c = reg(); c.g = reg() @ c; c @ p`, keep `p`, drop `c`,
+   collect: `g (unreachable), c (unreachable)`; 02 wants `c
+   (unreachable), g (anchor)`. Fixing it needs the symmetric step, a
+   descent: after the climb, while the linked object's proxy is older
+   than its newest dependent's, exchange the two and continue from that
+   dependent (and re-climb from the object, whose proxy grew). On an
+   acyclic graph every exchange of an inverted ancestor-descendant pair
+   strictly lowers the number of inverted pairs, so it terminates; on a
+   cycle it needs marks like the climb's. It costs a scan of a
+   dependents list per level, which 03's cost bound does not include.
+   Not implemented: the mechanism and its cost are the design's
+   (03), and the task specifies the climb. For the human.
+2. **A pinned anchor between two proxies is not climbed through.** A
+   record without a proxy is not compared (the acceptance criteria:
+   "if the dependent carries a sentinel and an anchor's sentinel is
+   older"), and the climb only continues from an anchor it exchanged
+   with, so `b = reg(); a = obj @ lifetime.pin(b); x = reg() @ a`,
+   all dropped, collects `x (unreachable), b (unreachable), a
+   (anchor)`; 02 wants `b (unreachable), a (anchor), x (anchor)`.
+   Climbing through proxy-less anchors (comparing the dependent's proxy
+   with the pinned anchor's anchors') would fix it at the price of a
+   walk through every pinned ancestor on each link. Not implemented,
+   for the same reason as item 1.
+3. **`examples/coroutines.lt` changes too.** The decision's
+   consequences name `move.lt` and `pinned_parent.lt` only, and the
+   dispatch said "No other `.expected` changes", but 03, "The scope
+   stack and the error path", last paragraph (the records' proxies are
+   kept newer than those of the objects they anchor), and this task's
+   test case 7 make part 2 of `coroutines.lt` print `close b step 2
+   (anchor)` and `close b outer (anchor)` where it printed
+   `"unreachable"`: its `.expected`, comments and row in 07 are updated
+   in commit `00a478d`, whose message says the spec made the old
+   expectation wrong. The new output is what `xd/examples/coroutines.xd`
+   printed. Likewise a third unit test flipped beside the two the task
+   names: task 003's case 7 in `tests/test-sentinel.lua` (a collected
+   coroutine's record takes `x` with `"anchor"`), which is this task's
+   case 7.
+4. **The pool's handling of proxies disarmed below the last slot
+   changed** (`lifetime/init.lua`, "Sentinels"). Anchors first makes a
+   cascade disarm its older proxies first; the old pool dropped every
+   proxy disarmed below the last slot, so each destroy of an anchored
+   tree lost its dependents' proxies and the next attaches allocated
+   (`sentinel/anchor-100` 2.2 times `master` on LuaJIT). Such a proxy
+   now stays kept in its slot and is reused once the slots above it are
+   disarmed; the kept proxies close over the holes the collector
+   leaves. This keeps 03's wording ("a disarmed proxy is kept by the
+   runtime in its slot and reused for a later owner, never twice for the
+   same object and never while its finalizer is pending"), but three
+   unit tests that pinned which kept proxy the next owner takes
+   (`tests/test-sentinel.lua`, the reuse cases) now expect the new
+   slots; the final finalization order they assert is unchanged.
+5. **Where the climb's mark lives.** 03 says "the climb marks the
+   records it has visited with the phase counter". The record's
+   `phase_id` is the phase guard's ("No moves during destruction": an
+   object created in the running phase may move), so a climb that
+   rewrote it would change which moves are refused. The mark is
+   `deps.mark`, a field of the record's anchor side (the `deps` table
+   that 03, "The state of an object", "As implemented", already keeps
+   `seq`, `lo` and `limit` in), set only on records the climb goes on
+   above; an id comes from `phase_counter` only when a climb goes above
+   an anchor.
+6. **03's cost bound is optimistic for the commonest shape, and has no
+   numbers yet.** "Cost: one comparison per link in the common case (a
+   lazily armed anchor's proxy is made at its first link and is already
+   the newer one)" holds for an anchor's first link only. A dependent
+   armed at its link (a fresh object with a `__destroy`) gets the newest
+   proxy there is, so every later link of such an object to an anchor
+   already armed is an exchange, and one more per armed ancestor: 100
+   children of one anchor pay 99 exchanges (`sentinel/anchor-100`), and
+   a tree built top down pays one per level per node
+   (`runtime/cascade-tree`). The spec forces it ("an anchor is finalized
+   before its dependents" with "newest first by creation" among the
+   rest: the new object's proxy cannot be older than an unrelated
+   object made before it). Measured (`make bench BASE=master`, two
+   invocations, pairings): on LuaJIT every row is within the threshold;
+   on Lua 5.1 `runtime/cascade-tree` reads 1.18 to 1.27 (marked in
+   both, a finding by the two-run rule, about 300 against 250 us per
+   tree of 111), `sentinel/anchor-100` 1.02 to 1.19 (marked in one
+   invocation of two, about 240 against 215 us), and the new
+   `sentinel/register-tree` 1.15 to 1.22 against a base that does not
+   exchange. 03, "The sentinel", refers to "Performance" for the
+   measurement, which a spec commit should add; the handoff of this task
+   has the numbers.
+
 ## Review log

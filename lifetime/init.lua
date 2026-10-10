@@ -1231,7 +1231,8 @@ local function destroy_object(obj, st, reason, where, skip_body)
         -- slot with no kept slot below it (`armed_n` steps down by one),
         -- and a slot below an armed last slot (the proxy waits in its
         -- slot): a cascade disarms its owners' older dependents first
-        -- ("Anchors first").
+        -- ("Anchors first"). The last slot is armed or a hole, never kept
+        -- (`settle` steps `armed_n` down to an armed slot).
         local slot = term.slot
         term.owner = nil
         if armed[slot] == term.proxy then
@@ -1243,7 +1244,7 @@ local function destroy_object(obj, st, reason, where, skip_body)
                 else
                     settle(slot)
                 end
-            elseif kept[top] ~= nil or armed[top] == nil then
+            elseif armed[top] == nil then
                 settle(slot)
             end
         else
