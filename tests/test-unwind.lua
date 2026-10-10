@@ -73,7 +73,6 @@ local function original(replacement, name)
 end
 
 local hidden_pcall = original(pcall, "pcall")
-local hidden_xpcall = original(xpcall, "xpcall")
 
 -- Run `fn` with `_G.destroyerror` set to `handler` and `io.stderr`
 -- replaced by a buffer; returns what was written.
@@ -618,19 +617,108 @@ test.case("a handler that calls xpcall itself, and a destructor run by the unwin
     end)
     test.assert_false(ok)
     test.assert_eq(err, "handled boom")
-    -- What the host gives an xpcall that fails inside a message handler:
-    -- `inner h` on Lua 5.1; LuaJIT counts it as an error in the outer
-    -- handler, `error in error handling`.
-    local _, host = hidden_xpcall(function()
+    -- What the host gives an xpcall that fails inside a message handler
+    -- (the user's `h` runs under the host's in-handler mark, as under the
+    -- host's own xpcall): `inner h` on Lua 5.1. LuaJIT counts the inner
+    -- error as an error in the outer handler, `error in error handling`,
+    -- when its interpreter raises it, but gives `inner h` when the inner
+    -- raise runs on a compiled trace (the task file, round 2, F2: about 2
+    -- runs in 200 with no runtime loaded), so either is the host's.
+    if LUAJIT then
+        test.assert_true(log[1] == "handler's xpcall false error in error handling" or log[1] == "handler's xpcall false inner h", log[1])
+    else
+        test.assert_eq(log[1], "handler's xpcall false inner h")
+    end
+    test.assert_deep_eq({log[2], log[3], log[4], log[5]}, {"x (anchor)", "in destructor (anchor)", "destructor's pcall false d", nil})
+    test.assert_eq(#log, 4)
+end)
+
+-- Round 2, F1: a destructor that the handler's unwinding runs may make a
+-- protected call of its own, which must call its handler as anywhere
+-- else. LuaJIT refuses to run a message handler while one runs, until a
+-- throw resets its mark; the runtime resets it before it unwinds
+-- (lifetime/init.lua, `unwind_at_raise`). Both programs run through
+-- `pcall` and through `xpcall` with an `h` that returns normally.
+local function protected_in_destructor(call, log)
+    local keep = {}
+    local ok, e = call(function()
+        local s = enter("t:10")
+        keep[1] = attach(new_logged(log, "x", function()
+            local ok2, e2 = pcall(function()
+                error("d", 0)
+            end)
+            log[#log + 1] = "x's pcall: " .. tostring(ok2) .. " " .. tostring(e2)
+        end), false, s)
         error("boom", 0)
-    end, function()
-        return select(2, hidden_xpcall(function()
-            error("h", 0)
-        end, function(m3)
-            return "inner " .. m3
-        end))
     end)
-    test.assert_deep_eq(log, {"handler's xpcall false " .. host, "x (anchor)", "in destructor (anchor)", "destructor's pcall false d"})
+    log[#log + 1] = "outer: " .. tostring(ok) .. " " .. tostring(e)
+    ok, e = call(function()
+        local s = enter("t:20")
+        keep[2] = attach(new_logged(log, "y", function()
+            local ok2, e2 = pcall(function()
+                local r = enter("t:21")
+                keep[3] = attach(new_logged(log, "inner"), false, r)
+                error("d4", 0)
+            end)
+            log[#log + 1] = "y's pcall with record: " .. tostring(ok2) .. " " .. tostring(e2)
+        end), false, s)
+        error("boom", 0)
+    end)
+    log[#log + 1] = "outer: " .. tostring(ok) .. " " .. tostring(e)
+    return keep
+end
+
+test.case("F1: a destructor run by the unwinding of pcall makes protected calls that call their handlers", function()
+    local log = {}
+    local before = depth()
+    protected_in_destructor(pcall, log)
+    test.assert_deep_eq(log, {
+        "x (anchor)", "x's pcall: false d", "outer: false boom",
+        "y (anchor)", "inner (anchor)", "y's pcall with record: false d4", "outer: false boom"
+    })
+    test.assert_eq(depth(), before)
+end)
+
+test.case("F1: the same through xpcall with a handler that returns normally", function()
+    local log = {}
+    local before = depth()
+    protected_in_destructor(function(f)
+        return xpcall(f, function(m)
+            log[#log + 1] = "h " .. m
+            return m
+        end)
+    end, log)
+    test.assert_deep_eq(log, {
+        "h boom", "x (anchor)", "x's pcall: false d", "outer: false boom",
+        "h boom", "y (anchor)", "inner (anchor)", "y's pcall with record: false d4", "outer: false boom"
+    })
+    test.assert_eq(depth(), before)
+end)
+
+test.case("F1: a destructor's xpcall and pcall with arguments during the unwinding", function()
+    local log = {}
+    local ok, e = pcall(function()
+        local s = enter("t:30")
+        hold(attach(new_logged(log, "x", function()
+            local xok, xerr = xpcall(function()
+                error("d", 0)
+            end, function(m)
+                return "handled " .. m
+            end)
+            log[#log + 1] = "xpcall " .. tostring(xok) .. " " .. tostring(xerr)
+            -- The call runs before the slot of `log` is chosen.
+            local _, got = pcall(function(a, b)
+                local r = enter("t:31")
+                hold(attach(new_logged(log, "inner " .. a), false, r))
+                error(b, 0)
+            end, "a", "b")
+            log[#log + 1] = "pcall with arguments " .. tostring(got)
+        end), false, s))
+        error("boom", 0)
+    end)
+    test.assert_false(ok)
+    test.assert_eq(e, "boom")
+    test.assert_deep_eq(log, {"x (anchor)", "xpcall false handled d", "inner a (anchor)", "pcall with arguments b"})
 end)
 
 test.case("in a coroutine the handler unwinds the coroutine's own stack", function()

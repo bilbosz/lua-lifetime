@@ -113,8 +113,11 @@ local held, held_error = false, nil
 -- plain table `{n = depth, [1 .. n] = records}`. An upvalue rather than
 -- a field, so `enter` and `exit` read it without a table lookup; the
 -- `coroutine.resume` and `coroutine.wrap` replacements swap it for the
--- duration of a resume ("Error path" below).
-local main_stack = {n = 0}
+-- duration of a resume ("Error path" below). Every stack is made with the
+-- two fields the runtime's `xpcall` keeps on it (`handler`,
+-- `handler_depth`, "Error path" below), so all stacks have one shape and
+-- the first `xpcall` on a stack adds no key.
+local main_stack = {n = 0, handler = false, handler_depth = false}
 local stack = main_stack
 
 -- Unwinds the records of a stack above a depth on the error path;
@@ -2462,7 +2465,24 @@ local function room(n, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a
     return true
 end
 
+-- LuaJIT marks the state as handling an error (`L->status = LUA_ERRERR`,
+-- `lj_err_run`) while a message handler runs, and refuses to run any
+-- message handler until a throw caught by a protected call resets the
+-- mark: an `xpcall`, or the runtime's `pcall`, made inside the handler
+-- fails at once with `error in error handling` instead of calling its
+-- handler. The unwinding runs destructors, which may make such calls (the
+-- task file, round 2, F1), so on that host the handler raises one error
+-- through the original `pcall` before it unwinds, and the destructors
+-- run as they would outside a handler. The user's `h` of an `xpcall` has
+-- run by then, under the mark, as under the host's own `xpcall`. Lua 5.1
+-- keeps no such mark. One throw, on the error path, only when records are
+-- to be unwound.
+local CLEARS_HANDLER_MARK = XPCALL_PASSES_ARGUMENTS
+
 local function unwind_at_raise(s, depth, e)
+    if CLEARS_HANDLER_MARK then
+        pcall(error)
+    end
     if type(e) == "string" and find(e, "stack overflow", 1, true) and not pcall(room, ROOM_FRAMES) then
         return
     end
@@ -2497,9 +2517,11 @@ end
 -- table (`handler`, `handler_depth`) for the duration of the call and
 -- puts back the enclosing call's after it (`handled`). They are on the
 -- coroutine's stack because LuaJIT can yield across `xpcall`, and an
--- other coroutine's `xpcall` must not see them; the fields hold `false`
--- rather than `nil` when no call is running, so that the stack table
--- keeps the keys and assigning them never allocates. The stack the
+-- other coroutine's `xpcall` must not see them. Every stack is made with
+-- both fields set to `false` (`main_stack`, `lifetime_resume`,
+-- `lifetime_wrap`), and they hold `false` rather than `nil` whenever no
+-- call is running, so the stack table keeps its keys and assigning them
+-- never allocates, the first time included. The stack the
 -- handler reads is the running coroutine's at the raise point, which is
 -- the coroutine that called `xpcall`: an error does not cross a
 -- `coroutine.resume`.
@@ -2544,10 +2566,13 @@ if XPCALL_PASSES_ARGUMENTS then
     -- calls a handler with the error value alone, and nothing may run
     -- after the call to tell it the depth, so each depth has a handler of
     -- its own, made the first time a `pcall` begins at that depth and
-    -- kept: `handlers[depth + 1]`. A handler refers to a number and to
-    -- the runtime's own upvalues, never to a user object (CLAUDE.md, rule
-    -- 6), and once a depth has its handler a `pcall` there allocates
-    -- nothing ("Performance": "On LuaJIT no allocation"). The original
+    -- kept: `handlers[depth + 1]`. The table holds one closure per depth
+    -- ever reached, so it is bounded by the deepest nesting of scope
+    -- records the program has had while it called `pcall`. A handler
+    -- refers to a number and to the runtime's own upvalues, never to a
+    -- user object (CLAUDE.md, rule 6), and once a depth has its handler a
+    -- `pcall` there allocates nothing ("Performance": "On LuaJIT no
+    -- allocation"). The original
     -- `xpcall` is entered by a tail call, which on LuaJIT replaces the
     -- wrapper's frame, so the depth cannot be left in the frame for the
     -- handler to find (Lua 5.1 below does that).
@@ -2840,7 +2865,7 @@ local function lifetime_resume(co, ...)
         if type(co) ~= "thread" then
             return resume(co, ...)
         end
-        s = {n = 0}
+        s = {n = 0, handler = false, handler_depth = false}
         stacks[co] = s
     end
     local saved = stack
@@ -2929,7 +2954,7 @@ local function lifetime_wrap(f)
     return function(...)
         local s = stacks[co]
         if s == nil then
-            s = {n = 0}
+            s = {n = 0, handler = false, handler_depth = false}
             stacks[co] = s
         end
         local saved = stack

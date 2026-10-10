@@ -176,7 +176,8 @@ records `tostring(obj) .. ": " .. e`.
    ```
    and exit status is 1 with `lifetime: examples/unwind.lt:101: uncaught`
    on stderr. Before this task, `lua5.1` prints `destroy a (unreachable)`
-   as its first line and never prints `destroy a (anchor)`.
+   in place of `destroy a (anchor)` (its second line, after `destroy b
+   (anchor)`).
 2. **Reachability during the unwinding** (the sentence most likely to be
    misread: "a dependent of an unwound scope is reachable until its own
    destructor runs"; an implementation that unwinds after the call
@@ -329,8 +330,11 @@ more arguments is the implementer's.
 
 ## Spec issues found
 
-1. **The 5.1 cost bound is not met for the error path and the argument
-   passage (03, "Performance", "Forced, and measured").** Measured with
+1. **Settled (round 2): by the spec restatement on
+   `spec/unwind-at-raise-hosts`, which records the measured Lua 5.1
+   numbers as the bound; the mechanism stays.** The 5.1 cost bound is not
+   met for the error path and the argument passage (03, "Performance",
+   "Forced, and measured"). Measured with
    `make bench BASE=master`, two invocations on 2026-10-10 (branch/base,
    pairings in parentheses; ns per 10 calls): on Lua 5.1
    `scope/pcall-error` 1.227 (1.337, 1.131), 2072 vs 1689, then 1.165
@@ -363,7 +367,10 @@ more arguments is the implementer's.
    marker cost more than both). Whether the bound should be restated for
    Lua 5.1, or a different trade made, is the human's.
 
-2. **Lua 5.1: a C function given arguments is unwound at the catch site.**
+2. **Settled (round 2): by the spec restatement on
+   `spec/unwind-at-raise-hosts`, which records the Lua 5.1 fallback and
+   the callers it affects.** Lua 5.1: a C function given arguments is
+   unwound at the catch site.
    A carrier that tail-calls a C function stays below it (5.1 runs a C
    function entered by a tail call above its caller's frame), so the C
    function's messages would name the carrier: its position for
@@ -438,3 +445,31 @@ more arguments is the implementer's.
    the runtime keeps that.
 
 ## Review log
+
+### Round 2 (implementer)
+
+Reviewer verdict on `91b7921`: REQUEST_CHANGES. Orchestrator rulings: F3
+(spec issue 2) and F5 (spec issue 1) settled by the spec restatement on
+`spec/unwind-at-raise-hosts`; the mechanism stays; LuaJIT's per-depth
+handlers accepted, their comment now says they are bounded by the
+deepest nesting reached.
+
+- F1 (fixed): on LuaJIT a protected call made by a destructor that the
+  handler's unwinding ran failed with `error in error handling`, and a
+  record it pushed was left for the outer unwinding. LuaJIT marks the
+  state while a message handler runs (`L->status = LUA_ERRERR` in
+  `lj_err_run`) and runs no message handler until a caught throw clears
+  the mark. `unwind_at_raise` now raises one error through the original
+  `pcall` before it unwinds, on LuaJIT only, after the user's `h` has run;
+  it runs only when records are to be unwound, so `scope/pcall-error`
+  does not pay it. Three tests in `tests/test-unwind.lua` (both programs
+  through `pcall`, through `xpcall` with a handler that returns, and an
+  `xpcall` and a `pcall` with arguments inside a destructor); all three
+  fail on LuaJIT with the reset turned off.
+- F2 (fixed): the nested-`xpcall`-in-a-handler test accepts either host
+  value for its first entry on LuaJIT (the host gives `inner h` when the
+  inner raise runs on a trace), exact elsewhere and on Lua 5.1.
+- F4 (fixed): test case 1's prose.
+- F6 (fixed): every scope stack is made with `handler = false,
+  handler_depth = false` (`main_stack`, `lifetime_resume`,
+  `lifetime_wrap`), one shape, no key added by the first `xpcall`.
