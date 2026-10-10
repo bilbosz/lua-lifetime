@@ -1,9 +1,9 @@
 ---
 id: 017
 title: Runtime: keep each anchor's sentinel newer than its dependents' so a collected subtree dies in ownership order
-status: todo
+status: in-progress
 depends: []
-branch:
+branch: task/017-anchors-finalize-first
 pr:
 commits:
 review:
