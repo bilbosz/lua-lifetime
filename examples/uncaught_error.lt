@@ -7,7 +7,7 @@ Res.__index = Res
 function Res.new(name) print("open " .. name); return setmetatable({ name = name }, Res) end
 function Res.__destroy(self, reason) print("close " .. self.name .. " (" .. reason .. ")") end
 
-local log = Res.new("log") @ lifetime.reachable  -- default lifetime: lives until the program ends
+log = Res.new("log") @ lifetime.reachable  -- default lifetime: lives until the program ends
 --> open log
 
 local function handle(n)
@@ -51,4 +51,10 @@ print("not reached")
 -- it reports the error; `lifetime run` reports the error first and then
 -- lets the interpreter close the state, which runs the sweep
 -- (docs/03-runtime.md, "Program end"), so on a merged stream `close log
--- (exit)` follows the report. Standard output is the same.
+-- (exit)` follows the report. Standard output is the same. `log` is a
+-- global where `xd` has a local: once the error has left the main chunk
+-- its locals are gone, and the collector could take `log` (reason
+-- "unreachable") while the scopes unwind at the catch site, before the
+-- sweep (decision 2; docs/02-semantics.md, "Reachability is the
+-- collector's"); a global is referenced until the state closes, so
+-- "exit" is the only reason it can die with.
