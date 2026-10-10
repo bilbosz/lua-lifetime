@@ -90,4 +90,43 @@ first numbers from a real program.
 
 ## Spec issues found
 
+1. **Registering in the constructor turns a collected tree's order upside
+   down.** `docs/05-decisions.md`, "Registration is `x @
+   lifetime.reachable`", says a class library registers its instances in
+   its constructor. Doing that in Treflove's `class()` arms every
+   instance's sentinel before its `init`, parents before children, so when
+   the collector finds a whole subtree it finalizes the children first
+   (newest first, `02-semantics.md`, "Reachability is the collector's")
+   and each parent's destructor runs among tombstones: `Login:release`'s
+   nested `release()` raises `attempt to index a dead table` into
+   `destroyerror` (test case 3, `trial/treflove/README.md`, "A collected
+   session"). Without the registration line the same collection runs in
+   ownership order, because a bottom-up tree arms each anchor at its first
+   link, after its dependents, and the root last. The slice needs no
+   registration at all (every instance with a `release()` is anchored or
+   is an anchor). "What a destructor may assume" (02, "Cascading death":
+   "my dependents are still here and die right after me") is qualified
+   only elsewhere ("Ownership order holds for every death the program
+   causes; the collector's deaths follow its order"), and the decision does
+   not mention the cost. Not changed here; for the human: whether the
+   decision should recommend registering, registering after `init`, or
+   leaving arming lazy, and whether "What a destructor may assume" should
+   name the exception. The trial asserts both runs.
+2. **A hook on `(a, b)` cannot tell that the other anchor is dying.**
+   Idiom B's hook learns that the form went first only from a flag the
+   form's `release()` sets; when the cascade reaches an input before the
+   form (one owner, the form attached first), the hook runs while the form
+   is dying but before its body, and unlinks from it. `lifetime.alive` is
+   `true` for a dying object and nothing in the `lifetime` table tells
+   dying from alive. This is the case `docs/06-open-questions.md`,
+   "Whether a hook or destructor learns which anchor died", would settle;
+   the trial's third run uses the shape where the form's body runs first
+   and records the other in the README (finding 8).
+3. **An answer for `docs/06-open-questions.md`, "How an embedding host
+   announces program end"**, which says task 009 settles where Treflove
+   puts the call: in a `love.quit` callback registered by
+   `App:register_love_callbacks` (`app/app.lua`), which LÖVE runs on every
+   quit path before closing the state. Not exercised (LÖVE is out of
+   scope); moving the entry to the decision log is a `/spec-change`.
+
 ## Review log

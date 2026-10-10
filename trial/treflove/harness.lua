@@ -39,8 +39,23 @@ local CANDIDATES = {
 
 -- A fresh universe of kind "lifetime" or "original". `log(line)` is what
 -- the stubs and the instrumentation write to (the global `trial_log`).
-function harness.universe(kind, log)
+-- `variant`, optional, names a directory under variants/ whose files are
+-- looked up first: variants/unregistered/ holds utils/class.lt without
+-- the registration line (test case 3).
+function harness.universe(kind, log, variant)
     local candidates = assert(CANDIDATES[kind], "universe: kind must be \"lifetime\" or \"original\"")
+    if variant then
+        local prefix = "variants/" .. variant .. "/"
+        local with_variant = {}
+        for i = 1, #candidates, 2 do
+            with_variant[#with_variant + 1] = prefix .. candidates[i]
+            with_variant[#with_variant + 1] = candidates[i + 1]
+        end
+        for i = 1, #candidates do
+            with_variant[#with_variant + 1] = candidates[i]
+        end
+        candidates = with_variant
+    end
     local build
     if kind == "lifetime" then
         -- Required before any chunk of the slice runs, as `lifetime run`

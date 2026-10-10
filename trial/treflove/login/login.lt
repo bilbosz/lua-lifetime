@@ -39,10 +39,13 @@ function Login:logout()
     self._logout_rp:send_request({})
 end
 
--- lua-lifetime: kept on purpose. The body runs before the remote
--- procedures die (docs/02-semantics.md, "Cascading death"), so these two
--- calls reach live objects and are redundant, not wrong: each procedure's
--- own release() runs again right after, and stop() is idempotent.
+-- lua-lifetime: kept on purpose. When the program causes the death, the
+-- body runs before the remote procedures die (docs/02-semantics.md,
+-- "Cascading death"), so these two calls reach live objects and are
+-- redundant, not wrong: each procedure's own release() runs again right
+-- after, and stop() is idempotent. When the collector finds the whole
+-- subtree, the procedures die first ("Reachability is the collector's")
+-- and the first call meets a tombstone (trial/treflove/README.md).
 function Login:release()
     self._login_rp:release()
     self._logout_rp:release()

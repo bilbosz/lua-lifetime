@@ -16,14 +16,18 @@
 -- The log is written by instrumentation added here, not by the slice:
 -- every class of the slice gets a release() that logs
 -- `Class:release(reason)` and calls the class's own release(), or logs
--- `Class destroyed (reason)` when the class has none (Session, the
--- screens, the test input), so the destructor bodies of the cascade show
--- up in the order the runtime calls them. A call made from inside a
+-- `Class destroyed (reason)` when the class has none (Session,
+-- LoginScreen, the test input), so the destructor bodies of the cascade
+-- show up in the order the runtime calls them. A call made from inside a
 -- logged method is indented by two spaces per level, which shows the
 -- nested release() of Login:release and each remote procedure's stop()
 -- reaching its connection. `Connection:unregister_request_handler` and
 -- `FormScreen:remove_input` are logged the same way. `destroyerror` logs
 -- the errors the runtime routes to it.
+--
+-- Test case 3 runs twice: with utils/class.lt, which registers every
+-- instance in its constructor, and with variants/unregistered/, the same
+-- class library without that line (README.md, "A collected session").
 package.path = "./?.lua;./?/init.lua;" .. package.path
 
 local harness = require("trial.treflove.harness")
@@ -36,9 +40,6 @@ local function log(line)
     line = line:gsub("0x%x+", "0x?")
     lines[#lines + 1] = string.rep("  ", depth) .. line
 end
-
-local env = harness.universe("lifetime", log)
-local scenario = env.require("scenario")
 
 -- Calls `f` one level deeper in the log, restoring the level when `f`
 -- raises (a destructor body that fails, test case 3).
@@ -90,14 +91,25 @@ local CLASSES = {
     {"login.login-screen", "LoginScreen"},
     {"ui.form-screen", "FormScreen"}
 }
-for _, entry in ipairs(CLASSES) do
-    instrument_release(env.require(entry[1]), entry[2])
+
+-- The transpiled slice, instrumented, and its scenarios. `variant` as in
+-- harness.universe.
+local function instrumented(variant)
+    local env = harness.universe("lifetime", log, variant)
+    local scenario = env.require("scenario")
+    for _, entry in ipairs(CLASSES) do
+        instrument_release(env.require(entry[1]), entry[2])
+    end
+    instrument_release(scenario.TestInput, "TestInput")
+    instrument_method(env.require("networking.connection"), "Connection", "unregister_request_handler", tostring)
+    instrument_method(env.require("ui.form-screen"), "FormScreen", "remove_input", function(input)
+        return input.name
+    end)
+    return env, scenario
 end
-instrument_release(scenario.TestInput, "TestInput")
-instrument_method(env.require("networking.connection"), "Connection", "unregister_request_handler", tostring)
-instrument_method(env.require("ui.form-screen"), "FormScreen", "remove_input", function(input)
-    return input.name
-end)
+
+local env, scenario = instrumented(nil)
+local unregistered_env, unregistered_scenario = instrumented("unregistered")
 
 -- docs/02-semantics.md, "Errors in destructors and `destroyerror`": read
 -- raw from _G when an error is routed.
@@ -176,7 +188,22 @@ local SCENARIOS = {
         -- nested release() then meets a tombstone, and the error goes to
         -- destroyerror (a finalizer has no statement to raise at).
         name = "collected",
-        expected = concat("sessions: 1, per-session upload entries: 1", "> the server drops the session from its table and forgets the connection, without destroy", "> collectgarbage(\"collect\")", rp("unreachable", "DownloadMissingAssetsRp"), rp("unreachable", "DownloadAssetRp"), rp("unreachable", "UploadAssetRp"), rp("unreachable", "GameDataRp"), rp("unreachable", "LogoutRp"), rp("unreachable", "LoginRp"), "Login:release(unreachable)", "destroyerror: trial/treflove/login/login.lt:47: attempt to index a dead table (table: 0x?, died at collector, unreachable)", "Session destroyed (unreachable)", "Connection:release(unreachable)", "> collectgarbage(\"collect\")", "per-session entries left: 0, in channel released: true", END)
+        expected = concat("sessions: 1, per-session upload entries: 1", "> the server drops the session from its table and forgets the connection, without destroy", "> collectgarbage(\"collect\")", rp("unreachable", "DownloadMissingAssetsRp"), rp("unreachable", "DownloadAssetRp"), rp("unreachable", "UploadAssetRp"), rp("unreachable", "GameDataRp"), rp("unreachable", "LogoutRp"), rp("unreachable", "LoginRp"), "Login:release(unreachable)", "destroyerror: trial/treflove/login/login.lt:50: attempt to index a dead table (table: 0x?, died at collector, unreachable)", "Session destroyed (unreachable)", "Connection:release(unreachable)", "> collectgarbage(\"collect\")", "per-session entries left: 0, in channel released: true", END)
+    },
+    {
+        -- Test case 3 again, with utils/class.lt without the registration
+        -- line (variants/unregistered/). Every instance is then armed at
+        -- its first `@` (docs/03-runtime.md, "The sentinel"): a procedure
+        -- at its own `@ self`, an anchor at its first link, so the login
+        -- after its procedures, the session after its login, and the
+        -- connection, first seen at `Session(connection) @ connection`,
+        -- last of all. The connection's finalizer runs first and its
+        -- cascade takes the subtree in ownership order with "anchor"; the
+        -- later finalizers find their objects dead.
+        name = "collected",
+        label = "collected, unregistered",
+        unregistered = true,
+        expected = concat("sessions: 1, per-session upload entries: 1", "> the server drops the session from its table and forgets the connection, without destroy", "> collectgarbage(\"collect\")", "Connection:release(unreachable)", "Session destroyed (anchor)", session_procedures("anchor"), "> collectgarbage(\"collect\")", "per-session entries left: 0, in channel released: true", END)
     },
     {
         name = "serializer",
@@ -195,10 +222,15 @@ for _, a in ipairs(arg or {}) do
 end
 local failed = 0
 for _, s in ipairs(SCENARIOS) do
+    local title = s.label or s.name
     if not only or only == s.name then
         lines = {}
         depth = 0
-        local ok, err = pcall(scenario[s.name], harness, env)
+        local run_env, run_scenario = env, scenario
+        if s.unregistered then
+            run_env, run_scenario = unregistered_env, unregistered_scenario
+        end
+        local ok, err = pcall(run_scenario[s.name], harness, run_env)
         if not ok then
             log("error: " .. tostring(err))
         end
@@ -214,7 +246,7 @@ for _, s in ipairs(SCENARIOS) do
         end
         if mismatch then
             failed = failed + 1
-            io.write("[FAIL] ", s.name, ": first difference at line ", mismatch, "\n")
+            io.write("[FAIL] ", title, ": first difference at line ", mismatch, "\n")
             io.write("  expected: ", tostring(s.expected[mismatch]), "\n")
             io.write("  actual:   ", tostring(lines[mismatch]), "\n")
             io.write("  actual log:\n")
@@ -222,7 +254,7 @@ for _, s in ipairs(SCENARIOS) do
                 io.write(string.format("  %3d %s\n", i, line))
             end
         else
-            io.write("[PASS] ", s.name, " (", #lines, " lines)\n")
+            io.write("[PASS] ", title, " (", #lines, " lines)\n")
             if print_logs then
                 for _, line in ipairs(lines) do
                     io.write("  ", line, "\n")

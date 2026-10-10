@@ -54,7 +54,7 @@ this repository.
 ## Running the tests
 
 ```
-make test     # unit suite under every interpreter found (lua5.1, luajit), then the conformance suite
+make test     # unit suite under every interpreter found (lua5.1, luajit), the conformance suite, then the Treflove trial (trial/treflove/, under luajit)
 make lint     # luacheck
 make bench    # benchmarks against plain Lua and against master (task 010)
 ```
