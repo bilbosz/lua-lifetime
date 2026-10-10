@@ -1,12 +1,12 @@
 ---
 id: 008
 title: Port the conformance examples from `xd/examples/`; document each deviation in `docs/07-conformance.md`
-status: in-progress
+status: review
 depends: [004, 007]
 branch: task/008-port-conformance-examples
 pr:
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -152,3 +152,35 @@ it for a follow-up task.
    (docs/07-conformance.md, its row), which removes that case.
 
 ## Review log
+
+### Round 1: APPROVE
+
+Head `0b6c774`. `make test`: 301/301 under `lua5.1` and `luajit`,
+conformance 75/75 under both; `make lint` clean; `make bench` not
+applicable (no runtime, transpiler or harness code changed). No `xd`
+file changed. Every heading-1 and heading-2 `.expected` is `xd`'s byte
+for byte apart from the chunk name in `!error:` lines; every deviation
+row's "what differs" matches the diff and cites a decision that causes
+it. Two programs beyond the examples were run by the reviewer (nested
+cleanup inside an owner's body; `last_of` with the token destroyed before
+its anchors), identical on both interpreters.
+
+- F1 (non-blocking): heading 1 holds two ports whose programs changed
+  beyond spelling (`block_exits` part 3 guards a `goto` program with
+  `jit`; `uncaught_error` registers `log` as a global with
+  `@ lifetime.reachable`), while the `dead_cache` ruling put a program
+  change under Deviations. Orchestrator: the ports stay; heading 1's
+  sentence in `docs/07-conformance.md` is amended in the done chore to
+  say the criterion is the byte-identical `.expected`, the program may
+  need the host's spelling.
+- Orchestrator rulings: test case 1's order for `release_chain` was the
+  task text's error, the spec ("Cascading death") wins; `dead_cache` is
+  a deviation because its program changed; the `caller` "not ported" row
+  satisfies the one-file-per-example criterion.
+- Spec issue 5 (a scope's dependents collected before the catch site
+  unwinds them, reproduced by the reviewer under GC stress on `lua5.1`,
+  `unwind.lt` only) is settled by the human: the runtime unwinds at the
+  raise point (`spec/unwind-at-raise`, task 014). Spec issue 2 (a collect
+  nested in a pending call's argument list on LuaJIT) becomes a note in
+  02 in the done chore. Spec issue 3: revisit `scope_passing` after task
+  012.
