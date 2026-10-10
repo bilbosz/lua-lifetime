@@ -1,12 +1,12 @@
 ---
 id: 012
 title: Runtime: functions, coroutines and userdata as dependents (the weak-keyed side table)
-status: in-progress
+status: review
 depends: [004]
 branch: task/012-non-table-dependents
 pr:
 commits:
-review: REQUEST_CHANGES (round 2)
+review: APPROVE (round 3)
 ---
 
 ## Goal
@@ -406,3 +406,17 @@ Implementer, round 3 (tests only; `lifetime/` unchanged). Merged master
   pre-existing failures are outside this task's files and not touched.
 - `make test` 332/332 under both interpreters, conformance 75/75;
   `make lint` clean. No benchmark: `lifetime/` is unchanged.
+
+### Round 3 review: APPROVE
+
+Head `1144279`. `lifetime/` unchanged since round 2, so the round 2
+runtime review stands. `make test` 332/332 under both interpreters,
+conformance 75/75, trial 8/8; `make lint` clean. Repeated unit runs on
+the head: `luajit` 50/50, `lua5.1` 20/20; eager collector `luajit`
+11/12 (the one failure `tests/test-scopes.lua:887`, reproduced on
+master's tree and the subject of task 015), `lua5.1` 8/8; no failure in
+`tests/test-functions.lua` in 90 runs. F1 and F2 confirmed fixed; the
+`count_added == 0` right after `exit(s2)` stays (no collection can
+change it; it is the only direct check that a table dependent never
+touches the side table on the scope path). Spec issue 7 stays for the
+human.
