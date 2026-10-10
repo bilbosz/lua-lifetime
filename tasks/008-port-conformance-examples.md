@@ -1,11 +1,11 @@
 ---
 id: 008
 title: Port the conformance examples from `xd/examples/`; document each deviation in `docs/07-conformance.md`
-status: review
+status: done
 depends: [004, 007]
 branch: task/008-port-conformance-examples
 pr: https://github.com/bilbosz/lua-lifetime/pull/30
-commits:
+commits: ac7fbade0701d4d9f4aea10da2e26e8bb52d3c11
 review: APPROVE (round 1)
 ---
 
