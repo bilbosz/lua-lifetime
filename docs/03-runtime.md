@@ -265,8 +265,18 @@ this replaces could not promise ([05-decisions.md](05-decisions.md),
 the protected call returns what the original `xpcall` returned, and an
 error value that is not a string passes through the handler unchanged.
 Lua 5.1's `xpcall` passes no arguments to `f` (LuaJIT's does), so the
-runtime's `pcall` carries `...` to `f` itself; how is the
-implementation's choice, within the bound in "Performance". The
+runtime's `pcall` carries `...` to a Lua `f` itself through a Lua frame
+that holds the arguments without allocating; a C function or a callable
+given arguments is not carried, since a C function entered from that
+frame would name it in its error messages (`bad argument #1 to '?'`,
+the position of `error(m)` at level 1), and goes to the original
+`pcall` with the records unwound when it returns (02, "Scopes:
+`lifetime.scope`", the host limit). The cost of the carrier is in
+"Performance". On LuaJIT, where a message handler runs with the host's
+in-handler status set and any protected call inside it would fail with
+`error in error handling`, the runtime clears that status with one
+throw through the original `pcall` before it unwinds, so a destructor
+run by the unwinding may use `pcall` as anywhere else. The
 runtime's handler must never raise: a destructor error is routed by the
 cascade's own protected call, and the user's `h` is called in protected
 mode so that a raise from it still unwinds the records before the
@@ -405,10 +415,22 @@ only where the spec asks for them:
   2026-10-10 with a stand-in (`xpcall(f, h)` with a pass-through handler
   against `pcall(f)`, 2e6 calls), 53 against 59 ns per protected call on
   Lua 5.1, within noise of each other, and nothing measurable on LuaJIT
-  (both below the clock's resolution). The bound task 014 is held to:
-  `scope/pcall-empty` and `scope/pcall-error` within the threshold of
-  `bench/README.md` against the catch-site runtime, with the arguments'
-  passage on Lua 5.1 included, and `scope/resume-yield` unchanged.
+  (both below the clock's resolution). Measured by task 014 against
+  the catch-site runtime (`make bench BASE=master`, two invocations,
+  the implementer's and the reviewer's): on LuaJIT `scope/pcall-empty`,
+  `scope/pcall-error` and `scope/pcall-args` at parity (2 to 3 ns per
+  call, within the clock's resolution); on Lua 5.1 `scope/pcall-empty`
+  1.10 to 1.15 (about 110 against 100 ns per call: `select("#", ...)`,
+  the one way to tell `pcall(f)` from `pcall(f, nil)`), `scope/pcall-
+  error` 1.12 to 1.23 (the handler, a C-to-Lua call the design
+  prescribes), and `scope/pcall-args` 1.8 to 2.0 (about 225 against 120
+  ns per call with three arguments: the host's `xpcall` takes no
+  arguments, so a Lua frame stores and reloads them); `scope/resume-
+  yield` unchanged. The Lua 5.1 numbers are the bound: the design has
+  no cheaper shape on that host, as the review of task 014 found, and
+  LuaJIT, the primary host, pays nothing. `make bench` marks the Lua 5.1
+  rows `SLOWER` against the catch-site runtime; that mark is the
+  design's, not a regression.
 
 Rules the implementation follows on hot paths: runtime functions are
 locals of the module, and the generated chunk binds the ones it calls to

@@ -224,7 +224,23 @@ of `xd` replaced by syntax through decision 5. `xd`'s "The caller's scope"
   message handler runs first, at the same point, before any of them, as
   in Lua; what it returns is the error value the call returns, and a
   handler that raises gives Lua's `error in error handling` with the
-  scopes unwound all the same. For this the runtime replaces those four
+  scopes unwound all the same. The runtime's handler stands between the
+  user's `h` and the raise, so a traceback taken by `h` (`xpcall(f,
+  debug.traceback)`) shows the runtime's two frames above the raising
+  one; `lifetime run` hides them from its own report. One host limit:
+  on Lua 5.1 the host's `xpcall` passes no arguments, and a C function
+  or a callable that is not a Lua function cannot be carried to it
+  without changing the position in its error messages, so `pcall(f,
+  a, ...)` with such an `f` unwinds when the original `pcall` returns,
+  as before this rule. A record pushed by a Lua callback of such a call
+  (`pcall(require, name)`, `pcall(table.sort, t, cmp)`, `pcall(string.
+  gsub, s, p, fn)`, `pcall(tostring, obj)` with a `__tostring`,
+  `pcall(callable_table, ...)`) is unwound in the same order, but its
+  dependents are reachable only while something else refers to them.
+  `pcall(f)` with no argument and every Lua function are exact on both
+  hosts; LuaJIT has no such limit ([05-decisions.md](05-decisions.md),
+  "Scopes unwind at the raise point", host limits). For this the
+  runtime replaces those four
   functions in the global environment when it is first required; a
   program must require `lifetime` before any code captures them into a
   local, and `lifetime run` does. A record
