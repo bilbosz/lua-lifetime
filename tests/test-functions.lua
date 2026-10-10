@@ -109,6 +109,33 @@ local function count_entries(t)
     return n
 end
 
+-- The keys of the side table now, in a weak-keyed set, so that the
+-- snapshot keeps nothing alive. A test compares only its own entries
+-- against it: a leftover object of an earlier test, held by a stale stack
+-- slot on LuaJIT, may be collected inside the test's window and take its
+-- entry with it, so a global count of the side table is not the test's to
+-- check (task 012, review round 2, finding F1).
+local function side_keys(side)
+    local set = setmetatable({}, {__mode = "k"})
+    for k in pairs(side) do
+        set[k] = true
+    end
+    return set
+end
+
+-- The number of keys of `side` that are not in the snapshot `before`:
+-- the entries the test added and that remain. Returns a count, not the
+-- keys, so no stack slot of the caller holds one across a collection.
+local function count_added(side, before)
+    local n = 0
+    for k in pairs(side) do
+        if not before[k] then
+            n = n + 1
+        end
+    end
+    return n
+end
+
 -- The state record of a table, found the way a user would skip it.
 local function state_of(t)
     for k, v in pairs(t) do
@@ -162,6 +189,24 @@ local function with_type_metatable(sample, mt, fn)
     if not ok then
         error(err, 0)
     end
+end
+
+-- A shared `__destroy` for the functions or coroutines of a test: it logs
+-- `<name> (<reason>)` for an object named in `names`, a weak-keyed table
+-- so that naming an object does not keep it alive, and ignores every other
+-- object of the type: a leftover anchor of an earlier test that the
+-- collector finds while the metatable is installed may cascade over a
+-- leftover function dependent, and that death is not the test's (task
+-- 012, review round 2).
+local function type_logger(log, names)
+    return {
+        __destroy = function(obj, reason)
+            local name = names[obj]
+            if name then
+                log[#log + 1] = name .. " (" .. reason .. ")"
+            end
+        end
+    }
 end
 
 local function shell_quote(s)
@@ -425,9 +470,15 @@ test.case("scope exit: a function anchored to a scope record dies in reverse att
     local log = {}
     local held = {}
     local s = enter("t.lt:10")
+    local f
     held[1] = attach(new_logged(log, "x1"), false, s)
-    held[2] = attach(new_logged_userdata(log, "u"), false, s)
-    local f = attach(function()
+    -- u is attached before f, so f dies between x2's body and u's: x2 sees
+    -- it alive, u dead (docs/02-semantics.md, "Cascading death": a scope's
+    -- dependents die newest first).
+    held[2] = attach(new_logged_userdata(log, "u", function()
+        log[#log + 1] = "f alive: " .. tostring(alive(f))
+    end), false, s)
+    f = attach(function()
     end, false, s)
     held[3] = attach(new_logged(log, "x2", function()
         log[#log + 1] = "f alive: " .. tostring(alive(f))
@@ -436,7 +487,7 @@ test.case("scope exit: a function anchored to a scope record dies in reverse att
     test.assert_eq(rawget(list, "other"), true, "the record knows it has a dependent in the side table")
     test.assert_deep_eq(log, {})
     exit(s, "t.lt:14")
-    test.assert_deep_eq(log, {"x2 (anchor)", "f alive: true", "u (anchor)", "x1 (anchor)"})
+    test.assert_deep_eq(log, {"x2 (anchor)", "f alive: true", "u (anchor)", "f alive: false", "x1 (anchor)"})
     test.assert_false(alive(f))
     test.assert_error(function()
         attach(f, false, {})
@@ -446,16 +497,14 @@ test.case("scope exit: a function anchored to a scope record dies in reverse att
     -- dependents are tables only: without the flag, so its walk never
     -- reads the side table.
     local side = side_table()
-    collect()
-    collect()
-    local n = count_entries(side)
+    local before = side_keys(side)
     local s2 = enter("t.lt:20")
     held[4] = attach(new_logged(log, "y"), false, s2)
     test.assert_true(rawequal(rawget(s2, "deps"), list), "the list was reused")
     test.assert_eq(rawget(list, "other"), nil, "no flag on a reused list")
     exit(s2, "t.lt:22")
     test.assert_eq(log[#log], "y (anchor)")
-    test.assert_eq(count_entries(side), n)
+    test.assert_eq(count_added(side, before), 0, "y never entered the side table")
     for i, x in ipairs(held) do
         test.assert_false(alive(x), "held dependent " .. i)
     end
@@ -517,31 +566,26 @@ end)
 
 test.case("__destroy on the shared metatable of functions and coroutines runs with the reason", function()
     local log = {}
-    local names = {}
-    local mt = {
-        __destroy = function(obj, reason)
-            log[#log + 1] = (names[obj] or "?") .. " (" .. reason .. ")"
-        end
-    }
-    local f, g = function()
+    local names = setmetatable({}, {__mode = "k"})
+    local f, g, h = function()
+    end, function()
     end, function()
     end
-    names[f], names[g] = "f", "g"
+    names[f], names[g], names[h] = "f", "g", "h"
     local a = new_logged(log, "a")
-    with_type_metatable(f, mt, function()
+    with_type_metatable(f, type_logger(log, names), function()
         attach(f, false, a)
         attach(g, false, a)
         destroy(a)
-        destroy(attach(function()
-        end, false, {}))
+        destroy(attach(h, false, {}))
     end)
-    test.assert_deep_eq(log, {"a (destroy)", "g (anchor)", "f (anchor)", "? (destroy)"})
+    test.assert_deep_eq(log, {"a (destroy)", "g (anchor)", "f (anchor)", "h (destroy)"})
 
     local co = coroutine.create(function()
     end)
     names[co] = "co"
     log = {}
-    with_type_metatable(co, mt, function()
+    with_type_metatable(co, type_logger(log, names), function()
         destroy(co)
     end)
     test.assert_deep_eq(log, {"co (destroy)"})
@@ -578,50 +622,38 @@ test.suite("functions, coroutines, userdata: the collector")
 test.case("case 5: a collected function's side entry goes with it, and its anchor's list has a hole", function()
     local side = side_table()
     local a = {}
-    collect()
-    collect()
-    local before = count_entries(side)
+    local before = side_keys(side)
     local probe = setmetatable({}, {__mode = "k"})
     run_dropped(function()
         local f = function()
         end
         probe[f] = true
         attach(f, false, a)
+        test.assert_true(side[f] ~= nil, "the record is in the side table")
     end)
-    test.assert_eq(count_entries(side), before + 1, "the record is in the side table")
     collect()
     collect()
     test.assert_eq(next(probe), nil, "the function was collected")
-    test.assert_eq(count_entries(side), before, "its entry went with it")
+    test.assert_eq(count_added(side, before), 0, "its entry went with it")
     test.assert_deep_eq(lifetime.dependents(a), {})
 end)
 
 test.case("a dead function's record goes with it too", function()
     local side = side_table()
-    collect()
-    collect()
-    local before = count_entries(side)
+    local before = side_keys(side)
+    local probe = setmetatable({}, {__mode = "k"})
     run_dropped(function()
         local f = function()
         end
+        probe[f] = true
         destroy(attach(f, false, {}))
+        test.assert_true(side[f] ~= nil, "the death is remembered")
     end)
-    test.assert_eq(count_entries(side), before + 1, "the death is remembered")
     collect()
     collect()
-    test.assert_eq(count_entries(side), before)
+    test.assert_eq(next(probe), nil, "the function was collected")
+    test.assert_eq(count_added(side, before), 0, "its entry went with it")
 end)
-
--- A shared `__destroy` for the functions or coroutines of a test: it logs
--- `<name> (<reason>)` with the name given in `names`, a weak-keyed table
--- so that naming an object does not keep it alive.
-local function type_logger(log, names)
-    return {
-        __destroy = function(obj, reason)
-            log[#log + 1] = (names[obj] or "?") .. " (" .. reason .. ")"
-        end
-    }
-end
 
 test.case("a function dependent does not keep its anchor alive; a table dependent does", function()
     -- docs/02-semantics.md, "Reachability is the collector's": "a table
@@ -861,9 +893,7 @@ test.case("a function, coroutine or userdata the collector finds dies silently: 
     local names = setmetatable({}, {__mode = "k"})
     local probe = setmetatable({}, {__mode = "k"})
     local a = new_logged(log, "a")
-    collect()
-    collect()
-    local before = count_entries(side)
+    local before = side_keys(side)
     with_type_metatable(print, type_logger(log, names), function()
         run_dropped(function()
             local u = attach(new_logged_userdata(log, "u"), false, lifetime.reachable)
@@ -873,14 +903,14 @@ test.case("a function, coroutine or userdata the collector finds dies silently: 
             names[f] = "f"
             probe[u], probe[w], probe[f] = true, true, true
             test.assert_eq(type(rawget(side[u], "reachable")), "boolean", "no sentinel")
+            test.assert_true(side[w] ~= nil and side[f] ~= nil, "w and f have records")
         end)
-        test.assert_eq(count_entries(side), before + 3)
         collect()
         collect()
         test.assert_deep_eq(log, {}, "no body ran")
     end)
     test.assert_eq(next(probe), nil, "all three were collected")
-    test.assert_eq(count_entries(side), before, "their records went with them")
+    test.assert_eq(count_added(side, before), 0, "their records went with them")
     test.assert_deep_eq(lifetime.dependents(a), {})
     test.assert_true(alive(a))
 end)
@@ -989,9 +1019,7 @@ end)
 
 test.case("a table dependent never touches the side table", function()
     local side = side_table()
-    collect()
-    collect()
-    local before = count_entries(side)
+    local before = side_keys(side)
     local log = {}
     local a = new_logged(log, "a")
     local held = {}
@@ -999,10 +1027,10 @@ test.case("a table dependent never touches the side table", function()
         held[i] = attach(new_logged(log, "x" .. i), false, a)
     end
     attach(held[1], false, held[2])
-    test.assert_eq(count_entries(side), before)
+    test.assert_eq(count_added(side, before), 0, "no entry for a table dependent")
     test.assert_eq(rawget(rawget(state_of(a), "deps"), "other"), nil, "no flag on an anchor of tables")
     destroy(a)
-    test.assert_eq(count_entries(side), before)
+    test.assert_eq(count_added(side, before), 0, "nor for its death")
     test.assert_eq(#log, 11)
 end)
 
