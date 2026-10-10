@@ -6,7 +6,7 @@ depends: [004]
 branch: task/012-non-table-dependents
 pr:
 commits:
-review:
+review: REQUEST_CHANGES (round 2)
 ---
 
 ## Goal
@@ -336,3 +336,31 @@ the others say what the code does and why.
   against 1.66 to 1.77 us on LuaJIT: the `setmetatable` per record and
   the record's place in the collector's weak list, a few percent, forced
   by the weak record of 03.
+
+### Round 2 review: REQUEST_CHANGES
+
+Head `ec6b6ca`. `make test` 332/332 under both interpreters and
+conformance 75/75, but `luajit tests/run.lua unit` failed 2 of 74 runs
+at `tests/test-functions.lua:883`; `make lint` clean; `make bench
+BASE=origin/master` twice: nothing marked by the two-run rule
+(`runtime/cascade-tree` once on Lua 5.1, noise on a third run);
+`runtime/attach-function` 4.2-4.4 us Lua 5.1, 1.7-1.8 us LuaJIT.
+Eager-collector runs of the suite green. The `()` formula was verified
+unreachable. Spec issue 7 verified on both hosts; for the human.
+
+- F1 (blocking): `tests/test-functions.lua:851-883` and the sibling
+  cases at `:448-458`, `:578-613`, `:990-1005` compare a global count of
+  the side table before and after the test's collects; a leftover of an
+  earlier test (held by a stale stack slot on LuaJIT) collected inside
+  the window makes the count drop. Make the checks local to the test's
+  own objects (snapshot the keys into a weak-keyed set; assert the
+  test's keys are present, then gone) and confirm with at least 50 runs
+  of `luajit tests/run.lua unit`.
+- F2 (non-blocking, take it in round 3): the scope-exit test at
+  `:424-443` does not pin where `f` dies among the scope's dependents;
+  log `alive(f)` from `u`'s body and expect `false` right after `u
+  (anchor)`.
+- Question to settle in round 3: once under the eager collector on
+  LuaJIT `:538` failed with an extra line in the shared-metatable
+  `__destroy` log, not reproduced in 20 runs; make the type logger at
+  `:521` log only objects named in `names`.
