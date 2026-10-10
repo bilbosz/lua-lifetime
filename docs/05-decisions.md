@@ -589,3 +589,61 @@ it, as a registered table with a `__destroy` does; `format` renders
 sentinel, as before. Task 004 implements it with the sentinel.
 → [02-semantics.md](02-semantics.md), "Hooks: the `!@` operator";
 [03-runtime.md](03-runtime.md), "The sentinel"
+
+## Non-table dependents: remembered after death, weak anchors
+
+Decided by the human on 2026-10-10 on the handoff of task 012, which
+implements functions, coroutines and userdata as dependents. Two points.
+
+**After death.** The open question "Non-table dependents after death" is
+closed with its leaning. Decision 8 tombstones a table by emptying it
+and swapping its metatable; a function, coroutine or userdata can be
+neither emptied nor given a metatable of its own (a function's and a
+coroutine's metatable is shared by every value of the type, and a
+userdata's belongs to whoever made it). Its state record, which lives in
+the weak-keyed side table of [03-runtime.md](03-runtime.md), "The state
+of an object", stays there after the death, reduced to the phase,
+`where` and `reason`, and is the weak-keyed set that remembers the
+death. `lifetime.alive` reads `false`; `@` raises `attempt to move a
+dead function (<name>, died at <where>, <reason>)` (or `thread`,
+`userdata`), the message a tombstone would give with the verb `move`;
+`lifetime.of` and `lifetime.format` raise the same with `index`;
+`destroy` and `discard` are no-ops; the dying and destruction errors use
+the same type names. Calling the function, resuming the coroutine and
+using the userdata are not caught: they behave as in Lua. The record
+goes when the collector takes the object, with the weak key. Rejected:
+wrapping functions in a callable proxy, which would change their
+identity and `type`; and swapping the shared metatable, which would
+change every value of the type. Such an object never carries a sentinel
+(the proxy's metatable would have to hold the object, a cycle through
+the weak key, and it has no dependents or hooks of its own, since it is
+never an anchor), so one the collector finds dies silently: a
+`__destroy` on its type's metatable runs on `destroy` and on an anchor's
+death, not at collection.
+
+**Weak anchors.** The side record names the dependent's anchors, and
+task 012 first held them strongly, as 02 said of every dependent ("a
+dependent's reference to its anchor is strong, as any field would be").
+On these hosts a weak-keyed table marks its values whether or not the
+key is reachable (no ephemerons, decision 1 of file 10), so the runtime
+held every anchor of a live function from a root; when the anchor also
+held the function (`self.on_click = function() ... end @ self`, a
+listener in an emitter the anchor owns, `co @ lifetime.pin(a)` once
+nothing else held `a`), neither was ever collected and no destructor
+ran until a `destroy` by hand. The same shape with a table dependent is
+the ordinary cycle decision 3 frees. Decided: the record holds its
+anchors weakly. Nothing leaks; the one observable difference is that a
+function, coroutine or userdata dependent does not keep its anchor
+alive, so an anchor that only such dependents refer to is collected and
+its cascade kills them with reason `"anchor"` while something may still
+hold them. The promise of `f @ a` holds either way; the side effect the
+table case has is given up for these objects, and 02 says so. The
+alternative, keeping the letter of 02 and documenting the leak, was
+rejected because the leaking shape is the common one (idiom A of
+`xd/docs/notes/xd-in-treflove.md`). Guardrail check: the runtime still
+holds no strong reference to a collectable dependent; it now holds one
+fewer. Reported to the human for `xd`: file 10's decision 3 assumes the
+state lives inside the object, which a function cannot offer.
+→ [02-semantics.md](02-semantics.md), "Tombstones and `lifetime.alive`",
+"Reachability is the collector's"; [03-runtime.md](03-runtime.md), "The
+state of an object"; task 012
