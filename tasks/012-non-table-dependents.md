@@ -4,7 +4,7 @@ title: Runtime: functions, coroutines and userdata as dependents (the weak-keyed
 status: review
 depends: [004]
 branch: task/012-non-table-dependents
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/37
 commits:
 review: APPROVE (round 3)
 ---
