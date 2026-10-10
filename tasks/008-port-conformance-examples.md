@@ -1,9 +1,9 @@
 ---
 id: 008
 title: Port the conformance examples from `xd/examples/`; document each deviation in `docs/07-conformance.md`
-status: todo
+status: in-progress
 depends: [004, 007]
-branch:
+branch: task/008-port-conformance-examples
 pr:
 commits:
 review:
