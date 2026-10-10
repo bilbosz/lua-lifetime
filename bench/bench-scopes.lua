@@ -1,8 +1,11 @@
 -- bench/bench-scopes.lua: the hot paths of task 003 (docs/03-runtime.md,
 -- "Performance"): a block with a scope record ("one record (a small
 -- table) per entry, one push and one pop; no closure, no `pcall`"), the
--- four replaced globals ("one wrapper frame, one field read before and
--- one compare after; no allocation"), and hook creation. Each body is
+-- four replaced globals (`pcall`: "one wrapper frame and one field read
+-- before the original `xpcall`; the handler runs only on the error path;
+-- nothing after the call", task 014; `coroutine.resume`: "one wrapper
+-- frame, one field read before and one compare after; no allocation"),
+-- and hook creation. Each body is
 -- written as the generated code of docs/04-transpiler.md will be: the
 -- runtime functions bound to locals, the record in a local, `enter` with
 -- the line of the block's end and `exit` with the line of the exit.
@@ -20,14 +23,23 @@
 --                           enter, hook, exit; against calling `f` by hand
 --                           at the end of the block
 --   scope/pcall-empty       pcall of an empty function through the
---                           runtime's pcall; against the original pcall
+--                           runtime's pcall (the original xpcall with the
+--                           runtime's message handler, task 014); against
+--                           the original pcall
 --   scope/pcall-error       pcall of a function that raises through no
---                           scoped block; against the original pcall
+--                           scoped block: the runtime's handler runs and
+--                           finds nothing to unwind; against the original
+--                           pcall
+--   scope/pcall-args        pcall of a three-argument function that
+--                           returns them, through the runtime's pcall: on
+--                           Lua 5.1, whose xpcall passes no arguments,
+--                           the runtime carries them (task 014); against
+--                           the original pcall
 --   scope/resume-yield      one resume of a coroutine that yields in a
 --                           loop, through the runtime's coroutine.resume;
 --                           against the original
 --
--- The baselines of the last three are the originals the runtime keeps as
+-- The baselines of the last four are the originals the runtime keeps as
 -- upvalues of its replacements (`pcall`, `resume`); on a base without the
 -- replacements the global is the original and both sides run it.
 local bench = require("bench.lib.bench")
@@ -147,6 +159,22 @@ end, {
     baseline = function()
         for _ = 1, 10 do
             original_pcall(raise)
+        end
+    end
+})
+
+-- scope/pcall-args
+local function three(a, b, c)
+    return a, b, c
+end
+bench.add("scope/pcall-args", function()
+    for _ = 1, 10 do
+        pcall(three, 1, 2, 3)
+    end
+end, {
+    baseline = function()
+        for _ = 1, 10 do
+            original_pcall(three, 1, 2, 3)
         end
     end
 })
