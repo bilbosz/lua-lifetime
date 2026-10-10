@@ -1,11 +1,11 @@
 ---
 id: 016
 title: Emitter: drop the `destroy`/`discard` builtin binding; `lifetime.destroy` and `lifetime.discard` are the only spelling
-status: review
+status: done
 depends: []
 branch: task/016-no-destroy-builtin
 pr: https://github.com/bilbosz/lua-lifetime/pull/45
-commits:
+commits: bf77266713639ce652b2a573fa88ce2a7b230959
 review: APPROVE (round 1)
 ---
 
