@@ -1,9 +1,9 @@
 ---
 id: 016
 title: Emitter: drop the `destroy`/`discard` builtin binding; `lifetime.destroy` and `lifetime.discard` are the only spelling
-status: todo
+status: in-progress
 depends: []
-branch:
+branch: task/016-no-destroy-builtin
 pr:
 commits:
 review:
