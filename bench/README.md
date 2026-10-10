@@ -185,6 +185,7 @@ comparable with either: it depends on the files before it.
 | `runtime/cascade-tree` | `bench-runtime.lua` | a three-level tree (1 + 10 + 100) built with `attach` and destroyed from the root | the same tree of arrays closed by a recursive loop |
 | `runtime/dependents-100` | `bench-runtime.lua` | `lifetime.dependents` of an anchor with 100 dependents | copying an array of 100 |
 | `runtime/attach-first` | `bench-runtime.lua` | `attach` of a fresh table to a long-lived anchor, dropped at once (holes and compaction) | storing a fresh table in a weak-valued array |
+| `runtime/attach-function` | `bench-runtime.lua` | `attach` of a fresh function to a long-lived anchor, then `destroy` of the function: its record in the weak-keyed side table, its death remembered there (task 012); a base that refuses a function dependent cannot run it | appending the function to an array, removing it and marking it in a weak-keyed set |
 | `scope/loop-one-object` | `bench-scopes.lua` | 10 iterations of a loop body owning one object with a `__destroy`, as generated code: `enter`, `attach` to the record, `exit` | the same object closed by hand at the end of each iteration |
 | `scope/enter-exit-empty` | `bench-scopes.lua` | 10 `enter`/`exit` pairs of a record nothing is attached to | 10 empty loop iterations (the ratio is only "how many empty blocks") |
 | `scope/hook-on-scope` | `bench-scopes.lua` | 10 blocks with one hook (`f !@ lifetime.scope`): `enter`, `hook`, `exit` | calling `f` by hand 10 times |
