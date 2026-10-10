@@ -185,7 +185,7 @@ end
 
 -- The locals declared since `shadow` was `saved` go out of scope.
 local function undeclare(st, saved)
-    st.shadow = nd
+    st.shadow = saved
 end
 
 -- A name being declared (a local, a parameter, a loop variable): written,
