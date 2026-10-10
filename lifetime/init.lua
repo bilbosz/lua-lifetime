@@ -16,7 +16,8 @@
 -- tokens (`token`), `pin`, `alive`, the `newproxy` sentinel that runs a
 -- cascade when the collector finds an object, and the exit flag. Task
 -- 012: functions, coroutines and userdata as dependents, their records in
--- the weak-keyed `side` table.
+-- the weak-keyed `side` table. Task 014: `pcall` and `xpcall` unwind from
+-- a message handler, at the raise point.
 --
 -- Rules this file keeps (CLAUDE.md, "Technical decisions"; rule 6):
 --
@@ -112,8 +113,11 @@ local held, held_error = false, nil
 -- plain table `{n = depth, [1 .. n] = records}`. An upvalue rather than
 -- a field, so `enter` and `exit` read it without a table lookup; the
 -- `coroutine.resume` and `coroutine.wrap` replacements swap it for the
--- duration of a resume ("Error path" below).
-local main_stack = {n = 0}
+-- duration of a resume ("Error path" below). Every stack is made with the
+-- two fields the runtime's `xpcall` keeps on it (`handler`,
+-- `handler_depth`, "Error path" below), so all stacks have one shape and
+-- the first `xpcall` on a stack adds no key.
+local main_stack = {n = 0, handler = false, handler_depth = false}
 local stack = main_stack
 
 -- Unwinds the records of a stack above a depth on the error path;
@@ -2395,42 +2399,443 @@ end
 
 -- docs/03-runtime.md, "The scope stack and the error path": "When it is
 -- first required the runtime replaces four globals, keeping the
--- originals as upvalues"; docs/05-decisions.md, "Scopes unwind at the
--- catch site, not in a per-block `pcall` wrapper".
+-- originals as upvalues. `pcall` and `xpcall` unwind from a **message
+-- handler**, at the raise point: `pcall(f, ...)` reads `S.stack.n` and
+-- calls the original `xpcall` on `f` with a handler of the runtime's;
+-- `xpcall(f, h)` does the same with a handler that wraps the user's
+-- `h`." docs/05-decisions.md, "Scopes unwind at the raise point", which
+-- refines "Scopes unwind at the catch site, not in a per-block `pcall`
+-- wrapper": the handler runs on top of the frames that raised, so the
+-- locals that hold the dependents of the unwound records are reachable
+-- until each dependent's destructor has run, and the collector cannot
+-- take one first.
+--
+-- "Nothing is compared after the call: the protected call returns what
+-- the original `xpcall` returned, and an error value that is not a
+-- string passes through the handler unchanged." The handler returns the
+-- error value it was given (or what the user's `h` returned), so `false`
+-- and that value are what the original `xpcall` hands back.
 --
 -- The originals keep their own names as upvalues (`pcall` is the local of
 -- the file's first line), so that an argument error they raise names
 -- them as a direct call would on Lua 5.1, where the name comes from the
--- call site. The wrappers pass varargs through and allocate nothing ("a
--- `pcall` costs one field read before and one compare after").
+-- call site; the tests and the benchmarks find them by those names.
 local xpcall = xpcall
 local create, resume, status = coroutine.create, coroutine.resume, coroutine.status
 
--- After a protected call: on an error, unwind what was pushed since the
--- call began, then return exactly what the original returned.
-local function caught(depth, ok, ...)
-    if ok then
+-- "Lua 5.1's `xpcall` passes no arguments to `f` (LuaJIT's does), so the
+-- runtime's `pcall` carries `...` to `f` itself; how is the
+-- implementation's choice, within the bound in "Performance"." Which
+-- host this is, found once by asking the original.
+local XPCALL_PASSES_ARGUMENTS
+do
+    local _, count = xpcall(function(...)
+        return select("#", ...)
+    end, tostring, nil)
+    XPCALL_PASSES_ARGUMENTS = count == 1
+end
+
+-- docs/02-semantics.md, "Scopes: `lifetime.scope`": "One error keeps no
+-- order: a stack overflow. The host runs the unwinding with little stack
+-- ... when the unwinding itself overflows the host ends it and the
+-- protected call returns `false` with the host's message ...; the records
+-- it did not reach die by the rule for a catch the runtime could not
+-- see." docs/03-runtime.md: "the records the handler did not reach stay
+-- on the stack for `exit` or program end to find". An overflow inside the
+-- runtime's own code would end the handler between a record's pop and
+-- its cascade, or in the middle of a cascade, and lose the record or
+-- leave its dependents marked dying for good. So when the error is a
+-- stack overflow (both hosts' messages contain `stack overflow`), the
+-- handler first asks for room: `ROOM_FRAMES` nested calls of a function
+-- with a wide frame, in protected mode. Without that room it unwinds
+-- nothing and every record stays for the fallback, innermost first, as
+-- a whole; with it, it unwinds as for any error. Lua 5.1 refills the
+-- Lua stack for a message handler, so there the room is found and the
+-- handler unwinds; LuaJIT leaves a handler about a dozen small frames,
+-- so there it is not (the task file, test case 7). Nothing of this runs
+-- unless records are to be unwound and the error is an overflow.
+local find = string.find
+local ROOM_FRAMES = 16
+
+local function room(n, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23, a24)
+    if n > 0 then
+        local found = room(n - 1)
+        return found
+    end
+    return true
+end
+
+-- LuaJIT marks the state as handling an error (`L->status = LUA_ERRERR`,
+-- `lj_err_run`) while a message handler runs, and refuses to run any
+-- message handler until a throw caught by a protected call resets the
+-- mark: an `xpcall`, or the runtime's `pcall`, made inside the handler
+-- fails at once with `error in error handling` instead of calling its
+-- handler. The unwinding runs destructors, which may make such calls
+-- (docs/03-runtime.md, "The scope stack and the error path": "the
+-- runtime clears that status with one throw through the original `pcall`
+-- before it unwinds, so a destructor run by the unwinding may use `pcall`
+-- as anywhere else"), so on that host the handler raises one error
+-- through the original `pcall` before it unwinds, and the destructors
+-- run as they would outside a handler. The user's `h` of an `xpcall` has
+-- run by then, under the mark, as under the host's own `xpcall`. Lua 5.1
+-- keeps no such mark. One throw, on the error path, only when records are
+-- to be unwound.
+local CLEARS_HANDLER_MARK = XPCALL_PASSES_ARGUMENTS
+
+local function unwind_at_raise(s, depth, e)
+    if CLEARS_HANDLER_MARK then
+        pcall(error)
+    end
+    if type(e) == "string" and find(e, "stack overflow", 1, true) and not pcall(room, ROOM_FRAMES) then
+        return
+    end
+    unwind(s, depth)
+end
+
+-- The message handler of the runtime's `xpcall`: "the user's `h`, when
+-- there is one, runs first and its result replaces the error value; then
+-- the runtime unwinds every record above the depth it read, innermost
+-- first, with the error counted as propagating (02, "Errors in
+-- destructors": destructor errors go to `destroyerror`); then it returns
+-- the error value" (`unwind` counts the error as propagating). "The
+-- user's `h` is called in protected mode so that a raise from it still
+-- unwinds the records before the runtime re-raises it, which gives the
+-- host's `error in error handling` as a raise from any message handler
+-- does" (docs/02-semantics.md, "Scopes: `lifetime.scope`": "a handler
+-- that raises gives Lua's `error in error handling` with the scopes
+-- unwound all the same"). The re-raise calls this handler again on both
+-- hosts: Lua 5.1 calls a message handler for an error it raises until
+-- the C stack runs out, and LuaJIT does so once a protected call inside
+-- the handler has caught an error (the `pcall` of `h` just did). That
+-- call finds the call marked (`HANDLER_RAISED`) and raises again at once,
+-- which is a raise from a message handler the host has just called:
+-- `error in error handling` on both. `h` is called once; the original
+-- Lua 5.1 `xpcall` calls a raising `h` again for each of those levels
+-- (the task file, "Spec issues found"). Running inside a protected call,
+-- `h` sees two more frames above the raise point than the host would
+-- give it: this function and the original `pcall`.
+--
+-- The user's `h` and the depth are per call and the host passes neither,
+-- so the runtime's `xpcall` keeps them on the running coroutine's stack
+-- table (`handler`, `handler_depth`) for the duration of the call and
+-- puts back the enclosing call's after it (`handled`). They are on the
+-- coroutine's stack because LuaJIT can yield across `xpcall`, and an
+-- other coroutine's `xpcall` must not see them. Every stack is made with
+-- both fields set to `false` (`main_stack`, `lifetime_resume`,
+-- `lifetime_wrap`), and they hold `false` rather than `nil` whenever no
+-- call is running, so the stack table keeps its keys and assigning them
+-- never allocates, the first time included. The stack the
+-- handler reads is the running coroutine's at the raise point, which is
+-- the coroutine that called `xpcall`: an error does not cross a
+-- `coroutine.resume`.
+--
+-- "The runtime's handler must never raise: a destructor error is routed
+-- by the cascade's own protected call" (`destroy_object`); the one raise
+-- here is the user's `h`'s, re-raised on purpose.
+local HANDLER_RAISED = {}
+
+local function call_handler(e)
+    local s = stack
+    local h = s.handler
+    if h == HANDLER_RAISED then
+        error(e, 0)
+    end
+    local ok, v = pcall(h, e)
+    local depth = s.handler_depth
+    if s.n > depth then
+        unwind_at_raise(s, depth, e)
+    end
+    if not ok then
+        s.handler = HANDLER_RAISED
+        error(v, 0)
+    end
+    return v
+end
+
+-- After the runtime's `xpcall`: the enclosing call's handler back on the
+-- stack table, then exactly what the original returned. Nothing is
+-- compared or unwound here.
+local function handled(s, outer, outer_depth, ...)
+    s.handler, s.handler_depth = outer or false, outer_depth or false
+    return ...
+end
+
+local lifetime_pcall, lifetime_xpcall
+
+if XPCALL_PASSES_ARGUMENTS then
+    -- LuaJIT. The message handler of a `pcall` that began at `depth`:
+    -- "the runtime unwinds every record above the depth it read,
+    -- innermost first ...; then it returns the error value". The host
+    -- calls a handler with the error value alone, and nothing may run
+    -- after the call to tell it the depth, so each depth has a handler of
+    -- its own, made the first time a `pcall` begins at that depth and
+    -- kept: `handlers[depth + 1]`. The table holds one closure per depth
+    -- ever reached, so it is bounded by the deepest nesting of scope
+    -- records the program has had while it called `pcall`. A handler
+    -- refers to a number and to the runtime's own upvalues, never to a
+    -- user object (CLAUDE.md, rule 6), and once a depth has its handler a
+    -- `pcall` there allocates nothing ("Performance": "On LuaJIT no
+    -- allocation"). The original
+    -- `xpcall` is entered by a tail call, which on LuaJIT replaces the
+    -- wrapper's frame, so the depth cannot be left in the frame for the
+    -- handler to find (Lua 5.1 below does that).
+    local handlers = {}
+
+    local function new_handler(depth)
+        local function handler(e)
+            local s = stack
+            if s.n > depth then
+                unwind_at_raise(s, depth, e)
+            end
+            return e
+        end
+        handlers[depth + 1] = handler
+        return handler
+    end
+
+    -- The original `xpcall` passes `...` to `f`. A missing or `nil`
+    -- function goes to the original `pcall`, which raises its argument
+    -- error for `pcall()` and returns `false, "attempt to call a nil
+    -- value"` for `pcall(nil)` (`xpcall` cannot tell the two apart); the
+    -- call fails before anything could be pushed. Any other value is
+    -- called by the original `xpcall`, which raises at the call as
+    -- `pcall` would, with the same message.
+    lifetime_pcall = function(...)
+        local f = ...
+        if f == nil then
+            return pcall(...)
+        end
+        local depth = stack.n
+        return xpcall(f, handlers[depth + 1] or new_handler(depth), select(2, ...))
+    end
+
+    -- LuaJIT's `xpcall` refuses a handler that is not a function; the
+    -- original raises that argument error itself.
+    lifetime_xpcall = function(...)
+        local f, h = ...
+        if type(h) ~= "function" then
+            return xpcall(...)
+        end
+        local s = stack
+        local outer, outer_depth = s.handler, s.handler_depth
+        s.handler, s.handler_depth = h, s.n
+        return handled(s, outer, outer_depth, xpcall(f, call_handler, select(3, ...)))
+    end
+else
+    -- Lua 5.1. The wrapper enters the original `xpcall` by a tail call,
+    -- and Lua 5.1 runs a C function entered by a tail call above the
+    -- caller's frame instead of in its place (the probe of `TAIL_RAISE`
+    -- below finds the same of `error`), so the wrapper's frame is on the
+    -- stack, below the frames that raised, while the handler runs. The
+    -- depth is left there, in the wrapper's first local
+    -- (`pcall_began_at`, with `PCALL_FRAME` in the next to tell it from a
+    -- local of the same name), and one handler for every call finds the
+    -- innermost such frame with `debug.getlocal`, which allocates
+    -- nothing: the success path is the wrapper, one field read and the
+    -- original `xpcall` ("Performance"), and the frame is read only on
+    -- the error path when the stack has a record at all. The walk runs in
+    -- protected mode, so a frame it cannot find (a handler called by
+    -- something else) unwinds nothing rather than raise in a handler; the
+    -- records are then left for the next exit, as after a catch the
+    -- runtime could not see.
+    local debug_getlocal = debug.getlocal
+    local PCALL_FRAME = {}
+
+    -- The index of the first local a vararg function declares: Lua 5.1
+    -- built with `LUA_COMPAT_VARARG` gives every vararg function the
+    -- local `arg` before it.
+    local FIRST_LOCAL
+    do
+        local function probe(...)
+            local first = ...
+            return debug_getlocal(1, 1), first
+        end
+        FIRST_LOCAL = probe() == "arg" and 2 or 1
+    end
+
+    local function began_at()
+        local level = 2
+        while true do
+            local name, depth = debug_getlocal(level, FIRST_LOCAL)
+            if name == "pcall_began_at" then
+                local _, frame = debug_getlocal(level, FIRST_LOCAL + 1)
+                if frame == PCALL_FRAME then
+                    return depth
+                end
+            end
+            level = level + 1
+        end
+    end
+
+    local function unwind_from_frame(e)
+        local found, depth = pcall(began_at)
+        local s = stack
+        if found and s.n > depth then
+            unwind_at_raise(s, depth, e)
+        end
+    end
+
+    -- The message handler of every `pcall` with at most the function.
+    local function pcall_handler(e)
+        if stack.n > 0 then
+            unwind_from_frame(e)
+        end
+        return e
+    end
+
+    -- The original `xpcall` calls `f` with no arguments. A call with none
+    -- (`pcall(f)`, the common one) is the original `xpcall` on `f` itself.
+    -- With arguments, `f` and up to three of them wait in `carried_*` and
+    -- the original `xpcall` calls `carry1`, `carry2` or `carry3`, which
+    -- takes them out and tail-calls `f` with them; more than three are
+    -- packed into `carried_rest` with their count. Nothing runs between
+    -- the assignment and the carrier's first instruction but the host's
+    -- own call, so the values are the call's; the carrier clears the slots
+    -- before it calls `f`, so the runtime holds no argument once `f` runs
+    -- (CLAUDE.md, rule 6). `select("#", ...)` is what keeps trailing
+    -- `nil`s: `f` gets exactly the arguments given.
+    --
+    -- Only a Lua function is carried. Lua 5.1 replaces the carrier's frame
+    -- when it tail-calls a Lua function, so a level above `f` is a frame
+    -- with no position, as under the original `pcall`: `error(m, 2)` in
+    -- `f` adds no position under either. A C function would run above the
+    -- carrier's frame instead, and its messages would name the carrier:
+    -- its position for `error(m)` or `luaL_error`, its local for a bad
+    -- argument. So a C function, a callable table or userdata, a value
+    -- that is not callable, and a call with no arguments at all (whose
+    -- argument error the original raises) go to the original `pcall`,
+    -- which calls them as Lua does, and the records are unwound when it
+    -- returns, as the catch-site runtime did (docs/02-semantics.md,
+    -- "Scopes: `lifetime.scope`", the host limit; docs/03-runtime.md,
+    -- "The scope stack and the error path"; docs/05-decisions.md,
+    -- "Unwinding at the raise point: the Lua 5.1 host limits and cost").
+    -- A value that is not callable fails before anything could
+    -- be pushed.
+    local unpack = unpack
+    local carried_f, carried_1, carried_2, carried_3, carried_rest
+
+    local function carry1()
+        local f, a1 = carried_f, carried_1
+        carried_f, carried_1 = nil, nil
+        return f(a1)
+    end
+
+    local function carry2()
+        local f, a1, a2 = carried_f, carried_1, carried_2
+        carried_f, carried_1, carried_2 = nil, nil, nil
+        return f(a1, a2)
+    end
+
+    local function carry3()
+        local f, a1, a2, a3 = carried_f, carried_1, carried_2, carried_3
+        carried_f, carried_1, carried_2, carried_3 = nil, nil, nil, nil
+        return f(a1, a2, a3)
+    end
+
+    local function carry_rest()
+        local f, t = carried_f, carried_rest
+        carried_f, carried_rest = nil, nil
+        return f(unpack(t, 1, t.n))
+    end
+
+    -- The handler of the carrying calls: as `pcall_handler`, and it
+    -- clears the slots, which still hold the call's values when the host
+    -- failed before the carrier ran (a C stack overflow at the call).
+    local function carrier_handler(e)
+        carried_f, carried_1, carried_2, carried_3, carried_rest = nil, nil, nil, nil, nil
+        if stack.n > 0 then
+            unwind_from_frame(e)
+        end
+        return e
+    end
+
+    -- Whether a function is a Lua function, once per function: weak-keyed,
+    -- so it holds no function alive, and its values are booleans. Any
+    -- other value is not a key and reads `nil`.
+    local lua_functions = setmetatable({}, {__mode = "k"})
+
+    local function is_lua_function(f)
+        if type(f) ~= "function" then
+            return false
+        end
+        local lua = debug_getinfo(f, "S").what ~= "C"
+        lua_functions[f] = lua
+        return lua
+    end
+
+    -- The catch site, for the calls the original `pcall` makes: on an
+    -- error, unwind what was pushed since the call began, then return
+    -- exactly what the original returned.
+    local function caught(depth, ok, ...)
+        if ok then
+            return ok, ...
+        end
+        if stack.n > depth then
+            unwind(stack, depth)
+        end
         return ok, ...
     end
-    if stack.n > depth then
-        unwind(stack, depth)
+
+    -- A call made while the slots are full: a debug hook that runs between
+    -- a call's assignment and its carrier (a call hook on the carrier)
+    -- and calls `pcall` with arguments itself. The outer call's values
+    -- are set aside, the call runs as any other, and they are put back
+    -- before the hook returns to the carrier that will take them.
+    local function carried_back(f, a1, a2, a3, rest, ...)
+        carried_f, carried_1, carried_2, carried_3, carried_rest = f, a1, a2, a3, rest
+        return ...
     end
-    return ok, ...
-end
 
--- "`pcall` and `xpcall` read `S.stack.n` before the call and, when the
--- call returns `false`, unwind every record above that depth, innermost
--- first ... then return what the original returned." An `xpcall` message
--- handler runs at the raise point, before any record is unwound, as in
--- Lua (docs/02-semantics.md, "Scopes: `lifetime.scope`").
-local function lifetime_pcall(...)
-    local depth = stack.n
-    return caught(depth, pcall(...))
-end
+    -- The first two locals are read by `began_at`; `frame` is otherwise
+    -- unused.
+    lifetime_pcall = function(...)
+        local pcall_began_at, frame = stack.n, PCALL_FRAME -- luacheck: ignore frame
+        local count = select("#", ...)
+        if count == 1 then
+            return xpcall((...), pcall_handler)
+        end
+        local f = ...
+        local lua = lua_functions[f]
+        if lua == nil then
+            lua = is_lua_function(f)
+        end
+        if not lua then
+            return caught(pcall_began_at, pcall(...))
+        end
+        if carried_f ~= nil then
+            local f0, a1, a2, a3, rest = carried_f, carried_1, carried_2, carried_3, carried_rest
+            carried_f, carried_1, carried_2, carried_3, carried_rest = nil, nil, nil, nil, nil
+            return carried_back(f0, a1, a2, a3, rest, lifetime_pcall(...))
+        end
+        if count == 2 then
+            carried_f, carried_1 = ...
+            return xpcall(carry1, carrier_handler)
+        elseif count == 3 then
+            carried_f, carried_1, carried_2 = ...
+            return xpcall(carry2, carrier_handler)
+        elseif count == 4 then
+            carried_f, carried_1, carried_2, carried_3 = ...
+            return xpcall(carry3, carrier_handler)
+        end
+        carried_f, carried_rest = f, {n = count - 1, select(2, ...)}
+        return xpcall(carry_rest, carrier_handler)
+    end
 
-local function lifetime_xpcall(...)
-    local depth = stack.n
-    return caught(depth, xpcall(...))
+    -- Lua 5.1's `xpcall` raises an argument error when the handler is
+    -- missing, not when it is `nil`; the original raises it. Any other
+    -- handler, callable or not, is called by `call_handler`: one that is
+    -- not callable fails there and gives `error in error handling`, as
+    -- the original gives for it, with the records unwound.
+    lifetime_xpcall = function(...)
+        local f, h = ...
+        if h == nil and select("#", ...) < 2 then
+            return xpcall(...)
+        end
+        local s = stack
+        local outer, outer_depth = s.handler, s.handler_depth
+        s.handler, s.handler_depth = h, s.n
+        return handled(s, outer, outer_depth, xpcall(f, call_handler))
+    end
 end
 
 -- The stack of each coroutine resumed through the runtime, "created on
@@ -2466,7 +2871,7 @@ local function lifetime_resume(co, ...)
         if type(co) ~= "thread" then
             return resume(co, ...)
         end
-        s = {n = 0}
+        s = {n = 0, handler = false, handler_depth = false}
         stacks[co] = s
     end
     local saved = stack
@@ -2555,7 +2960,7 @@ local function lifetime_wrap(f)
     return function(...)
         local s = stacks[co]
         if s == nil then
-            s = {n = 0}
+            s = {n = 0, handler = false, handler_depth = false}
             stacks[co] = s
         end
         local saved = stack
