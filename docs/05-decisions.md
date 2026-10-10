@@ -589,3 +589,38 @@ it, as a registered table with a `__destroy` does; `format` renders
 sentinel, as before. Task 004 implements it with the sentinel.
 → [02-semantics.md](02-semantics.md), "Hooks: the `!@` operator";
 [03-runtime.md](03-runtime.md), "The sentinel"
+
+## A dead function, coroutine or userdata is remembered, not caught
+
+Recorded by task 012 on 2026-10-10, which implements the leaning of
+[06-open-questions.md](06-open-questions.md), "Non-table dependents after
+death", as the task directs; the human had not settled the question when
+the task ran, and may still overrule it. Decision 8 tombstones a table by
+emptying it and swapping its metatable; a function, coroutine or userdata
+can be neither emptied nor given a metatable of its own (a function's and
+a coroutine's metatable is shared by every value of the type, and a
+userdata's belongs to whoever made it). Decided: its state record, which
+lives in the weak-keyed side table of [03-runtime.md](03-runtime.md),
+"The state of an object", stays there after the death, reduced to the
+phase, `where` and `reason`, and is the weak-keyed set that remembers the
+death. `lifetime.alive` reads `false`; `@` raises `attempt to move a
+dead function (<name>, died at <where>, <reason>)` (or `thread`,
+`userdata`), the message a tombstone would give with the verb `move`;
+`lifetime.of` and `lifetime.format` raise the same with `index`;
+`destroy` and `discard` are no-ops. Calling the function, resuming the
+coroutine and using the userdata are not caught: they behave as in Lua.
+The record goes when the collector takes the object, with the weak key.
+Rejected: wrapping functions in a callable proxy, which would change
+their identity and `type`; and swapping the shared metatable, which would
+change every value of the type.
+
+Such an object never carries a sentinel, so one the collector finds dies
+silently, as an unseen table does: the proxy's metatable would have to
+hold the object, which from the side table's value is a cycle through
+the weak key, and the object has no dependents and no hooks for a
+cascade to run, since it is never an anchor. A `__destroy` on its type's
+metatable (02, "`__destroy` and reasons", rule 1) runs on `destroy` and
+on an anchor's death, not at collection; the gap is in task 012's *Spec
+issues found*.
+→ [02-semantics.md](02-semantics.md), "Tombstones and `lifetime.alive`";
+[03-runtime.md](03-runtime.md), "The state of an object"

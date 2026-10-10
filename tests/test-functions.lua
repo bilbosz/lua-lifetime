@@ -739,6 +739,39 @@ test.case("compaction renumbers function dependents in the side table", function
     test.assert_true(alive(u4))
 end)
 
+test.case("a userdata finalized by its own __gc never unlinks a slot compaction gave to another", function()
+    -- A finalized userdata is cleared from weak values in the cycle that
+    -- finalizes it, while its record stays in the weak-keyed side table
+    -- for that cycle (docs/02-semantics.md, "Host"). Here `u2`'s `__gc`
+    -- runs first (newest first) and links to `a` until a compaction
+    -- renumbers its list, which gives `u1`'s old slot to `t1`; then
+    -- `u1`'s `__gc` destroys `u1`, which must not unlink `t1`.
+    local a = {}
+    local held = {}
+    run_dropped(function()
+        local u1 = newproxy(true)
+        getmetatable(u1).__gc = function(self)
+            destroy(self)
+        end
+        attach(u1, false, a)
+        for _ = 1, 14 do
+            attach({}, false, a)
+        end
+        local u2 = newproxy(true)
+        getmetatable(u2).__gc = function()
+            for i = 1, 4 do
+                held[i] = attach({}, false, a)
+            end
+        end
+    end)
+    collect()
+    collect()
+    test.assert_eq(#held, 4, "u2's finalizer ran")
+    local deps = rawget(state_of(a), "deps")
+    test.assert_true(rawget(deps, "seq") - rawget(deps, "lo") <= 4, "the list was compacted")
+    test.assert_deep_eq(lifetime.dependents(a), held)
+end)
+
 test.case("a table dependent never touches the side table", function()
     local side = side_table()
     collect()

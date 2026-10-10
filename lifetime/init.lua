@@ -884,6 +884,29 @@ local function body_failed(obj, err, depth)
     route(obj, err)
 end
 
+-- Unlink a dependent whose record is in `side` from one anchor's list,
+-- if the slot its record names still holds it. A userdata with a `__gc`
+-- of its own is cleared from weak values in the collection that
+-- finalizes it, while its key in `side` stays for that collection
+-- (docs/02-semantics.md, "Host"); its `__gc`, or another finalizer that
+-- links to the same anchor first, may then let a compaction give the
+-- slot to another dependent, which a plain `unlink` would remove. A
+-- table is never cleared from a list while it is alive (its sentinel
+-- keeps it), so only this path checks.
+local function unlink_side(anchor, s, pinned, obj)
+    local ast = anchor[STATE]
+    local deps = ast.deps
+    if deps then
+        local list = deps
+        if pinned then
+            list = ast.strong
+        end
+        if list and rawequal(list[s], obj) then
+            unlink(ast, s, pinned)
+        end
+    end
+end
+
 -- docs/02-semantics.md, "Cascading death", step 2, **Destroy**, for a
 -- dependent that is not a table (a function, coroutine or userdata):
 -- (1) its body, `__destroy` read from "the shared per-type metatable read
@@ -912,7 +935,7 @@ local function destroy_side(obj, st, reason, where, skip_body)
     end
     local pinned = not st.reachable
     for j = 1, 2 * st.n, 2 do
-        unlink(st[j][STATE], st[j + 1], pinned)
+        unlink_side(st[j], st[j + 1], pinned, obj)
         st[j] = nil
         st[j + 1] = nil
     end
@@ -1339,13 +1362,14 @@ local function attach_side(fname, obj, t, pin, count, ...)
         st = new_side_state(obj)
     end
 
-    -- Step 4, as in `attach_general`; then every new anchor learns that it
-    -- has a dependent whose record is in `side` (`deps.other`).
+    -- Step 4, as in `attach_general`, unlinking through `unlink_side`;
+    -- then every new anchor learns that it has a dependent whose record is
+    -- in `side` (`deps.other`).
     local reachable = term and not pin
     local old = 2 * st.n
     local had = st.reachable
     for j = 1, old, 2 do
-        unlink(st[j][STATE], st[j + 1], not had)
+        unlink_side(st[j], st[j + 1], not had, obj)
     end
     local k = 1
     if count == 1 then

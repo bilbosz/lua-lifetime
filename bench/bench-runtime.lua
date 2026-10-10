@@ -204,6 +204,7 @@ end, {
             list[n] = nil
             n = n - 1
             dead[f] = true
+            return list
         end
     end)()
 })
