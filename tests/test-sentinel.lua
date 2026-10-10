@@ -578,15 +578,50 @@ test.case("case 8: a metatable made in the same statement as its instance still 
     test.assert_deep_eq(log, {"inline (unreachable)"})
 end)
 
-test.case("a disarmed proxy is reused by the next owner, and newest first still holds", function()
-    -- The runtime keeps the proxy of an owner that died by a cascade for
-    -- the next owner (docs/03-runtime.md, "The sentinel": never twice for
-    -- the same object; the order of the finalizers stays the order of the
-    -- `@`s). x2 dies below the last slot (a hole), x4 and x3 from the
-    -- last slot (kept); the step down over the hole moves the kept
-    -- proxies down; y1 and y2 then take x3's and x4's proxies, in order.
+-- The body of the two cases below. The runtime keeps the proxy of an
+-- owner that died by a cascade for the next owner (docs/03-runtime.md,
+-- "The sentinel": never twice for the same object, "so the position of
+-- each proxy, and with it the host's finalization order, is the order of
+-- the `@`s that armed them"). x2 dies below the last slot (a hole), x4
+-- and x3 from the last slot (kept); the step down over the hole moves the
+-- kept proxies down; y1 and y2 then take x3's and x4's proxies, in order.
+--
+-- Which "newest first" the expected log relies on: the host finalizes in
+-- reverse creation order of the *proxies* (docs/02-semantics.md, "Host"),
+-- not of their owners. y2 holds x4's proxy, made after x3's, which y1
+-- holds, made after x1's: y2, y1, x1. That is the order of the `@`s that
+-- armed them, as the pool promises, and here also the owners' creation
+-- order.
+--
+-- `collect_between` forces a full collection between `destroy(x3)` and
+-- the first `attach`, which changes nothing: x3's and x4's proxies are
+-- disarmed and held by the runtime (its `kept`, through their
+-- metatables) and by `proxies`, so the collection neither finalizes nor
+-- clears them, and the pool still hands them to y1 and y2 in order.
+--
+-- x1, y1 and y2 are handed to the test, which holds them until the
+-- statement before `collect()` (task 015). "Within one collection" is
+-- all the order promise says (docs/02-semantics.md, "Reachability is the
+-- collector's"), and the three must die in the same one for the log to
+-- show their order. Dropped when `make` returned, they did not always do
+-- so under an eager collector (`setpause` 10, `setstepmul` 1000; seen in
+-- 1 of 60 and 2 of 20 runs of the suite under LuaJIT, 45 of 5000 rounds
+-- of a stand-alone copy): an incremental cycle under way while `make`
+-- ran had already marked some of them (reached from `make`'s stack or
+-- through `proxies`) and finished during the allocations of the first
+-- `assert_deep_eq`, after the drop, finalizing only the unmarked ones;
+-- the others died in the next cycle. Each cycle went newest first: x1,
+-- then y2, y1; or y1, x1, then y2 (a cycle counter in the stand-alone
+-- copy put them in two cycles). Released by assignments that allocate
+-- nothing, immediately followed by `collect()`, they become garbage with
+-- no collector step in between, so that collection finds all three: if
+-- a cycle is still marking it starts over, and if one is past marking it
+-- marked all three while they were held.
+local function proxy_reuse_case(collect_between)
     local log = {}
     local proxies = {}
+    -- Written, never read: it only holds.
+    local held = {} -- luacheck: ignore 241
     local function make()
         local x1 = attach(new_logged(log, "x1"), false, lifetime.reachable)
         local x2 = attach(new_logged(log, "x2"), false, lifetime.reachable)
@@ -596,18 +631,31 @@ test.case("a disarmed proxy is reused by the next owner, and newest first still 
         destroy(x2)
         destroy(x4)
         destroy(x3)
+        if collect_between then
+            collect()
+            test.assert_deep_eq(log, {"x2 (destroy)", "x4 (destroy)", "x3 (destroy)"}, "the collection killed nothing")
+        end
         local y1 = attach(new_logged(log, "y1"), false, lifetime.reachable)
         local y2 = attach(new_logged(log, "y2"), false, lifetime.reachable)
         test.assert_true(rawequal(sentinel_of(y1), proxies[3]), "y1 took x3's proxy")
         test.assert_true(rawequal(sentinel_of(y2), proxies[4]), "y2 took x4's proxy")
         -- A proxy's metatable holds its owner: let go of them.
         proxies[3], proxies[4] = nil, nil
-        return x1 ~= nil
+        held[1], held[2], held[3] = x1, y1, y2
     end
     run_dropped(make)
     test.assert_deep_eq(log, {"x2 (destroy)", "x4 (destroy)", "x3 (destroy)"})
+    held[1], held[2], held[3] = nil, nil, nil
     collect()
     test.assert_deep_eq(log, {"x2 (destroy)", "x4 (destroy)", "x3 (destroy)", "y2 (unreachable)", "y1 (unreachable)", "x1 (unreachable)"})
+end
+
+test.case("a disarmed proxy is reused by the next owner, and newest first still holds", function()
+    proxy_reuse_case(false)
+end)
+
+test.case("a disarmed proxy is reused by the next owner across a full collection between the destroys and the attaches", function()
+    proxy_reuse_case(true)
 end)
 
 test.case("a proxy disarmed below holes is kept as the newest; the kept ones move down over the holes", function()
