@@ -3,4 +3,4 @@ raising in	inner
 destroy inner (anchor)
 destroy second (anchor)
 destroy first (anchor)
-!error: examples/uncaught_error.lt:23: x
+!error: examples/main_scope_error.lt:23: x

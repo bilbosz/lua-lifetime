@@ -1,4 +1,4 @@
--- block_exits.lt: a block's scope ends on every ordinary exit path
+-- exit_paths.lt: a block's scope ends on every ordinary exit path
 -- (docs/04-transpiler.md, "Blocks: prologue and epilogue on every exit
 -- path"): `return` evaluates its values first, then runs every epilogue
 -- from the innermost block up to the function body, then returns the
@@ -175,3 +175,7 @@ end
 --> destroy k (anchor)
 --> destroy h (anchor)
 --> after goto out
+
+-- Named block_exits.lt until task 008 gave that name to the port of
+-- xd/examples/block_exits.xd (docs/07-conformance.md). This file is task
+-- 006's test case 2: every shape of `return`, `break` and `goto`.
