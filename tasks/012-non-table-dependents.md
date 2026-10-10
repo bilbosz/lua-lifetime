@@ -116,4 +116,140 @@ dependent never touches the side table.
 
 ## Spec issues found
 
+Found by the implementer, round 1. None is decided here; each says what
+the code does and why.
+
+1. **The side table's edge to the anchors is a cycle through the weak key
+   whenever the anchor holds its dependent** (touches the consequences of
+   decision 3 of file 10; for the human). 03 says the side table's value
+   "refers to the dependent's anchors, never to the dependent itself, so
+   no cycle passes through the weak key", and 02, "Reachability is the
+   collector's", says "a dependent's reference to its anchor is strong,
+   as any field would be". Lua 5.1 and LuaJIT mark the values of a
+   weak-keyed table whether or not the key is reachable (no ephemerons,
+   decision 1), so the runtime holds every anchor of a live function
+   strongly from a root. When the anchor refers back to the function by
+   any path, the key stays reachable through the value, and neither is
+   ever collected; their destructors never run, until something calls
+   `destroy`. Two common shapes hit it:
+   - `self.on_click = function() … end @ self` (or a listener the anchor
+     keeps in an emitter it owns): `self` is immortal. With a table
+     dependent this is the ordinary cycle decision 3 frees ("A hook whose
+     closure mentions `self` is a cycle too, so attaching a cleanup hook
+     no longer makes an object immortal").
+   - `co @ lifetime.pin(a)`: the anchor's `strong` list holds `co` and
+     `co`'s record holds `a`, so a pinned function, coroutine or
+     userdata makes its anchor immortal once nothing else holds the
+     anchor; 02's "A subtree nobody outside holds ... dies as a whole when
+     the collector finds its root" does not hold for it.
+
+   The alternative is one line: the side record holds its anchors weakly
+   (`setmetatable(record, {__mode = "v"})`; the sequence numbers are
+   numbers and stay). Then nothing leaks, and the observable difference
+   is the 02 sentence above: an anchor referred to only through the
+   formulas of its non-table dependents is collected, and its cascade
+   kills them with `"anchor"` while something may still hold them. There
+   is no third way on these hosts: a function has no field of its own
+   (its environment is its globals), a coroutine neither, and a
+   userdata's environment table belongs to its maker (Lua 5.1's own file
+   handles read their `__close` from it). Implemented: the letter of 03
+   and 02 (strong). Tests pin both halves: "a dependent's reference to
+   its anchor is strong: the anchor lives while the function does" and
+   "known limitation: a pinned function and an anchor that nothing else
+   holds are not collected", which flips if the human chooses the weak
+   record.
+2. **A `__destroy` of a function, coroutine or userdata the collector
+   finds does not run.** 02, "`__destroy` and reasons", rule 1 reads
+   `__destroy` for these from their type's metatable, and rule 7 says the
+   runtime notifies the objects it has seen; "Reachability is the
+   collector's" says every unreachable object "has had its cascade run,
+   with reason `"unreachable"`" after `collectgarbage("collect")`. For
+   these objects nothing runs at collection: no sentinel can be made
+   (the proxy's metatable would hold the object: a cycle through the weak
+   key), and an unreachable object cannot be handed to its `__destroy`
+   unless the runtime kept it alive. The acceptance criteria allow it ("A
+   sentinel for a reachable-only non-table dependent is not required");
+   recorded in the decision entry (`docs/05-decisions.md`, "A dead
+   function, coroutine or userdata is remembered, not caught"); 02 does
+   not say it yet. The case that matters is a `newproxy(true)` userdata
+   with a `__destroy` registered with `@ lifetime.reachable`.
+3. **Error texts for a function, coroutine or userdata.** 02 names the
+   table forms only. By analogy, with Lua's type name: `attempt to move a
+   dying function`; `attempt to move an anchored function during
+   destruction`; `attempt to move a dead function (<name>, died at
+   <where>, <reason>)` from `@` (the criterion's text, with the
+   parenthesis a tombstone's message has); `attempt to index a dead
+   function (…)` from `lifetime.of` and `lifetime.format` ("raises as for
+   a dead object": for a table that is the tombstone's `index` message).
+   A sentence in 02 would fix them.
+4. **Test case 6 as written no longer raises.** `pcall(destroy, print)`
+   and `pcall(lifetime.of, print)` were the stub's errors; with the task
+   done they succeed (and the first kills `print` for the rest of the
+   process: `lifetime.alive(print)` becomes `false`, the call still
+   works). The test checks every error the task adds instead (anchoring
+   to a function, coroutine or userdata, `@`, `of` and `format` on a dead
+   function, the argument errors) for the caller's position and no
+   `init.lua`, and that `pcall(destroy, f)` of a fresh function returns
+   `true`.
+5. **`lifetime.format` of a function.** Not in the task's list, but 02
+   says `format` renders "an object's formula", and a function anchored
+   with `@` has one; before, it raised `lifetime expected, got function`.
+   Implemented as for a table: `(a, reachable)`, `a` when pinned,
+   `reachable` on the default lifetime, the dead message after death.
+6. **A finalized userdata and its anchor's list** (found while tracing,
+   fixed; no semantic change). A userdata with a `__gc` of its own is
+   cleared from its anchor's weak `deps` in the collection that finalizes
+   it, while its key in the side table stays for that collection (02,
+   "Host"). If another finalizer of the same collection links to the
+   anchor and a compaction renumbers the list, the userdata's old slot
+   goes to another dependent, and a `destroy` of the userdata from its own
+   `__gc` unlinked that other dependent. The side path now unlinks only a
+   slot that still holds the object (`unlink_side`); test "a userdata
+   finalized by its own __gc never unlinks a slot compaction gave to
+   another" reproduced it on both interpreters before the fix. Such a
+   userdata is not walked by its anchor's cascade after that collection
+   (it is no longer in the list); if its `__gc` resurrects it, its record
+   still names the anchor and `alive` reads `true` until it is destroyed
+   or collected.
+
 ## Review log
+
+- Implementer, round 1: the runtime side in `lifetime/init.lua`
+  (`side`, `new_side_state`, `attach_side`, `destroy_side`,
+  `unlink_side`, `dead_side_message`, `deps.other`), tests in
+  `tests/test-functions.lua` (26 cases), `runtime/attach-function` in
+  `bench/bench-runtime.lua` and its row in `bench/README.md`, the
+  decision entry in `docs/05-decisions.md`. `docs/06-open-questions.md`,
+  "Non-table dependents after death", is left for the done chore to move
+  or mark settled (not among this task's files).
+- Implementer, round 1, task 007's notes: the default `destroyerror` and
+  the fallback report of a failing handler call `io.stdout:flush()`
+  before writing to stderr (tested in a child process with both streams
+  in one file). The `coroutine.wrap` frames: on LuaJIT `wrapped` raises
+  with `return error(err, 1)`, a tail call that replaces the runtime's
+  frame, so the traceback reads `[C]: in function 'w'` as the
+  standalone interpreter's does and the message is unchanged; on Lua 5.1
+  a tail-called C function keeps the caller's frame, so no level or
+  `error(e, 0)` placement removes the frames there, and the plain call
+  stays (same message). Chosen at load time by a probe (`TAIL_RAISE`).
+- Implementer, round 1, performance: `runtime/attach-function` costs
+  about 4.2 us on Lua 5.1 and 1.5 us on LuaJIT per attach-and-destroy
+  (ratios 11.7 and 6.9 to the baseline). Most of it is the host's
+  weak-keyed table: a plain-Lua loop that stores a fresh closure with an
+  11-field record in a weak-keyed table costs 1.0 us (LuaJIT) and 2.1 us
+  (Lua 5.1) per entry against 0.16 and 0.39 us without the table (a
+  value outlives its key by one collection, and weak tables are walked
+  again in the atomic step); a 7-field record did not reliably help, and
+  `destroy`'s `debug.getinfo` is the rest. It is the cost of the design
+  of 03, paid only by non-table dependents.
+- Implementer, round 1, `make bench BASE=master`, two invocations (the
+  second on the final runtime, `610c3c5`): nothing marked in either.
+  `runtime/attach-first` branch/base 1.037 and 1.038 (Lua 5.1), 0.970
+  and 1.110 (LuaJIT; pairings 0.993 and 1.227 in the second, noise by
+  the two-run rule); `runtime/move` 1.001 and 1.003 (Lua 5.1), 0.992 and
+  1.012 (LuaJIT); the plain-Lua `plain/transpiled` ratio within 1.6% of
+  1.0. `run/plain.lt` reads 1.044 and 1.079 (Lua 5.1), 1.054 and 1.056
+  (LuaJIT), under the threshold: the startup of `lifetime run` parses the
+  runtime file, which grew by 15 KB (166 comment lines, 227 lines of
+  code and blank lines); `loadfile` of it costs 157 us more on Lua 5.1
+  and 175 us more on LuaJIT, running it 4 to 9 us more.
