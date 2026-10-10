@@ -1,0 +1,36 @@
+-- tests/fixtures/order-tree.lt: the demonstration of task 017
+-- (tests/test-sentinel.lua, "sentinel: anchors first"). A class library
+-- that registers every instance at construction, the Treflove idiom:
+-- each object gets a sentinel as soon as it is made, parents before
+-- children. Dropped and collected, the tree dies as one cascade from its
+-- root (docs/02-semantics.md, "Reachability is the collector's"). With
+-- the argument `eager` the collector runs eagerly from the start.
+if arg and arg[1] == "eager" then
+    collectgarbage("setpause", 10)
+    collectgarbage("setstepmul", 1000)
+end
+
+local function class(name)
+    local C = {}
+    C.__index = C
+    C.__destroy = function(self, reason)
+        local child = self.child
+        print(name .. " destroyed (" .. reason .. ")" ..
+            (child and (", child alive: " .. tostring(lifetime.alive(child))) or ""))
+    end
+    return function(fields)
+        return setmetatable(fields or {}, C) @ lifetime.reachable
+    end
+end
+
+local Parent, Child, Grandchild = class("parent"), class("child"), class("grandchild")
+
+local p = Parent()
+p.child = Child() @ p            -- the parent holds and owns the child
+p.child.child = Grandchild() @ p.child
+
+print("drop the root")
+p = nil
+collectgarbage("collect")
+collectgarbage("collect")
+print("done")
