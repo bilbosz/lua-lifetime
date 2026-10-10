@@ -4,7 +4,7 @@ title: Make the unit tests that fail now and then under LuaJIT deterministic wit
 status: review
 depends: [012]
 branch: task/015-flaky-unit-tests
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/39
 commits:
 review: APPROVE (round 1)
 ---
