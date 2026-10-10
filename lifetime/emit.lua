@@ -183,8 +183,8 @@ local function declare(st, name)
     end
 end
 
--- The locals declared since `shadow` was `nd` go out of scope.
-local function undeclare(st, nd)
+-- The locals declared since `shadow` was `saved` go out of scope.
+local function undeclare(st, saved)
     st.shadow = nd
 end
 
@@ -532,7 +532,7 @@ local function emit_function(st, f, name, method, stat, local_name)
         end
     end
     put(st, "(", lines and lines[2], true, true)
-    local nd = st.shadow
+    local saved = st.shadow
     local k = 2
     local params = f.params
     for i = 1, #params do
@@ -553,7 +553,7 @@ local function emit_function(st, f, name, method, stat, local_name)
     end
     put(st, ")", lines and lines[k + 1], true)
     emit_block(st, f.body, lines and lines[k + 2])
-    undeclare(st, nd)
+    undeclare(st, saved)
     put(st, "end", lines and lines[k + 2])
 end
 
@@ -861,10 +861,10 @@ STAT.NumericFor = function(st, s)
         emit_expr(st, s.step)
     end
     put(st, "do", lines and lines[k + 1])
-    local nd = st.shadow
+    local saved = st.shadow
     declare(st, s.var.name)
     emit_block(st, s.body, lines and lines[k + 2])
-    undeclare(st, nd)
+    undeclare(st, saved)
     put(st, "end", lines and lines[k + 2])
 end
 
@@ -884,12 +884,12 @@ STAT.GenericFor = function(st, s)
     put(st, "in", lines and lines[k])
     k = emit_explist(st, s.exprs, s, k)
     put(st, "do", lines and lines[k + 1])
-    local nd = st.shadow
+    local saved = st.shadow
     for i = 1, #vars do
         declare(st, vars[i].name)
     end
     emit_block(st, s.body, lines and lines[k + 2])
-    undeclare(st, nd)
+    undeclare(st, saved)
     put(st, "end", lines and lines[k + 2])
 end
 
@@ -1031,7 +1031,7 @@ local function emit_scope(st, b, close, repeat_stat, indent)
     local record = bi and bi.record
     local outer = st.scope
     st.scope = record
-    local nd = st.shadow
+    local saved = st.shadow
     st.depth = st.depth + indent
     if record then
         st.record = true
@@ -1076,7 +1076,7 @@ local function emit_scope(st, b, close, repeat_stat, indent)
     elseif record and falls and not trailing then
         put_epilogue(st, bi, close)
     end
-    undeclare(st, nd)
+    undeclare(st, saved)
     st.scope = outer
 end
 

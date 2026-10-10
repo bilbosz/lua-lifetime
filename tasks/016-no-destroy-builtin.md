@@ -1,12 +1,12 @@
 ---
 id: 016
 title: Emitter: drop the `destroy`/`discard` builtin binding; `lifetime.destroy` and `lifetime.discard` are the only spelling
-status: in-progress
+status: review
 depends: []
 branch: task/016-no-destroy-builtin
 pr:
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -108,3 +108,23 @@ runtime change.
   file says why.
 
 ## Review log
+
+### Round 1: APPROVE
+
+Head `29ede33`. `make test` 363/363 under `lua5.1` and `luajit`,
+conformance 75/75, trial 8/8; `make lint` clean; `make bench` on
+`bench-emit.lua`: nothing marked, and every example builds
+byte-identically with the branch and the master emitter. The reviewer
+traced the shadow count through nested shadows, a shadow ending its
+block, `local lifetime = lifetime`, `local function lifetime`,
+assignment targets, loop variables, a nested function naming
+`lifetime`, and a chunk using `@` without naming `lifetime` (gets the
+binding); line preservation holds. No free `destroy`/`discard` left in
+any `.lt` under `examples/` or `trial/` (lexer-based scan).
+
+- F1 (non-blocking): the saved shadow count kept the old name `nd`.
+  Renamed to `saved` by the orchestrator in the approval commit.
+- Orchestrator rulings: the one-line fix of `examples/destroy_errors.lt`
+  (`pcall(lifetime.destroy, e)`, missed by the spec change, `.expected`
+  unchanged) belongs in this task; the `bench-emit` baselines' own
+  `local destroy = MT.__destroy` stays.
