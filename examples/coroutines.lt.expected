@@ -9,8 +9,8 @@ true	done
 dead
 close b step 1 (anchor)
 b suspended in iteration 2
-close b step 2 (unreachable)
-close b outer (unreachable)
+close b step 2 (anchor)
+close b outer (anchor)
 b gone
 w1 dropped, conn open:	true
 close shared conn (anchor)
