@@ -23,18 +23,19 @@
 -- * State lives inside the object, under the private key STATE. The one
 --   exception is a dependent that is not a table (a function, coroutine
 --   or userdata): its record lives in the weak-keyed `side` table, whose
---   values never refer to their key. There is no side table keyed by an
---   anchor.
+--   values never refer to their key and name the anchors weakly. There
+--   is no side table keyed by an anchor.
 -- * An anchor's `deps` table is weak-valued: the runtime never keeps a
 --   dependent alive. Its `strong` table holds what the language says the
 --   anchor keeps alive (hooks and pinned dependents) and nothing else. A
---   dependent's record holds its anchors strongly.
+--   table dependent's record holds its anchors strongly; a function's,
+--   coroutine's or userdata's, in `side`, weakly.
 -- * Dependents are walked by a numeric loop over the sequence range
 --   `seq - 1 .. lo`, newest first, skipping holes; never `ipairs`, never
 --   a sort. Holes are compacted on `link`, amortised, never during a
 --   destroy phase.
 -- * Nothing here keeps a strong reference to a user object except a
---   dependent's record (its anchors), lifetime values (their anchors),
+--   table dependent's record (its anchors), lifetime values (their anchors),
 --   an anchor's `strong` table (its hooks and pinned dependents) and the
 --   scope stacks (the active scope records), all of which the spec makes
 --   strong. A sentinel's metatable holds its owner, and the owner holds
@@ -57,15 +58,15 @@ local STATE = {}
 
 -- docs/03-runtime.md, "The state of an object": "A dependent that is not
 -- a table (a function, coroutine or userdata) has no hidden field; its
--- state record lives in a weak-keyed side table whose value refers to the
--- dependent's anchors, never to the dependent itself, so no cycle passes
--- through the weak key. Such an object cannot be an anchor." Keyed by the
--- dependent, never by an anchor (CLAUDE.md, rule 6). The record stays
+-- state record lives in a weak-keyed side table whose value names the
+-- dependent's anchors and sequence numbers, never the dependent itself.
+-- The record holds its anchors **weakly**" (`new_side_state`). Keyed by
+-- the dependent, never by an anchor (CLAUDE.md, rule 6). The record stays
 -- after the dependent dies, reduced to what the error messages need: it
 -- is the weak-keyed set that remembers the death so that
 -- `lifetime.alive` and `@` see it (docs/02-semantics.md, "Tombstones and
--- `lifetime.alive`"; docs/05-decisions.md, "A dead function, coroutine
--- or userdata is remembered, not caught"). A table is never a key here,
+-- `lifetime.alive`"; docs/05-decisions.md, "Non-table dependents:
+-- remembered after death, weak anchors"). A table is never a key here,
 -- so a table dependent never touches it.
 local side = setmetatable({}, {__mode = "k"})
 
@@ -304,8 +305,27 @@ end
 -- `false`; it never carries a sentinel, so `reachable` is only ever
 -- `true` or `false` (see `attach_side`). Nothing in it refers to the
 -- object.
+--
+-- The record is weak-valued: "The record holds its anchors **weakly**
+-- (`__mode = "v"`; the sequence numbers are numbers and stay): these
+-- hosts mark a weak-keyed table's values whether or not the key is
+-- reachable (no ephemerons), so a strong edge from the record to an
+-- anchor that holds the dependent ... would keep both alive for ever"
+-- (docs/03-runtime.md, "The state of an object"; docs/05-decisions.md,
+-- "Non-table dependents: remembered after death, weak anchors"). Every
+-- other field is a number, a string or a boolean, which a weak table
+-- never clears. A function, coroutine or userdata dependent therefore
+-- does not keep its anchor alive (docs/02-semantics.md, "Reachability is
+-- the collector's"); the anchor's own weak `deps` entry finds the
+-- dependent when the anchor dies, so the cascade reaches it. An anchor
+-- slot may read `nil` once the collector has taken that anchor without
+-- its cascade reaching this dependent: a userdata resurrected by its own
+-- `__gc`, which both hosts clear from weak values in that collection and
+-- in every later one, so its anchors' lists lose it (task file, "Spec
+-- issues found", items 6 and 7). Every read of the record's anchors
+-- skips `nil`.
 local function new_side_state(obj)
-    local st = {
+    local st = setmetatable({
         false,
         false,
         n = 0,
@@ -317,7 +337,7 @@ local function new_side_state(obj)
         where = false,
         reason = false,
         side = true
-    }
+    }, WEAK_VALUES)
     side[obj] = st
     return st
 end
@@ -916,10 +936,13 @@ end
 -- cannot become ("Tombstones and `lifetime.alive`": "A dead function,
 -- coroutine or userdata cannot be emptied or given a per-instance
 -- metatable. The runtime remembers that it died so that `lifetime.alive`
--- reads `false` and `@` refuses it; using it otherwise is not caught"),
+-- reads `false`, `destroy` and `discard` are no-ops, and `@` raises"),
 -- it is unlinked from its anchors and its record in `side` is reduced to
--- the phase, `where` and `reason`. The record stays in `side` until the
--- collector takes the object, which clears the weak key.
+-- the phase, `where` and `reason` (docs/03-runtime.md, "The state of an
+-- object": "After the death the record stays, reduced to the phase,
+-- `where` and `reason`, until the collector takes the key"). An anchor
+-- slot the collector has cleared (`new_side_state`) has no list left to
+-- leave.
 local function destroy_side(obj, st, reason, where, skip_body)
     st.phase_id = 0
     if not skip_body then
@@ -935,7 +958,10 @@ local function destroy_side(obj, st, reason, where, skip_body)
     end
     local pinned = not st.reachable
     for j = 1, 2 * st.n, 2 do
-        unlink_side(st[j], st[j + 1], pinned, obj)
+        local anchor = st[j]
+        if anchor ~= nil then
+            unlink_side(anchor, st[j + 1], pinned, obj)
+        end
         st[j] = nil
         st[j + 1] = nil
     end
@@ -1313,19 +1339,22 @@ end
 -- Step 3 refuses a dying object as for a table (`attempt to move a dying
 -- function`) and a dead one with the message a tombstone would give, with
 -- the verb `move` since nothing was indexed (docs/02-semantics.md,
--- "Tombstones and `lifetime.alive`": the runtime remembers the death "so
--- that ... `@` refuses it"; the task's `attempt to move a dead
--- function`).
+-- "Tombstones and `lifetime.alive`": "`@` raises `attempt to move a dead
+-- function (<name>, died at <where>, <reason>)` (with `thread` or
+-- `userdata` for the other two)"; "The dying and destruction errors use
+-- the same type names").
 --
 -- Such an object never carries a sentinel: the proxy's metatable would
 -- have to hold the object (`owner`), which from the side table's value
--- is the cycle through the weak key that docs/03-runtime.md rules out,
--- and the object has nothing a cascade at collection could run: no
--- dependents and no hooks, since it is never an anchor; a `__destroy` on
--- its type's metatable runs on `destroy` and with an anchor's death, not
--- at collection (task file, "Spec issues found"). The `reachable` field is
--- therefore only ever `true` or `false`, and a collected object's record
--- goes with the weak key.
+-- is a cycle through the weak key, and the object has nothing a cascade
+-- at collection could run: no dependents and no hooks, since it is never
+-- an anchor; a `__destroy` on its type's metatable runs on `destroy` and
+-- with an anchor's death, not at collection (docs/02-semantics.md,
+-- "Reachability is the collector's": "Such a dependent carries no
+-- sentinel either: one the collector finds dies silently, its type's
+-- `__destroy` not run"; docs/03-runtime.md, "The state of an object").
+-- The `reachable` field is therefore only ever `true` or `false`, and a
+-- collected object's record goes with the weak key.
 local function attach_side(fname, obj, t, pin, count, ...)
     -- Step 2: every element, left to right, before anything changes.
     local term = false
@@ -1362,14 +1391,19 @@ local function attach_side(fname, obj, t, pin, count, ...)
         st = new_side_state(obj)
     end
 
-    -- Step 4, as in `attach_general`, unlinking through `unlink_side`;
+    -- Step 4, as in `attach_general`, unlinking through `unlink_side`
+    -- from every old anchor the collector has not taken (`new_side_state`);
     -- then every new anchor learns that it has a dependent whose record is
-    -- in `side` (`deps.other`).
+    -- in `side` (`deps.other`). The new anchors are this call's arguments,
+    -- so none of them is cleared from the weak record while it runs.
     local reachable = term and not pin
     local old = 2 * st.n
     local had = st.reachable
     for j = 1, old, 2 do
-        unlink_side(st[j], st[j + 1], not had, obj)
+        local anchor = st[j]
+        if anchor ~= nil then
+            unlink_side(anchor, st[j + 1], not had, obj)
+        end
     end
     local k = 1
     if count == 1 then
@@ -1641,6 +1675,26 @@ local function value_of(st)
     return v
 end
 
+-- The same for a record in `side`, whose anchor slots are weak
+-- (`new_side_state`): the anchors the collector has not taken, in order.
+local function side_value_of(st)
+    local term = st.reachable ~= false
+    local v = new_value(0, term)
+    local n = 0
+    for j = 1, 2 * st.n, 2 do
+        local anchor = st[j]
+        if anchor ~= nil then
+            n = n + 1
+            v[n] = anchor
+        end
+    end
+    if n == 0 and term then
+        return REACHABLE
+    end
+    v.n = n
+    return v
+end
+
 -- docs/02-semantics.md, "The `lifetime` table": "`lifetime.of(obj)`:
 -- `obj`'s current formula as a lifetime value, a snapshot ... Error on
 -- `nil`, a value, a dead object." Passing an object to `of` makes the
@@ -1666,7 +1720,7 @@ function lifetime.of(obj)
             if st.phase == "dead" then
                 error(dead_side_message(obj, st, "index"), 2)
             end
-            return value_of(st)
+            return side_value_of(st)
         end
         error("bad argument #1 to 'lifetime.of' (object expected, got " .. t .. ")", 2)
     end
@@ -1773,9 +1827,14 @@ function lifetime.format(v)
             if st.phase == "dead" then
                 error(dead_side_message(v, st, "index"), 2)
             end
-            local items, n = {}, st.n
-            for i = 1, n do
-                items[i] = tostring(st[2 * i - 1])
+            -- The anchors the collector has not taken (`new_side_state`).
+            local items, n = {}, 0
+            for j = 1, 2 * st.n, 2 do
+                local anchor = st[j]
+                if anchor ~= nil then
+                    n = n + 1
+                    items[n] = tostring(anchor)
+                end
             end
             return format_items(items, n, st.reachable)
         end
@@ -1963,8 +2022,8 @@ end
 -- 'lifetime.alive' (object expected, got number)`." A function,
 -- coroutine or userdata is alive unless its record in `side` says it died:
 -- "The runtime remembers that it died so that `lifetime.alive` reads
--- `false`" (docs/05-decisions.md, "A dead function, coroutine or userdata
--- is remembered, not caught"). A table never reaches the `side` lookup.
+-- `false`" (docs/05-decisions.md, "Non-table dependents: remembered after
+-- death, weak anchors"). A table never reaches the `side` lookup.
 function lifetime.alive(x)
     if type(x) == "table" then
         local st = rawget(x, STATE)
