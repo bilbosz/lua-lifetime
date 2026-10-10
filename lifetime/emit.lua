@@ -17,8 +17,8 @@
 -- token it belongs to ("where generated code needs extra lines it is
 -- written on the same line, separated by `;`"), and every generated
 -- statement ends with `;`, so that a following statement starting with
--- `(` stays a statement. A chunk with no extension syntax that names no
--- lifetime builtin is therefore its input, token for token and line for
+-- `(` stays a statement. A chunk with no extension syntax that does not
+-- name `lifetime` is therefore its input, token for token and line for
 -- line, and Lua compiles it to the same bytecode. LuaJIT's `goto` and
 -- labels are written as they came.
 --
@@ -26,8 +26,7 @@
 --
 -- * The header, at the start of line 1, binds the runtime and the
 --   runtime functions the chunk calls to locals ("The generated chunk
---   header"): `lifetime`, then `destroy` and `discard` when the chunk
---   names them as globals, then `__lt_attach`, `__lt_hook`, `__lt_enter`
+--   header"): `lifetime`, then `__lt_attach`, `__lt_hook`, `__lt_enter`
 --   and `__lt_exit` when it uses them, and `__lt_pack` with `__lt_unpack`
 --   when a `return` passes a call's or `...`'s values through an
 --   epilogue.
@@ -78,13 +77,6 @@ local concat = table.concat
 
 local INDENT = "    "
 
--- The global names the header binds when the chunk names them
--- (docs/04-transpiler.md, "The generated chunk header": "so that
--- `destroy(x)`, `discard(x)` and `lifetime.*` in the source resolve
--- without installing globals"). A local of the same name shadows them,
--- as anything does in Lua.
-local BUILTIN = {lifetime = true, destroy = true, discard = true}
-
 -- Raised by an emission without analysis at the first `lifetime.scope`
 -- anchor: the chunk is analysed and emitted again.
 local RESTART = {}
@@ -116,10 +108,9 @@ end
 -- (its continuation lines are indented one level deeper), the last token
 -- and whether the next one is glued to it. `info` is the analysis or
 -- nil; `scope` the record local of the innermost block, if it has one.
--- `shadow` counts the locals in scope named like a builtin, `declared`
--- lists them innermost last, `used` collects the builtins named as
--- globals; `attach`, `hook`, `record` and `pack` say which runtime
--- functions the generated code calls.
+-- `shadow` counts the locals named `lifetime` in scope, `named` says the
+-- chunk names the global `lifetime`; `attach`, `hook`, `record` and
+-- `pack` say which runtime functions the generated code calls.
 local function new_state(info)
     return {
         buf = {""},
@@ -133,10 +124,8 @@ local function new_state(info)
         info = info,
         open_end = 0,
         scope = nil,
-        shadow = {lifetime = 0, destroy = 0, discard = 0},
-        declared = {},
-        nd = 0,
-        used = {},
+        shadow = 0,
+        named = false,
         attach = false,
         hook = false,
         record = false,
@@ -183,25 +172,20 @@ local function number_text(value)
     return format("%.17g", value)
 end
 
--- A local comes into scope: count it if it shadows a builtin.
+-- A local comes into scope: count it if it shadows the global `lifetime`
+-- (docs/04-transpiler.md, "The generated chunk header": "A source file
+-- that shadows `lifetime` gets what it wrote"). `destroy` and `discard`
+-- are ordinary names (docs/05-decisions.md, "`destroy` and `discard` are
+-- spelled `lifetime.destroy` and `lifetime.discard`").
 local function declare(st, name)
-    if BUILTIN[name] then
-        local shadow = st.shadow
-        shadow[name] = shadow[name] + 1
-        st.nd = st.nd + 1
-        st.declared[st.nd] = name
+    if name == "lifetime" then
+        st.shadow = st.shadow + 1
     end
 end
 
--- The locals declared since there were `nd` go out of scope.
+-- The locals declared since `shadow` was `nd` go out of scope.
 local function undeclare(st, nd)
-    local declared, shadow = st.declared, st.shadow
-    for i = st.nd, nd + 1, -1 do
-        local name = declared[i]
-        shadow[name] = shadow[name] - 1
-        declared[i] = nil
-    end
-    st.nd = nd
+    st.shadow = nd
 end
 
 -- A name being declared (a local, a parameter, a loop variable): written,
@@ -548,7 +532,7 @@ local function emit_function(st, f, name, method, stat, local_name)
         end
     end
     put(st, "(", lines and lines[2], true, true)
-    local nd = st.nd
+    local nd = st.shadow
     local k = 2
     local params = f.params
     for i = 1, #params do
@@ -599,12 +583,13 @@ end
 
 local EXPR = {}
 
--- A name used as an expression or an assignment target. A builtin named
--- as a global is bound by the header.
+-- A name used as an expression or an assignment target. The global
+-- `lifetime` named is bound by the header ("an assignment target counts
+-- as naming it").
 EXPR.Id = function(st, e)
     local name = e.name
-    if BUILTIN[name] and st.shadow[name] == 0 then
-        st.used[name] = true
+    if name == "lifetime" and st.shadow == 0 then
+        st.named = true
     end
     put(st, name, e.line)
 end
@@ -876,7 +861,7 @@ STAT.NumericFor = function(st, s)
         emit_expr(st, s.step)
     end
     put(st, "do", lines and lines[k + 1])
-    local nd = st.nd
+    local nd = st.shadow
     declare(st, s.var.name)
     emit_block(st, s.body, lines and lines[k + 2])
     undeclare(st, nd)
@@ -899,7 +884,7 @@ STAT.GenericFor = function(st, s)
     put(st, "in", lines and lines[k])
     k = emit_explist(st, s.exprs, s, k)
     put(st, "do", lines and lines[k + 1])
-    local nd = st.nd
+    local nd = st.shadow
     for i = 1, #vars do
         declare(st, vars[i].name)
     end
@@ -1046,7 +1031,7 @@ local function emit_scope(st, b, close, repeat_stat, indent)
     local record = bi and bi.record
     local outer = st.scope
     st.scope = record
-    local nd = st.nd
+    local nd = st.shadow
     st.depth = st.depth + indent
     if record then
         st.record = true
@@ -1104,42 +1089,31 @@ end
 -- docs/04-transpiler.md, "The generated chunk header": one line, the
 -- first, that binds the runtime and the runtime functions the chunk
 -- calls to locals, naming only what the chunk uses; nil for a chunk that
--- uses no extension syntax and names no lifetime builtin.
+-- uses no extension syntax and does not name `lifetime`. "There are no
+-- builtins".
 local function header(st)
-    local used = st.used
-    if not (st.attach or st.hook or st.record or used.lifetime or used.destroy or used.discard) then
+    if not (st.attach or st.hook or st.record or st.named) then
         return nil
     end
     local parts = {"local lifetime = require(\"lifetime\");"}
-    local function bind(names)
-        local values = {}
-        for i = 1, #names do
-            values[i] = "lifetime." .. (names[i]:match("^__lt_(.*)") or names[i])
-        end
-        if #names > 0 then
-            parts[#parts + 1] = "local " .. concat(names, ", ") .. " = " .. concat(values, ", ") .. ";"
-        end
+    local names, values = {}, {}
+    local function bind(name)
+        names[#names + 1] = "__lt_" .. name
+        values[#values + 1] = "lifetime." .. name
     end
-    local builtins = {}
-    if used.destroy then
-        builtins[#builtins + 1] = "destroy"
-    end
-    if used.discard then
-        builtins[#builtins + 1] = "discard"
-    end
-    bind(builtins)
-    local runtime = {}
     if st.attach then
-        runtime[#runtime + 1] = "__lt_attach"
+        bind("attach")
     end
     if st.hook then
-        runtime[#runtime + 1] = "__lt_hook"
+        bind("hook")
     end
     if st.record then
-        runtime[#runtime + 1] = "__lt_enter"
-        runtime[#runtime + 1] = "__lt_exit"
+        bind("enter")
+        bind("exit")
     end
-    bind(runtime)
+    if #names > 0 then
+        parts[#parts + 1] = "local " .. concat(names, ", ") .. " = " .. concat(values, ", ") .. ";"
+    end
     if st.pack then
         parts[#parts + 1] = "local __lt_unpack, __lt_select = unpack, select; local function __lt_pack(...) return {n = __lt_select(\"#\", ...), ...} end;"
     end

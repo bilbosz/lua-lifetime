@@ -36,6 +36,13 @@
 -- and calls the destructor as the built code does, rather than sinking
 -- the allocation and folding the call away (task 007).
 --
+-- The baselines' `destroy(x, "anchor")` is a local bound to
+-- `MT.__destroy`: the destructor called by hand with the reason a scope
+-- exit passes, in plain Lua that is never transpiled. It is not the
+-- runtime's `lifetime.destroy` (task 016 dropped the `destroy` builtin;
+-- the `.lt` sources never called it), which would add the cascade to the
+-- baseline and change what the ratio measures.
+--
 -- A source that does not build (a base whose emitter predates task 006)
 -- gives a benchmark that raises, which the harness reports while the
 -- other benchmarks of the file still run (bench/README.md); the built

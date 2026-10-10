@@ -288,11 +288,17 @@ local function logger(log)
     end
 end
 
-test.case("a chunk that names no builtin as a global is emitted unchanged", function()
-    -- "a chunk that uses no extension syntax and names no lifetime builtin
-    -- gets no header and is its input unchanged": a local named like a
-    -- builtin is the program's own.
+test.case("a chunk that names no global lifetime is emitted unchanged", function()
+    -- docs/04-transpiler.md, "The generated chunk header": "a chunk that
+    -- uses no extension syntax and does not name `lifetime` gets no header
+    -- and is its input unchanged. There are no builtins: `destroy` and
+    -- `discard` are ordinary names" (docs/05-decisions.md, "`destroy` and
+    -- `discard` are spelled `lifetime.destroy` and `lifetime.discard`").
     local sources = {
+        "destroy(x)",
+        "discard(x) destroy(y)",
+        "local destroy = destroy",
+        "destroy = function() end\ndiscard = destroy",
         "local lifetime = require(\"lifetime\")\nlocal destroy = lifetime.destroy\ndestroy(x)\n",
         "local function f(discard) return discard end",
         "local function destroy() end\ndestroy()",
@@ -305,25 +311,53 @@ test.case("a chunk that names no builtin as a global is emitted unchanged", func
         test.assert_eq(build(source), round_trip(source), source)
         test.assert_false(build(source):find("__lt_", 1, true), source)
     end
+    -- Case 1 of task 016, written out: no header, the global call as it was.
+    test.assert_eq(build("destroy(x)"), "destroy(x)")
+    -- A global `destroy` of the program's own is the one called.
+    local saved = rawget(_G, "destroy")
+    local called = {}
+    rawset(_G, "destroy", function(t)
+        called[#called + 1] = t
+    end)
+    local t = {}
+    local ok, err = pcall(run, build("destroy(...)"), "c.lt", t)
+    rawset(_G, "destroy", saved)
+    assert(ok, err)
+    test.assert_eq(#called, 1)
+    test.assert_true(called[1] == t)
 end)
 
-test.case("a builtin named as a global is bound by the header, and only it", function()
-    test.assert_eq(build("destroy(x)"), LT .. " local destroy = lifetime.destroy; destroy(x)")
-    test.assert_eq(build("discard(x) destroy(y)"), LT .. " local destroy, discard = lifetime.destroy, lifetime.discard; discard(x) destroy(y)")
+test.case("lifetime named as a global is bound by the header, and nothing else", function()
+    test.assert_eq(build("lifetime.destroy(x)"), LT .. " lifetime.destroy(x)")
+    test.assert_eq(build("lifetime.discard(x) lifetime.destroy(y)"), LT .. " lifetime.discard(x) lifetime.destroy(y)")
     test.assert_eq(build("print(lifetime.alive(x))"), LT .. " print(lifetime.alive(x))")
-    -- The value of `local destroy = destroy` is the global; a local's scope
-    -- ends with its block.
-    test.assert_eq(build("local destroy = destroy"), LT .. " local destroy = lifetime.destroy; local destroy = destroy")
-    test.assert_eq(build("do local discard end\ndiscard(x)"), LT .. " local discard = lifetime.discard; do local discard end\ndiscard(x)")
-    test.assert_eq(build("local function f(destroy) end\ndestroy(x)"), LT .. " local destroy = lifetime.destroy; local function f(destroy) end\ndestroy(x)")
+    -- A chunk with a `destroy` of its own: the local is left alone, the
+    -- header binds `lifetime` only.
+    test.assert_eq(build("local function destroy(t) return t end\nlifetime.destroy(destroy({}))"),
+        LT .. " local function destroy(t) return t end\nlifetime.destroy(destroy({}))")
+    -- "An assignment to the global `lifetime` in a transpiled chunk assigns
+    -- the header's local (an assignment target counts as naming it)".
+    test.assert_eq(build("lifetime = nil"), LT .. " lifetime = nil")
+    -- A local `lifetime` shadows it for its scope, which ends with its block.
+    test.assert_eq(build("do local lifetime end\nlifetime.destroy(x)"), LT .. " do local lifetime end\nlifetime.destroy(x)")
     -- An empty first line stays empty but for the header (a `#` line the
     -- lexer skipped).
-    test.assert_eq(build("\ndestroy(x)"), LT .. " local destroy = lifetime.destroy;\ndestroy(x)")
-    -- The header binds the runtime that `require` finds.
+    test.assert_eq(build("\nlifetime.destroy(x)"), LT .. "\nlifetime.destroy(x)")
+    -- The header binds the runtime that `require` finds; the program's own
+    -- `destroy` is not shadowed by it.
     local lifetime = require("lifetime")
-    local destroyed = run(build("local t = setmetatable({}, {__destroy = function() end})\ndestroy(t)\nreturn t"))
+    local destroyed, mine = run(build("local function destroy(t) return t end\nlocal t = setmetatable({}, {__destroy = function() end})\nlifetime.destroy(destroy(t))\nreturn t, destroy(1)"))
     test.assert_eq(getmetatable(destroyed), "dead")
+    test.assert_eq(mine, 1)
     test.assert_true(run(build("return lifetime")) == lifetime)
+end)
+
+test.case("a scoped chunk binds lifetime and the runtime entry points, no discard", function()
+    -- Case 4 of task 016.
+    local output = build("local x = {} @ lifetime.scope\nlifetime.discard(x)")
+    test.assert_eq(output, SCOPE .. " local __s1 = __lt_enter(\"c.lt:2\"); local x = __lt_attach({}, false, __s1)\nlifetime.discard(x) __lt_exit(__s1, \"c.lt:2\");")
+    test.assert_false(output:find("local discard", 1, true))
+    test.assert_false(output:find("discard =", 1, true))
 end)
 
 test.case("each row of the expansion table", function()
