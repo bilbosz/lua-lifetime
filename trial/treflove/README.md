@@ -68,7 +68,8 @@ Each edit carries a `-- lua-lifetime:` comment in the file.
   span is a token (idiom C; `docs/02-semantics.md`, "Tokens"): `_on_login`
   makes `lifetime.token("period") @ self`, keeps it in `self._period`, and
   anchors the user menu screen and the back entry to it; `_on_logout` is
-  `destroy(self._period)` and shows `LoginScreen(self._login) @ self`.
+  `destroy(self._period)` followed by `self._period = nil`, and shows
+  `LoginScreen(self._login) @ self`.
   `self._user_menu_screen = nil` stays (a dead screen is a tombstone, not
   `nil`); `_backstack_cb` is gone.
 - **`data/asset-manager.lt`**: `register_session` anchors the three
@@ -89,7 +90,7 @@ Each edit carries a `-- lua-lifetime:` comment in the file.
   `{cb = cb}`, hooks `function() table.remove(stack, find(stack, entry))
   end !@ entry` and returns the entry for the caller to anchor; `pop(cb)`
   is deleted; `back()` destroys the top entry before running its
-  callback.
+  callback; `get_top()` returns the entry, not its callback.
 - **`app/server.lt`, `app/client.lt`** (excerpts): `Session(connection) @
   connection`; the disconnect callbacks lose `session:release()` and keep
   the assignments that clear `_sessions[connection]`, `session` and

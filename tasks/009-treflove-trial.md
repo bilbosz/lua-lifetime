@@ -1,12 +1,12 @@
 ---
 id: 009
 title: Treflove trial: transpile the sessions-and-listeners slice described in `xd/docs/notes/xd-in-treflove.md` and run it under LuaJIT
-status: in-progress
+status: review
 depends: [008]
 branch: task/009-treflove-trial
 pr:
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -130,3 +130,37 @@ first numbers from a real program.
    scope); moving the entry to the decision log is a `/spec-change`.
 
 ## Review log
+
+### Round 1: APPROVE
+
+Head `d26c70a`. `make test`: unit 301/301 under `lua5.1` and `luajit`,
+conformance 75/75 under both, the trial's 8 scenarios match under
+`luajit` (and under `lua5.1`); the skip message checked with `luajit`
+off the `PATH`; `make lint` clean over 41 files. `make bench` on
+`bench/bench-treflove.lua` twice: no `SLOWER`; in-process ratio to the
+hand-written slice `treflove/cycle` 1.5-1.7 (LuaJIT), 1.9-2.2 (Lua
+5.1); `treflove/dispatch-frame` 1.0 within noise. Treflove unmodified;
+every `original/` file byte-identical to Treflove at
+`459607486e82d57e075e1deeb9f3079aa04417f3`. The teardown was traced by
+the reviewer from the attachment order in the `.lt` sources and matches
+"Cascading death"; the expected log predates the first run (`5e9e92c`).
+A program beyond the tests confirmed spec issue 2 (an input hook
+unlinks from a dying form whose `release()` has not run yet).
+
+- F1 (non-blocking): the README's edit list omitted `get_top()`
+  returning the entry and `self._period = nil`. Applied by the
+  orchestrator in the approval commit.
+- F2 (non-blocking): a dead `a, b = nil, nil` in `scenario.one_cascade`.
+  Removed by the orchestrator in the approval commit.
+- Orchestrator rulings: registration stays the default universe, the
+  unregistered variant the second run; the trial runs under `luajit`
+  only in `make test`, as the task says; the single-process harness is
+  test setup.
+- For the human (not findings): spec issue 1, registration in the
+  constructor makes a collected class-built tree finalize newest first
+  so a destructor runs among its dependents' tombstones, while the
+  unregistered variant runs in ownership order; spec issue 2, a hook on
+  `(a, b)` cannot tell the other anchor is dying (06, "Whether a hook or
+  destructor learns which anchor died"; a `lifetime.dying(x)` test is a
+  cheaper alternative); spec issue 3 answers 06 "How an embedding host
+  announces program end" (`love.quit`).

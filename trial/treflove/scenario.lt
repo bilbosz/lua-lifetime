@@ -144,7 +144,6 @@ function scenario.one_cascade(harness, env)
     trial_log("> destroy(period)")
     destroy(period)
     trial_log("inputs: " .. names(inputs) .. ", form alive: " .. tostring(lifetime.alive(form)))
-    a, b = nil, nil
 end
 
 -- Test case 3: a session the server forgets without destroying it. The
