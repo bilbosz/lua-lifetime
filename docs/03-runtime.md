@@ -13,7 +13,7 @@ page is corrected.
 | --- | --- |
 | No `<close>`, `goto` only on LuaJIT | Scope exit is generated code ([04-transpiler.md](04-transpiler.md)); the runtime only provides `enter`/`exit` for scope records. |
 | `__gc` on userdata only | A table whose destructor must run when the collector finds it carries a `newproxy(true)` sentinel ("The sentinel"). |
-| No ephemerons | No side table keyed by anchor. Dependents live inside the anchor (decision 3). The only side table is weak-keyed with values that never refer back to the key. |
+| No ephemerons | No side table keyed by anchor. Dependents live inside the anchor (decision 3). The only side table is weak-keyed, by non-table dependent, with values that name the dependent's anchors weakly, so no value keeps its own key reachable. |
 | No yield across `pcall` on plain 5.1 | The runtime puts no `pcall` between a block and its body: the error path unwinds at the raise point, from the message handler of the catching `pcall` or `xpcall` ("Scope records"), so a scoped block may yield. Destructor bodies are called in protected mode only where 02 says errors are routed. |
 | Finalizers run in reverse creation order | The collector's order of 02, "Reachability is the collector's", comes for free. |
 | A finalized object stays in weak tables one more cycle | The cascade unlinks a dying dependent from its anchors' lists explicitly; it never waits for the weak entry to clear. |
@@ -75,9 +75,20 @@ is the weak table, and task 004 adds `strong` and the sentinel beside it.
 
 A dependent that is not a table (a function, coroutine or userdata) has
 no hidden field; its state record lives in a weak-keyed side table whose
-value refers to the dependent's anchors, never to the dependent itself,
-so no cycle passes through the weak key. Such an object cannot be an
-anchor (02, "Vocabulary").
+value names the dependent's anchors and sequence numbers, never the
+dependent itself. The record holds its anchors **weakly** (`__mode =
+"v"`; the sequence numbers are numbers and stay): these hosts mark a
+weak-keyed table's values whether or not the key is reachable (no
+ephemerons), so a strong edge from the record to an anchor that holds
+the dependent (`self.on_click = function() ... end @ self`, `co @
+lifetime.pin(a)`) would keep both alive for ever. The anchor's own weak
+`deps` entry still finds the dependent when the anchor dies, so the
+cascade reaches it; what is given up is the dependent keeping its anchor
+alive (02, "Reachability is the collector's"). After the death the
+record stays, reduced to the phase, `where` and `reason`, until the
+collector takes the key: that is how `lifetime.alive` and `@` see the
+death. Such an object cannot be an anchor (02, "Vocabulary") and carries
+no sentinel.
 
 Tokens, scope records and hooks are runtime tables with a state record
 and a private metatable (`__metatable` set to `"token"`, `"scope"`,
