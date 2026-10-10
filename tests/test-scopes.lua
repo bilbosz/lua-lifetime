@@ -59,6 +59,71 @@ local function logger(log, text)
     end
 end
 
+-- What `f(x)` allocates, in KB: `collectgarbage("count")` read around a
+-- call with the collector stopped, after one identical call, in a
+-- reading during which LuaJIT's trace compiler did nothing (task 015).
+-- The count is everything on the collector's heap, the host's own
+-- allocations included; two of them are kept out of the reading.
+--
+-- The trace compiler. It allocates on the collector's heap: a trace with
+-- its IR and snapshots (300 bytes for a function trace from the entry of
+-- the small `run`s below) and its recording buffers. LuaJIT decides when
+-- to record by hot counters kept in a small table indexed by a hash of
+-- the bytecode address, shared by every function entry and loop that
+-- hashes alike, so a function called only two or four times, as `run`
+-- is here, may reach its count at any of those calls, depending on where
+-- its prototype was allocated and what ran before. Seen (task 015): a
+-- function trace from `run`'s entry recorded inside the reading of
+-- `run(1)` (one record read as 0.54296875 KB instead of 0.25, so 1000
+-- records "should" have been 542.96875 against the 250 read) and inside
+-- the reading of `run(1000)` (250.29296875 against 250; 0.29296875 KB,
+-- the same 300 bytes, in the wrappers' case below). A reading during
+-- which the compiler started, stopped, aborted or flushed a trace
+-- (`jit.attach`'s "trace" event) is taken again, at most ten times. The
+-- choice is made on the compiler's own event, never on the value read,
+-- so the equality each test asserts is unchanged: a runtime that
+-- allocated one byte more per record would fail every reading.
+--
+-- The thread's stack. Both hosts shrink a thread's stack when a
+-- collection finds it mostly unused, and grow it back on demand, which
+-- the count includes; the call made here is one frame deeper than the
+-- test's own warm-up. Seen while writing this helper (LuaJIT with the
+-- compiler off): the first `allocated(run, 1000)` of the wrappers' case
+-- read 1.046875 KB, gone when the stack was grown first. Calling `f(x)`
+-- once after the collection, with the collector already stopped, leaves
+-- the stack (and any buffer the collection shrank) as large as the
+-- reading needs, and nothing can shrink it before the reading.
+--
+-- Lua 5.1 has no trace compiler and reads once.
+local jit_attach = jit and jit.attach
+local jit_events = 0
+local function count_jit_event()
+    jit_events = jit_events + 1
+end
+local function allocated(f, x)
+    for _ = 1, 10 do
+        if jit_attach then
+            jit_attach(count_jit_event, "trace")
+        end
+        collectgarbage("collect")
+        collectgarbage("stop")
+        f(x)
+        local events = jit_events
+        local c0 = collectgarbage("count")
+        f(x)
+        local kb = collectgarbage("count") - c0
+        local quiet = jit_events == events
+        collectgarbage("restart")
+        if jit_attach then
+            jit_attach(count_jit_event)
+        end
+        if quiet then
+            return kb
+        end
+    end
+    error("LuaJIT's trace compiler was active during each of 10 readings", 2)
+end
+
 -- The depth of the running coroutine's scope stack, read through a fresh
 -- record (its `depth` is one more), which is then exited at once.
 local function depth()
@@ -332,19 +397,14 @@ test.case("enter in a loop allocates the records and nothing else; an empty reco
         end
     end
     -- One record, measured alone, against the same shape built by hand.
-    -- Warm up first: on LuaJIT the count includes the memory of the traces
-    -- compiled for the loop, which must exist before the measurement.
+    -- Warm up first, so that the loop is compiled before it is measured;
+    -- `allocated` leaves out a trace LuaJIT records during a reading
+    -- anyway (see there: `run` itself is called too few times for its
+    -- entry's hot counter to be predictable).
     run(5000)
     run(1)
-    collectgarbage("collect")
-    collectgarbage("stop")
-    local c0 = collectgarbage("count")
-    run(1)
-    local one = collectgarbage("count") - c0
-    c0 = collectgarbage("count")
-    run(1000)
-    local many = collectgarbage("count") - c0
-    collectgarbage("restart")
+    local one = allocated(run, 1)
+    local many = allocated(run, 1000)
     test.assert_true(one > 0, "a record is a table")
     test.assert_eq(many, 1000 * one, "n records and nothing else")
     -- One record is one table: as large as a table with the same seven
@@ -356,12 +416,7 @@ test.case("enter in a loop allocates the records and nothing else; an empty reco
         return setmetatable(t, mt)
     end
     by_hand()
-    collectgarbage("collect")
-    collectgarbage("stop")
-    c0 = collectgarbage("count")
-    by_hand()
-    local hand = collectgarbage("count") - c0
-    collectgarbage("restart")
+    local hand = allocated(by_hand)
     test.assert_eq(one, hand, "one record is one table")
 end)
 
@@ -876,14 +931,12 @@ test.case("the wrappers allocate nothing: a loop of pcalls and xpcalls that rais
             pcall(handler, 1)
         end
     end
-    -- Warm up, so that LuaJIT has compiled the loop before the measurement.
+    -- Warm up, so that LuaJIT has compiled the loop before the measurement;
+    -- `allocated` leaves out a trace LuaJIT records during the reading
+    -- anyway (seen: a function trace from `run`'s entry at its second
+    -- call, 0.29296875 KB; see there).
     run(5000)
-    collectgarbage("collect")
-    collectgarbage("stop")
-    local c0 = collectgarbage("count")
-    run(1000)
-    local used = collectgarbage("count") - c0
-    collectgarbage("restart")
+    local used = allocated(run, 1000)
     test.assert_eq(used, 0, "KB allocated")
 end)
 
