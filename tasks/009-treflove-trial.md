@@ -1,11 +1,11 @@
 ---
 id: 009
 title: Treflove trial: transpile the sessions-and-listeners slice described in `xd/docs/notes/xd-in-treflove.md` and run it under LuaJIT
-status: review
+status: done
 depends: [008]
 branch: task/009-treflove-trial
 pr: https://github.com/bilbosz/lua-lifetime/pull/34
-commits:
+commits: 59312fb77d00377a6a0d9f695d766157c5f1e4c1
 review: APPROVE (round 1)
 ---
 
