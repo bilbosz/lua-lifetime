@@ -1,0 +1,15 @@
+body 1
+end of iteration 1
+close iteration 1 (anchor)
+end of iteration 2
+close iteration 2 (anchor)
+close probe x (anchor)
+close probe y (anchor)
+close guard (anchor)
+y
+close attempt 1 (anchor)
+succeeded on attempt 2
+close attempt 2 (anchor)
+close inner (anchor)
+close outer (anchor)
+false	failed

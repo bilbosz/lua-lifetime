@@ -1,0 +1,5 @@
+acquire a
+acquire b
+release a
+false	true
+release b

@@ -1,0 +1,87 @@
+-- block_exits.lt: port of xd/examples/block_exits.xd. Heading: ported
+-- unchanged (docs/07-conformance.md); the .expected is xd's byte for byte.
+-- Spelling: `lifetime.scope()` after `@` is `lifetime.scope`, a bare
+-- `defer f` is `f !@ lifetime.scope`. Part 3 uses `goto`, which Lua 5.1
+-- does not have (decision 1 of xd/docs/10-lua-lifetime-decisions.md), so
+-- it is a program in a string that runs only under LuaJIT; under Lua 5.1
+-- the lines it prints are printed from GOTO_LOG, as in exit_paths.lt.
+--
+-- A scope ends when control leaves its block by any route: falling off the
+-- end, `break`, `return`, `goto` or an error. A loop body is a fresh scope
+-- every iteration.
+
+local Res = {}
+Res.__index = Res
+function Res.new(name) return setmetatable({ name = name }, Res) end
+function Res.__destroy(self, reason) print("close " .. self.name .. " (" .. reason .. ")") end
+
+-- 1. Every iteration's scope ends with the iteration; `break` ends it too.
+for i = 1, 3 do
+  local r = Res.new("iteration " .. i) @ lifetime.scope
+  function() print("end of iteration " .. i) end !@ lifetime.scope
+  if i == 2 then break end
+  print("body " .. i)
+end
+--> body 1
+--> end of iteration 1               attached last, runs first
+--> close iteration 1 (anchor)
+--> end of iteration 2               `break` leaves the body
+--> close iteration 2 (anchor)
+
+-- 2. `return` from inside a loop ends the loop body's scope, then the
+--    function's. The return values are taken before the scopes exit.
+local function find(list, wanted)
+  local guard = Res.new("guard") @ lifetime.scope
+  for _, v in ipairs(list) do
+    local probe = Res.new("probe " .. v) @ lifetime.scope
+    if v == wanted then return v end
+  end
+  return nil
+end
+print(find({ "x", "y", "z" }, "y"))
+--> close probe x (anchor)
+--> close probe y (anchor)
+--> close guard (anchor)
+--> y
+
+-- 3. `goto` out of a block ends it; entering it again makes a new scope.
+local GOTO_PROGRAM = [[
+local Res = ...
+do
+  local n = 0
+  ::again::
+  do
+    n = n + 1
+    local attempt = Res.new("attempt " .. n) @ lifetime.scope
+    if n < 2 then goto again end
+    print("succeeded on attempt " .. n)
+  end
+end
+]]
+local GOTO_LOG = {
+  "close attempt 1 (anchor)",
+  "succeeded on attempt 2",
+  "close attempt 2 (anchor)",
+}
+if jit then
+  local cli = require("lifetime.cli")
+  local program = assert(cli.build(GOTO_PROGRAM, "goto.lt"))
+  assert(loadstring(program, "=goto.lt"))(Res)
+else
+  print(table.concat(GOTO_LOG, "\n"))
+end
+--> close attempt 1 (anchor)
+--> succeeded on attempt 2
+--> close attempt 2 (anchor)
+
+-- 4. An error ends every scope it leaves; pcall then returns it.
+print(pcall(function()
+  local outer = Res.new("outer") @ lifetime.scope
+  do
+    local inner = Res.new("inner") @ lifetime.scope
+    error("failed", 0)
+  end
+end))
+--> close inner (anchor)
+--> close outer (anchor)
+--> false  failed

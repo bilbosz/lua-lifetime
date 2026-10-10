@@ -1,0 +1,51 @@
+-- connection.lt: port of xd/examples/connection.xd. Heading: deviation
+-- (docs/07-conformance.md), caused by decision 10 of
+-- xd/docs/10-lua-lifetime-decisions.md: the connection's own destructor
+-- runs first, while the buffers it owns are still alive, and then the
+-- buffers die, most recently attached first (docs/02-semantics.md,
+-- "Cascading death"). `xd` freed the buffers first. Spelling:
+-- `lifetime.scope()` after `@` is `lifetime.scope`.
+--
+-- A resource whose cleanup order is enforced by anchors.
+
+local FakeSocket = {}
+FakeSocket.__index = FakeSocket
+function FakeSocket.new() return setmetatable({}, FakeSocket) end
+function FakeSocket:close() print("socket closed") end
+
+local Connection = {}
+Connection.__index = Connection
+
+function Connection.open(sock)
+  return setmetatable({ sock = sock }, Connection)
+end
+
+function Connection.__destroy(self)
+  print("closing connection")
+  self.sock:close()
+end
+
+local Buffer = {}
+Buffer.__index = Buffer
+
+function Buffer.new(n)
+  return setmetatable({ bytes = n }, Buffer)
+end
+
+function Buffer.__destroy(self)
+  print("freeing buffer of " .. self.bytes .. " bytes")
+end
+
+local function serve(sock)
+  local conn = Connection.open(sock) @ lifetime.scope
+  local rx   = Buffer.new(1024)      @ conn
+  local tx   = Buffer.new(1024)      @ conn
+  print("serving")
+end
+
+serve(FakeSocket.new())
+--> serving
+--> closing connection              the owner's body first, its buffers still alive
+--> socket closed
+--> freeing buffer of 1024 bytes    (tx: most recently attached dies first)
+--> freeing buffer of 1024 bytes    (rx)

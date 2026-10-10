@@ -1,0 +1,54 @@
+-- uncaught_error.lt: port of xd/examples/uncaught_error.xd; heading: ported
+-- unchanged (docs/07-conformance.md), notes at the end. An uncaught error:
+-- every scope it leaves unwinds on the way out, in the usual order, then
+-- the error is reported (`lifetime: <message>` on stderr, exit status 1).
+local Res = {}
+Res.__index = Res
+function Res.new(name) print("open " .. name); return setmetatable({ name = name }, Res) end
+function Res.__destroy(self, reason) print("close " .. self.name .. " (" .. reason .. ")") end
+
+local log = Res.new("log") @ lifetime.reachable  -- default lifetime: lives until the program ends
+--> open log
+
+local function handle(n)
+  local conn = Res.new("conn " .. n) @ lifetime.scope
+  function(reason) print("hook for request " .. n .. " (" .. reason .. ")") end !@ lifetime.scope
+  if n == 2 then
+    error("request " .. n .. " failed")
+  end
+  print("handled " .. n)
+end
+
+for i = 1, 3 do
+  local tmp = Res.new("tmp " .. i) @ lifetime.scope
+  handle(i)
+end
+--> open tmp 1
+--> open conn 1
+--> handled 1
+--> hook for request 1 (anchor)     last attached, first to go
+--> close conn 1 (anchor)
+--> close tmp 1 (anchor)            the iteration's scope
+--> open tmp 2
+--> open conn 2
+--> hook for request 2 (anchor)     the error leaves handle's scope...
+--> close conn 2 (anchor)
+--> close tmp 2 (anchor)            ...then the loop body's
+print("not reached")
+
+-- The main scope exits by the error; then everything still alive dies,
+-- newest first, with reason "exit".
+--> close log (exit)
+--> !error: examples/uncaught_error.lt:17: request 2 failed
+
+-- Notes on the port. The lines keep their numbers, so the error is on
+-- line 17 as in xd; the .expected is xd's except for the chunk name in
+-- the !error line (examples/README.md: the chunk name is
+-- examples/NAME.lt). `log` is registered with `@ lifetime.reachable`:
+-- the runtime notifies only the objects it has seen (docs/02-semantics.md,
+-- "`__destroy` and reasons", rule 7; docs/05-decisions.md, "Registration
+-- is `x @ lifetime.reachable`"). `xd` runs the program-end sweep before
+-- it reports the error; `lifetime run` reports the error first and then
+-- lets the interpreter close the state, which runs the sweep
+-- (docs/03-runtime.md, "Program end"), so on a merged stream `close log
+-- (exit)` follows the report. Standard output is the same.

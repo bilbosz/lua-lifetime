@@ -1,0 +1,28 @@
+-- explicit_destroy.lt: port of xd/examples/explicit_destroy.xd. Heading:
+-- deviation (docs/07-conformance.md), caused by decision 8 of
+-- xd/docs/10-lua-lifetime-decisions.md: a destroyed object is a tombstone,
+-- not `nil`, so the check is `lifetime.alive(a)` and it prints `false`
+-- where `xd` printed `nil` (docs/02-semantics.md, "Tombstones and
+-- `lifetime.alive`"). Spelling: `lifetime.scope()` after `@` is
+-- `lifetime.scope`.
+--
+-- destroy() ends a lifetime early; the later scope exit is then a no-op.
+
+local Lock = {}
+Lock.__index = Lock
+
+function Lock.acquire(name)
+  print("acquire " .. name)
+  return setmetatable({ name = name }, Lock)
+end
+
+function Lock.__destroy(self)
+  print("release " .. self.name)
+end
+
+do
+  local a = Lock.acquire("a") @ lifetime.scope
+  local b = Lock.acquire("b") @ lifetime.scope
+  destroy(a)                 --> release a
+  print(lifetime.alive(a), lifetime.alive(b))   --> false  true   (a is a tombstone)
+end                          --> release b
