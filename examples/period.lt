@@ -1,0 +1,88 @@
+-- period.lt: port of xd/examples/period.xd. Heading: deviation
+-- (docs/07-conformance.md). What differs, and the decisions of
+-- xd/docs/10-lua-lifetime-decisions.md that cause it:
+--   - decision 10: when the session dies its destructor runs first, then
+--     its period, whose dependents die newest first: the back-stack entry
+--     (its hook pops it), then the menu; `xd` ended with the session;
+--   - decision 8: after logout the menu and the period are tombstones, not
+--     `nil`, so the program prints `lifetime.alive` of each.
+-- Spelling: `defer f @ entry` is `f !@ entry`, `lifetime.scope()` after
+-- `@` is `lifetime.scope`. `{} @ self` and the `@ period` anchors carry
+-- the `reachable` term (decision 4); every one of them is referenced
+-- (`self.period`, `self.menu`, the back stack), so nothing here dies by
+-- the collector.
+--
+-- From the Treflove comparison (xd/docs/09-lessons-from-treflove.md, idiom
+-- C): a span of time is an empty table with a lifetime. Logging in creates
+-- a period anchored to the session; logging out is destroy(period). The
+-- back-stack entry and the menu screen are anchored to the period, so
+-- logout pops the one and closes the other without either being tracked,
+-- and a disconnect while logged in takes all of it down in one cascade.
+
+local Screen = {}
+Screen.__index = Screen
+function Screen.__destroy(self, reason) print("close " .. self.name .. " (" .. reason .. ")") end
+local function screen(name) return setmetatable({ name = name }, Screen) end
+
+local backstack = {}
+
+local function push(cb)
+  local entry = { cb = cb }
+  table.insert(backstack, entry)
+  -- Runs when the entry dies, by back() or with its owner: unlink the entry
+  -- while it is dying and still findable by identity (hazard 2: an array
+  -- does not compact itself when an element dies).
+  function()
+    for i = #backstack, 1, -1 do
+      if backstack[i] == entry then table.remove(backstack, i) end
+    end
+    print("popped back entry, " .. #backstack .. " left")
+  end !@ entry
+  return entry
+end
+
+local function back()
+  local top = backstack[#backstack]
+  if top then
+    local cb = top.cb
+    destroy(top)              -- `top` is a tombstone after this line
+    cb()
+  end
+end
+
+local Session = {}
+Session.__index = Session
+function Session.__destroy(self, reason) print("session ends (" .. reason .. ")") end
+
+function Session:login(user)
+  print("login " .. user)
+  local period = {} @ self        -- "logged in": ends at logout, or with the session
+  self.period = period
+  self.menu = screen("menu") @ period
+  push(function() self:logout() end) @ period
+end
+
+function Session:logout()
+  print("logout")
+  destroy(self.period)
+  print("menu alive: " .. tostring(lifetime.alive(self.menu)) .. ", period alive: " .. tostring(lifetime.alive(self.period)))
+end
+
+do
+  local session = setmetatable({}, Session) @ lifetime.scope
+  session:login("alice")
+  --> login alice
+  back()
+  --> popped back entry, 0 left     the entry dies, then its callback runs
+  --> logout
+  --> close menu (anchor)           destroy(period) takes the menu with it
+  --> menu alive: false, period alive: false
+  session:login("alice")
+  --> login alice
+  print("disconnect while logged in")
+end
+--> session ends (anchor)          the session's destructor first, then its period:
+--> popped back entry, 0 left     the period's dependents newest first, the entry
+--> close menu (anchor)           and then the menu
+print("backstack holds " .. #backstack)
+--> backstack holds 0

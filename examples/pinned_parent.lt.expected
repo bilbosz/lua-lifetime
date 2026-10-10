@@ -1,0 +1,12 @@
+child1 destroyed (unreachable)
+parent1 destroyed (unreachable)
+case 1: both dropped, both destroyed
+obj destroyed (unreachable)
+hook for obj ran
+case 2: obj dropped, obj and its hook destroyed
+child2 destroyed (unreachable)
+parent2 destroyed (unreachable)
+case 3: both dropped, both destroyed
+parent3 destroyed (anchor)
+child3 destroyed (anchor)
+end of program; nothing is left alive
