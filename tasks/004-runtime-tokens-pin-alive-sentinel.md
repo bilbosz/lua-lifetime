@@ -1,12 +1,12 @@
 ---
 id: 004
 title: Runtime: `lifetime.token`, `lifetime.pin`, `lifetime.alive`, reachable-only destructors via `newproxy`, `collectgarbage`
-status: in-progress
+status: review
 depends: [002]
 branch: task/004-runtime-tokens-pin-alive-sentinel
 pr:
 commits:
-review:
+review: APPROVE (round 2)
 ---
 
 ## Goal
@@ -291,3 +291,9 @@ Suite on `33b8a1b`: unit 300/300 under lua5.1 and luajit (six runs each, plus ea
 - F4 (non-blocking, fixed in round 2): `lifetime/cli.lua` still guards `set_exiting` with `if set_exiting then` and a stale comment.
 - Questions: the move fast path skips `busy` on an uncited claim that a growing table store runs no collector step (round 2 cites `ltable.c`/`lj_tab.c` or takes the one-store `busy`); a suspended coroutine's record finalized at state close gives its dependents `"anchor"` while 02's step 2 says `"exit"` (in practice a dependent with a `__destroy` has its own newer sentinel and dies `"exit"` first; one sentence in 02 in the done chore); `alive` returning `true` for a lifetime value or the marker needs its sentence in 02 (done chore).
 - Docs to bring in line in the done chore: 03 "The sentinel" (proxy reuse across owners; the proxy's position is the order of the `@`s; a move that drops the term drops it and one that brings it back takes a new one; an object seen only as an anchor gets its sentinel at its first link; the record holds the proxy's metatable in `reachable`, a scope record in `sentinel`); 03 "Program end" and 06 "How an embedding host announces program end": `lifetime.set_exiting(flag)`.
+
+### Round 2: APPROVE
+
+Suite on `4b080a2`: unit 301/301 under lua5.1 and luajit, conformance 21/21 under both, lint clean (30 files); the suite's output carries no finalizer error line. F2 confirmed: every region sets and clears the flag with no increment left; regions never nest and run no user code (verified site by site); the reviewer's reproduction now recovers on Lua 5.1 (`later (unreachable)` at the next collection) where round 1 never did; the new test fails against the round 1 runtime under Lua 5.1 and prints nothing under LuaJIT. F4 confirmed. The move fast path's one extra store each way: `runtime/move` 1.044 / 1.030 on Lua 5.1 (about 20 ns on 585), unchanged on LuaJIT against a clean base. `make bench BASE=master`: Lua 5.1 nothing marked; LuaJIT only the ruled forced cost (`runtime/attach-destroy-100` 1.155). No new findings.
+
+- Docs to bring in line in the done chore (unchanged from round 1), plus one sentence for 03 "The sentinel": a foreign `__gc` that raises through a runtime operation leaves the flag set until the next operation, which delays, never loses, the finalizers queued in between.
