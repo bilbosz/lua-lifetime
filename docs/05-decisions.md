@@ -712,3 +712,59 @@ does not change; the example's comment does.
 "Coroutines"; [03-runtime.md](03-runtime.md), "The scope stack and the
 error path" and "Performance"; [04-transpiler.md](04-transpiler.md),
 "The error path: unwinding at the raise point"
+
+## Unwinding at the raise point: the Lua 5.1 host limits and cost
+
+Decided by the orchestrator on 2026-10-10 on the review of task 014,
+under the human's standing authority for the open points of a decision
+already made ("Scopes unwind at the raise point"). Two things the
+implementation found that the decision had not priced.
+
+**C functions with arguments on Lua 5.1.** The host's `xpcall` passes
+no arguments, so the runtime's `pcall(f, ...)` carries them through a
+Lua frame. A C function (or a callable that is not a Lua function)
+entered from that frame would name the frame in its error messages:
+`luaL_argerror` and `error(m)` at level 1 take their position from the
+calling Lua frame, so `bad argument #1 to 'pcall'` would become `bad
+argument #1 to '?'` and `error("x")` from a C-called Lua function
+would carry the carrier's line. Keeping the messages exact wins:
+such a call goes to the original `pcall` and its records are unwound
+when it returns, as before the decision; the callers that lose the
+raise-point guarantee on Lua 5.1 are listed in 02. Rejected: a carrier
+stripped of debug information (`luaL_where` adds no position when the
+frame has no line), because Lua 5.1's `string.dump` cannot strip and
+the dump would have to be rewritten by hand, for a rare path, and
+tracebacks through it would read `?:`. LuaJIT's `xpcall` passes
+arguments and has no such limit.
+
+**The cost on Lua 5.1.** The decision's stand-in measured 53 against 59
+ns for `xpcall` with a pass-through handler against `pcall`, with no
+arguments. The real mechanism costs, per protected call on Lua 5.1,
+about 10 ns more without arguments (`select("#", ...)`, the only way to
+tell `pcall(f)` from `pcall(f, nil)`), 15 to 20 per cent more on the
+error path (the handler is a C-to-Lua call), and about 105 ns more
+with three arguments (the carrier frame). The reviewer found no
+cheaper shape: `arg` or `{...}` allocate, a closure per call allocates,
+per-depth closures cost more on the success path, and no C function of
+Lua 5.1 calls a function with arguments under a message handler. On
+LuaJIT every row is at parity. Decided: the measured Lua 5.1 numbers
+are the bound, recorded in 03, "Forced, and measured"; a mark against
+the catch-site runtime on those rows is the design's. The order and
+reasons a program observes are the same on both hosts outside the
+limit above.
+
+**Two frames above the raise point.** A traceback taken by a user
+`xpcall` handler shows the runtime's handler and its protected call
+between the raising frame and `h`; `lifetime run` hides them from its
+report. Recorded in 02; no alternative exists on either host.
+
+**Protected calls inside a destructor run by the unwinding.** LuaJIT
+keeps an in-handler status while a message handler runs and refuses any
+message handler until a throw resets it, so the first `pcall` inside
+such a destructor would return `error in error handling`. The runtime
+clears the status with one throw through the original `pcall` before it
+unwinds, on the error path and only when there are records to unwind.
+Recorded in 03; task 014 round 2 implements it.
+→ [02-semantics.md](02-semantics.md), "Scopes: `lifetime.scope`";
+[03-runtime.md](03-runtime.md), "The scope stack and the error path",
+"Forced, and measured"
