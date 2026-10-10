@@ -1,9 +1,9 @@
 ---
 id: 012
 title: Runtime: functions, coroutines and userdata as dependents (the weak-keyed side table)
-status: todo
+status: in-progress
 depends: [004]
-branch:
+branch: task/012-non-table-dependents
 pr:
 commits:
 review:
