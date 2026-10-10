@@ -4,7 +4,7 @@ title: Port the conformance examples from `xd/examples/`; document each deviatio
 status: review
 depends: [004, 007]
 branch: task/008-port-conformance-examples
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/30
 commits:
 review: APPROVE (round 1)
 ---
