@@ -116,12 +116,16 @@ dependent never touches the side table.
 
 ## Spec issues found
 
-Found by the implementer, round 1. None is decided here; each says what
-the code does and why.
+Found by the implementer, round 1; item 7 in round 2. Items 1, 2 and 3
+were settled by the human after round 1 and are implemented in round 2;
+the others say what the code does and why.
 
 1. **The side table's edge to the anchors is a cycle through the weak key
    whenever the anchor holds its dependent** (touches the consequences of
-   decision 3 of file 10; for the human). 03 says the side table's value
+   decision 3 of file 10; for the human). **Settled by the human** (`docs/05-decisions.md`, "Non-table dependents: remembered after death, weak anchors"; master `ca9db2d`): the record
+   holds its anchors weakly; 02, "Reachability is the collector's", and
+   03, "The state of an object", now say so. Round 2 flipped the code
+   and the two tests named below (see "Round 2" in the review log). 03 says the side table's value
    "refers to the dependent's anchors, never to the dependent itself, so
    no cycle passes through the weak key", and 02, "Reachability is the
    collector's", says "a dependent's reference to its anchor is strong,
@@ -159,7 +163,10 @@ the code does and why.
    holds are not collected", which flips if the human chooses the weak
    record.
 2. **A `__destroy` of a function, coroutine or userdata the collector
-   finds does not run.** 02, "`__destroy` and reasons", rule 1 reads
+   finds does not run.** **Settled by the human** (`docs/05-decisions.md`, "Non-table dependents: remembered after death, weak anchors"; master `ca9db2d`): such a dependent carries no
+   sentinel and one the collector finds dies silently (02,
+   "Reachability is the collector's"); tested in round 2 ("a function,
+   coroutine or userdata the collector finds dies silently"). 02, "`__destroy` and reasons", rule 1 reads
    `__destroy` for these from their type's metatable, and rule 7 says the
    runtime notifies the objects it has seen; "Reachability is the
    collector's" says every unreachable object "has had its cascade run,
@@ -181,7 +188,10 @@ the code does and why.
    parenthesis a tombstone's message has); `attempt to index a dead
    function (…)` from `lifetime.of` and `lifetime.format` ("raises as for
    a dead object": for a table that is the tombstone's `index` message).
-   A sentence in 02 would fix them.
+   A sentence in 02 would fix them. **Settled by the human** (`docs/05-decisions.md`, "Non-table dependents: remembered after death, weak anchors"; master `ca9db2d`): the texts above
+   are now in 02, "Tombstones and `lifetime.alive`"; round 2 compares
+   each whole for all three types ("the error texts for a function, a
+   coroutine and a userdata, exactly").
 4. **Test case 6 as written no longer raises.** `pcall(destroy, print)`
    and `pcall(lifetime.of, print)` were the stub's errors; with the task
    done they succeed (and the first kills `print` for the rest of the
@@ -208,9 +218,31 @@ the code does and why.
    finalized by its own __gc never unlinks a slot compaction gave to
    another" reproduced it on both interpreters before the fix. Such a
    userdata is not walked by its anchor's cascade after that collection
-   (it is no longer in the list); if its `__gc` resurrects it, its record
-   still names the anchor and `alive` reads `true` until it is destroyed
-   or collected.
+   (it is no longer in the list); if its `__gc` resurrects it, `alive`
+   reads `true` until it is destroyed or collected, and since round 2 its
+   record's slot for an anchor reads `nil` once the collector has taken
+   that anchor (every read of a record's anchors skips it; test "a record
+   whose anchor the collector took: of, format, @ and destroy skip the
+   cleared slot").
+7. **A userdata resurrected by its own `__gc` drops out of its anchors'
+   lists at every later collection** (round 2; for the human, no code
+   change). Both hosts keep a finalized userdata's "finalized" mark for
+   good and clear it from weak values in every collection, not only in
+   the one that ran its `__gc` (a probe: resurrect a `newproxy(true)`,
+   hold it strongly, store it in a `__mode = "v"` table, collect: the
+   entry is gone on Lua 5.1 and on LuaJIT). So once a userdata dependent
+   has been resurrected, `@` links it into its anchors' weak `deps` and
+   the next collection unlinks it again: an anchor's cascade, a scope
+   exit and `lifetime.dependents` miss it, and it dies only by its own
+   `destroy` (or not at all). The record still names the anchors, so
+   `lifetime.of` and `lifetime.format` report a formula the runtime no
+   longer enforces. Neither 02 nor 03 says this; the cases are a
+   userdata with both a `__gc` and a resurrecting finalizer, which LÖVE
+   objects are not. A sentence in 02, "Host" or "Reachability is the
+   collector's", would record it; a pinned link (`strong`) would keep
+   such a userdata in the list, at the price of keeping it alive. The
+   round 2 test pins the cascade with `collectgarbage("stop")` around
+   the move for this reason.
 
 ## Review log
 
@@ -253,3 +285,54 @@ the code does and why.
   runtime file, which grew by 15 KB (166 comment lines, 227 lines of
   code and blank lines); `loadfile` of it costs 157 us more on Lua 5.1
   and 175 us more on LuaJIT, running it 4 to 9 us more.
+- Implementer, round 2 (after the human's ruling, `docs/05-decisions.md`,
+  "Non-table dependents: remembered after death, weak anchors", merged on
+  master in `ca9db2d`). Merged master twice (`ca9db2d`, resolving
+  `docs/05-decisions.md` with master's entry, which replaces round 1's
+  "A dead function, coroutine or userdata is remembered, not caught";
+  then `a17ac03`, task 014's spec, docs and examples only). Code:
+  `new_side_state` gives the record `__mode = "v"` (the shared
+  `WEAK_VALUES`), so a function, coroutine or userdata dependent no
+  longer keeps its anchor alive; every read of a record's anchors
+  (`destroy_side`, the move in `attach_side`, `lifetime.of` through the
+  new `side_value_of`, `lifetime.format`) skips a slot the collector has
+  cleared; comments cite the new 02 and 03 sentences and the new
+  decision. Tests (`tests/test-functions.lua`, 31 cases): the two that
+  pinned the strong edge are flipped ("a function dependent does not
+  keep its anchor alive; a table dependent does"; "co @
+  lifetime.pin(a) with a dropped: both die in cascade order and are
+  collected"); new: the asymmetry as transpiled code, with the deaths
+  between the program's own lines at the `collectgarbage` statement;
+  `self.cb = function() ... end @ self` dropped; a record whose anchor
+  the collector took (of, format, `@`, `destroy`; it fails without the
+  guards); the silent death of a collector-found non-table dependent;
+  the error texts compared whole for all three types. The compaction
+  test now holds `u4`'s new anchor, which the weak record no longer
+  keeps (it failed under an eager collector otherwise). Kept as round 1
+  chose (human's answer): the tombstone parenthesis and the `index` verb
+  in the dead messages, the stdout flush in both reports. Spec issue 7
+  is new.
+- Implementer, round 2, eager collector (`collectgarbage("setpause", 10)`
+  and `collectgarbage("setstepmul", 1000)` before the suite, the effect
+  of the `LUA_INIT` the orchestrator named): `tests/test-functions.lua`
+  31 passed under both interpreters, five runs each; the runtime suites
+  (`test-harness`, `test-runtime`, `test-scopes`, `test-sentinel`) 161
+  passed under both.
+- Implementer, round 2, `make bench BASE=master` (`a17ac03`, whose
+  `lifetime/` is `ca9db2d`'s), two invocations: the first marked
+  `run/plain.lt` on Lua 5.1 (pairings 1.131 and 1.129), the second did
+  not (1.014 and 1.034) and marked nothing; noise by the
+  two-invocation rule. `runtime/attach-first` 0.853/1.109 then
+  0.986/0.816 (Lua 5.1), 0.901/1.123 then 0.957/0.907 (LuaJIT);
+  `runtime/move` 1.080/1.022 then 1.018/1.027 (Lua 5.1), 1.236/0.799
+  then 0.991/0.824 (LuaJIT). `plain/transpiled` in-process ratio 1.058,
+  1.035, 1.021, 1.189 (Lua 5.1) and 0.959, 1.062, 1.012, 0.974 (LuaJIT);
+  the chunk never loads the runtime, so this is the machine (load
+  average about 1 from other sessions). `runtime/attach-function`,
+  absolute: 4148 and 4227 ns, then 3983 and 4022 ns (Lua 5.1); 1617 and
+  1810 ns, then 1961 and 1971 ns (LuaJIT). An A/B against round 1's
+  runtime (three alternating processes each) reads 3.5 to 4.0 us for
+  round 1 and 4.1 to 5.1 us for round 2 on Lua 5.1, 1.43 to 1.76 us
+  against 1.66 to 1.77 us on LuaJIT: the `setmetatable` per record and
+  the record's place in the collector's weak list, a few percent, forced
+  by the weak record of 03.
