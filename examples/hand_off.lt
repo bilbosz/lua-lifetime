@@ -1,0 +1,41 @@
+-- hand_off.lt: port of xd/examples/hand_off.xd. Heading: rewritten around
+-- `collectgarbage` (docs/07-conformance.md); the .expected is xd's byte
+-- for byte. `xd` writes "owned by this block, then by whoever kept it" as
+-- `lifetime.any(lifetime.scope(), lifetime.reachable)`. Decision 7 of
+-- xd/docs/10-lua-lifetime-decisions.md drops `lifetime.any` and notes that
+-- this formula "loses its meaning under decision 2 anyway": with
+-- reachability the collector's, the block's exit is no moment at which
+-- anything is decided, and what is left is the default lifetime,
+-- registered with `@ lifetime.reachable` so that the runtime sees the
+-- object (docs/05-decisions.md, "Registration is `x @
+-- lifetime.reachable`"). The deaths `xd` pinned to the block exit and to
+-- the drop of `kept` happen at the `collectgarbage("collect")` inserted
+-- after each (decision 2); `lifetime.kind(lifetime.of(kept))` is
+-- `lifetime.format(lifetime.of(kept))`, which prints the same word.
+-- Spelling: `lifetime.scope()` after `@` is `lifetime.scope`.
+--
+-- Owned by this block, then by whoever kept it.
+
+local Node = {}
+Node.__index = Node
+function Node.__destroy(self, reason) print("node " .. self.id .. " destroyed (" .. reason .. ")") end
+
+local kept
+
+do
+  local a = setmetatable({ id = "a" }, Node) @ lifetime.scope
+  local b = setmetatable({ id = "b" }, Node) @ lifetime.reachable
+  local c = setmetatable({ id = "c" }, Node) @ lifetime.reachable
+  kept = b
+end
+--> node a destroyed (anchor)         scope alone: dies with the block
+collectgarbage("collect")
+--> node c destroyed (unreachable)    nothing kept it: the collector takes it
+--  b survives: `kept` refers to it
+
+print(kept ~= nil, lifetime.format(lifetime.of(kept)))
+--> true  reachable
+
+kept = nil
+collectgarbage("collect")
+--> node b destroyed (unreachable)    at the collection after the drop

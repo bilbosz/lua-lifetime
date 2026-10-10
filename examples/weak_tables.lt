@@ -1,0 +1,83 @@
+-- weak_tables.lt: port of xd/examples/weak_tables.xd. Heading: deviation
+-- (docs/07-conformance.md). What differs, and the decisions of
+-- xd/docs/10-lua-lifetime-decisions.md that cause it:
+--   - decision 2: every death `xd` pinned to a statement happens at the
+--     `collectgarbage("collect")` inserted after it, and a weak entry
+--     whose object was finalized clears one collection later, so each
+--     count of a weak table follows a second collect (docs/02-semantics.md,
+--     "Reachability is the collector's"). Parts 1 and 2 then print what
+--     `xd` printed;
+--   - decision 1: Lua 5.1 and LuaJIT have no ephemerons, so in part 3 a
+--     value that refers to its own key keeps the key alive through the
+--     weak-key table: neither is collected, the entry stays, and both die
+--     only in the program-end sweep, newest first, with reason `"exit"`.
+-- `Obj.new` registers each object with `@ lifetime.reachable`, so the
+-- runtime runs its destructor when the collector finds it
+-- (docs/05-decisions.md, "Registration is `x @ lifetime.reachable`": a
+-- class library registers its instances in its constructor). Spelling:
+-- `lifetime.scope()` after `@` is `lifetime.scope`.
+--
+-- Weak tables: weak references do not count for `reachable`, and an entry
+-- whose key or value is collected disappears like any other reference to
+-- it.
+
+local Obj = {}
+Obj.__index = Obj
+function Obj.new(name) return setmetatable({ name = name }, Obj) @ lifetime.reachable end
+function Obj.__destroy(self, reason) print("destroyed " .. self.name .. " (" .. reason .. ")") end
+
+local function count(t)
+  local n = 0
+  for _ in pairs(t) do n = n + 1 end
+  return n
+end
+
+-- 1. Weak values: the cache does not keep its values alive.
+local cache = setmetatable({}, { __mode = "v" })
+local strong = Obj.new("strong")
+cache.strong = strong
+cache.weak = Obj.new("weak")            -- only the weak slot refers to it
+collectgarbage("collect")
+--> destroyed weak (unreachable)        at the collection
+collectgarbage("collect")
+print(cache.strong.name, cache.weak, count(cache))
+--> strong  nil  1
+strong = nil
+collectgarbage("collect")
+--> destroyed strong (unreachable)
+collectgarbage("collect")
+print(count(cache))
+--> 0
+
+-- 2. Weak keys: properties attached to an object from outside die with it.
+local props = setmetatable({}, { __mode = "k" })
+do
+  local key = Obj.new("key") @ lifetime.scope
+  props[key] = Obj.new("props of key")  -- held only through the entry
+  print(props[key].name, count(props))
+  --> props of key  1
+end
+-- The key dies with the scope. Its tombstone, no longer referenced, is
+-- collected and its entry removed; the value, which only the entry held,
+-- is collected the cycle after.
+--> destroyed key (anchor)
+collectgarbage("collect")
+collectgarbage("collect")
+--> destroyed props of key (unreachable)
+print(count(props))
+--> 0
+
+-- 3. A value that refers to its own key: Lua 5.1 has no ephemerons, so
+--    the value keeps the key alive through the weak-key table, and the
+--    entry stays.
+local k = Obj.new("k")
+props[k] = Obj.new("props of k")
+props[k].owner = k
+k = nil
+collectgarbage("collect")
+collectgarbage("collect")
+print(count(props))
+--> 1
+-- Program end: both are still alive and die in the sweep, newest first.
+--> destroyed props of k (exit)
+--> destroyed k (exit)

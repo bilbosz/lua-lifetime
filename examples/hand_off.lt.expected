@@ -1,0 +1,4 @@
+node a destroyed (anchor)
+node c destroyed (unreachable)
+true	reachable
+node b destroyed (unreachable)

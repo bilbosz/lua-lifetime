@@ -1,0 +1,8 @@
+(token channel, reachable)
+worker 2 done
+true	(token channel, reachable)
+worker 1 done
+true
+false	bad argument #1 to 'lifetime.pin' (anchor expected, got no value)
+worker 3 done
+channel closed (anchor)

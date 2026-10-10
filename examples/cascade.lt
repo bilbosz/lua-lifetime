@@ -1,0 +1,90 @@
+-- cascade.lt: port of xd/examples/cascade.xd. Heading: deviation
+-- (docs/07-conformance.md). What differs, and the decisions of
+-- xd/docs/10-lua-lifetime-decisions.md that cause it:
+--   - decision 10: destructors run in C++ order, each object's own body
+--     before its dependents, most recently attached first; `xd` ran
+--     dependents first. `__destroy` has no `remaining`;
+--   - decision 7: there is no `lifetime.any`. `e @ any(a, c)` becomes the
+--     decision's idiom, a token destroyed by a counting hook on each
+--     operand (`last_of` below), and `e2`, which must stay alive while
+--     unreferenced, is pinned to its token; `lifetime.dependents` then
+--     lists `e2` under the token, not under the registry, whose only
+--     dependent is the counting hook;
+--   - decision 5: a scope cannot be stored (`local here =
+--     lifetime.scope()`); each `@` names `lifetime.scope` itself;
+--   - decision 8: destroyed objects are tombstones, so the last line
+--     prints `lifetime.alive` of each where `xd` printed `nil`;
+--   - decision 2: the program collects once to show that nothing but the
+--     token keeps the unreferenced `e2` alive.
+--
+-- The two-phase cascade (docs/02-semantics.md, "Cascading death"): every
+-- death is decided before any destructor runs, then each object's
+-- destructor runs before its dependents die, most recently anchored first.
+
+local Node = {}
+Node.__index = Node
+Node.__tostring = function(self) return self.id end          -- names in lifetime.format
+function Node.new(id) return setmetatable({ id = id }, Node) end
+function Node.__destroy(self, reason)
+  print("destroyed " .. self.id .. " (" .. reason .. ")")
+end
+
+-- Decision 7's idiom: a token that dies when the last of its anchors dies.
+local function last_of(name, ...)
+  local span = lifetime.token(name)
+  local live = select("#", ...)
+  local function count_down()
+    live = live - 1
+    if live == 0 then destroy(span) end
+  end
+  for i = 1, live do
+    local anchor = select(i, ...)
+    count_down !@ anchor
+  end
+  return span
+end
+
+-- 1. The worked example: the scope's dependents are `a` then `c`, so `c`
+--    goes first: its body, then its dependents newest first (its counting
+--    hook for `e`, then `d`). Then `a`: its body, then its counting hook,
+--    which finds `c` already gone and destroys `e`'s token, then `d`
+--    (already dead, skipped) and `b`.
+do
+  local a = Node.new("a") @ lifetime.scope
+  local b = Node.new("b") @ a
+  local c = Node.new("c") @ lifetime.scope
+  local d = Node.new("d") @ (a, c)
+  local e = Node.new("e") @ last_of("e", a, c)
+end
+--> destroyed c (anchor)
+--> destroyed d (anchor)
+--> destroyed a (anchor)
+--> destroyed e (anchor)
+--> destroyed b (anchor)
+
+-- 2. With a live operand left, the dependent is not in the dying set at
+--    all: its token outlives the dead operand.
+local registry = Node.new("registry")
+local e2_span
+do
+  local a = Node.new("a2") @ lifetime.scope
+  e2_span = last_of("e2", a, registry)
+  local e = Node.new("e2") @ lifetime.pin(e2_span)
+  print(lifetime.format(lifetime.of(e)))
+  --> token e2
+end
+--> destroyed a2 (anchor)
+
+-- Nothing refers to e2 any more, but its token keeps it alive.
+collectgarbage("collect")
+local deps = lifetime.dependents(e2_span)
+print(#deps, deps[1].id, lifetime.format(lifetime.of(deps[1])))
+--> 1  e2  token e2
+
+-- 3. destroy() runs the same walk: the registry's body first, then its
+--    dependents, here the counting hook that ends e2's token.
+destroy(registry)
+--> destroyed registry (destroy)
+--> destroyed e2 (anchor)
+print(lifetime.alive(registry), lifetime.alive(deps[1]))
+--> false  false

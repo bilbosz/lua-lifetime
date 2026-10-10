@@ -1,0 +1,4 @@
+true	hello
+(token channel, reachable)
+channel closed with 0 undelivered messages
+true	false

@@ -1,0 +1,7 @@
+(token binding, reachable)
+destroyed widget (destroy)
+true	(token binding, reachable)
+destroyed app (destroy)
+destroyed binding (anchor)
+false
+destroyed model (exit)

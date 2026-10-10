@@ -1,0 +1,7 @@
+false	dead t
+false	examples/dead_reference.lt:32: attempt to index a dead table (t, died at examples/dead_reference.lt:29, anchor)
+false	true	true	true
+false	examples/dead_reference.lt:43: attempt to index a dead table (conn, died at examples/dead_reference.lt:40, destroy)
+false	examples/dead_reference.lt:45: attempt to index a dead table (conn, died at examples/dead_reference.lt:40, destroy)
+false	examples/dead_reference.lt:47: attempt to assign to a dead table (conn, died at examples/dead_reference.lt:40, destroy)
+false	examples/dead_reference.lt:55: attempt to call a dead table (f, died at examples/dead_reference.lt:54, destroy)

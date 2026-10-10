@@ -1,0 +1,7 @@
+(app, request, reachable)
+destroyed request (anchor)
+destroyed thing (anchor)
+(scope, reachable)
+destroyed child (anchor)
+destroyed app (exit)
+destroyed parent (anchor)

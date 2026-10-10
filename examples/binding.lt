@@ -1,0 +1,70 @@
+-- binding.lt: port of xd/examples/binding.xd. Heading: deviation
+-- (docs/07-conformance.md). `xd` anchors the binding to the formula
+-- any(all(model, widget), app); decision 7 of
+-- xd/docs/10-lua-lifetime-decisions.md drops `lifetime.any`, and its
+-- replacement for "dies when the last of a and b dies" is "a named token
+-- destroyed by a counting hook on each anchor". Here the two operands are
+-- the pinned conjunction `lifetime.pin(model, widget)` (a hook on it runs
+-- when either dies) and `app`. What differs:
+--   - decision 7: the binding's formula is the token, `(token binding,
+--     reachable)`, and it does not change when `widget` dies; there is no
+--     formula pruning to print;
+--   - decision 10: `__destroy` has no `remaining`; and `app`'s destructor
+--     runs before the binding dies, since the binding dies when `app`'s
+--     counting hook, one of `app`'s dependents, destroys the token;
+--   - decision 8: the dead binding is a tombstone, so the check is
+--     `lifetime.alive(binding)`.
+--
+-- A binding kept alive by the application: alive while both model and
+-- widget are, or while app is. When widget dies the binding is held by app
+-- alone and dies at the later of the two moments, inside app's cascade.
+
+local Node = {}
+Node.__index = Node
+Node.__tostring = function(self) return self.id end          -- names in lifetime.format
+function Node.new(id) return setmetatable({ id = id }, Node) end
+function Node.__destroy(self, reason)
+  print("destroyed " .. self.id .. " (" .. reason .. ")")
+end
+
+-- Decision 7's idiom: a token that dies when the last of its anchors dies.
+local function last_of(name, ...)
+  local span = lifetime.token(name)
+  local live = select("#", ...)
+  local function count_down()
+    live = live - 1
+    if live == 0 then destroy(span) end
+  end
+  for i = 1, live do
+    local anchor = select(i, ...)
+    count_down !@ anchor
+  end
+  return span
+end
+
+local app     = Node.new("app")
+local model   = Node.new("model")
+local widget  = Node.new("widget")
+local binding = Node.new("binding") @ last_of("binding", lifetime.pin(model, widget), app)
+print(lifetime.format(lifetime.of(binding)))
+--> (token binding, reachable)
+
+-- widget's death ends the conjunction: its counting hook runs, and the
+-- binding survives through app.
+destroy(widget)
+--> destroyed widget (destroy)
+print(lifetime.alive(binding), lifetime.format(lifetime.of(binding)))
+--> true  (token binding, reachable)
+
+-- app's death is the later of the two moments: app's destructor, then its
+-- counting hook, which destroys the token and the binding with it.
+destroy(app)
+--> destroyed app (destroy)
+--> destroyed binding (anchor)
+print(lifetime.alive(binding))
+--> false
+
+-- model was never what kept the binding alive after widget died; it lives
+-- on, with its default lifetime, until the program ends. It has been an
+-- anchor, so the runtime has seen it and runs its destructor then.
+--> destroyed model (exit)

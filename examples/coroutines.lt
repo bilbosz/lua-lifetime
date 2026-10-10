@@ -1,0 +1,99 @@
+-- coroutines.lt: port of xd/examples/coroutines.xd. Heading: deviation
+-- (docs/07-conformance.md). Part 1 prints what `xd` printed. What differs
+-- in parts 2 and 3, and why:
+--   - decision 2 of xd/docs/10-lua-lifetime-decisions.md: a dropped
+--     coroutine dies when the collector finds it, so each drop is followed
+--     by `collectgarbage("collect")`. Lua 5.1 has no `coroutine.close`:
+--     the runtime destroys the suspended coroutine's scope records from
+--     their sentinels, innermost first, and an object that has a sentinel
+--     of its own (it has a `__destroy`) was armed after its scope's record
+--     and is finalized first, with reason `"unreachable"`
+--     (docs/02-semantics.md, "Coroutines" and "Reachability is the
+--     collector's"; docs/03-runtime.md, "The scope stack and the error
+--     path");
+--   - only tables and tokens can be anchors (docs/02-semantics.md,
+--     "Vocabulary"; docs/06-open-questions.md, "Non-table anchors"), so
+--     part 2 has no hook on the coroutine `b`, and part 3 cannot anchor to
+--     `lifetime.any(w1, w2)`, which decision 7 drops anyway. Part 3 uses
+--     decision 7's idiom instead, a token destroyed by a counting hook,
+--     here one hook on each worker's own body scope, which dies when the
+--     collector takes the worker;
+--   - decision 8: liveness is `lifetime.alive`, not `conn ~= nil`.
+-- Spelling: `lifetime.scope()` after `@` is `lifetime.scope`.
+--
+-- Coroutines: a suspended coroutine's scopes stay alive across yields;
+-- when the collector takes the coroutine, they unwind innermost first.
+
+local Res = {}
+Res.__index = Res
+function Res.new(name) return setmetatable({ name = name }, Res) end
+function Res.__destroy(self, reason) print("close " .. self.name .. " (" .. reason .. ")") end
+
+local function worker(name)
+  local outer = Res.new(name .. " outer") @ lifetime.scope
+  for i = 1, 3 do
+    local step = Res.new(name .. " step " .. i) @ lifetime.scope
+    coroutine.yield(i)
+  end
+  return "done"
+end
+
+-- 1. Run to completion: each scope exits normally, iteration by iteration.
+local a = coroutine.create(worker)
+print(coroutine.resume(a, "a"))
+--> true  1
+print(coroutine.resume(a))
+--> close a step 1 (anchor)          the first iteration ends after the yield returns
+--> true  2
+print(coroutine.resume(a))
+--> close a step 2 (anchor)
+--> true  3
+print(coroutine.resume(a))
+--> close a step 3 (anchor)
+--> close a outer (anchor)          the body returns
+--> true  done
+print(coroutine.status(a))
+--> dead
+
+-- 2. Drop a suspended coroutine: the collector takes it, and its scopes
+--    unwind innermost first.
+local b = coroutine.create(worker)
+coroutine.resume(b, "b")
+coroutine.resume(b)
+--> close b step 1 (anchor)
+print("b suspended in iteration 2")
+--> b suspended in iteration 2
+b = nil
+collectgarbage("collect")
+--> close b step 2 (unreachable)
+--> close b outer (unreachable)
+print("b gone")
+--> b gone
+
+-- 3. A resource shared by two coroutines lives while either one does.
+do
+  local live = 2
+  local shared = lifetime.token("shared")
+  local function count_down()
+    live = live - 1
+    if live == 0 then destroy(shared) end
+  end
+  local function body()
+    count_down !@ lifetime.scope         -- runs when this worker's body scope ends
+    coroutine.yield()
+  end
+  local w1 = coroutine.create(body)
+  local w2 = coroutine.create(body)
+  local conn = Res.new("shared conn") @ shared
+  coroutine.resume(w1)
+  coroutine.resume(w2)
+  w1 = nil                              -- w1 dies; conn keeps w2
+  collectgarbage("collect")
+  print("w1 dropped, conn open:", lifetime.alive(conn))
+  --> w1 dropped, conn open:  true
+  w2 = nil                              -- the last worker dies, and conn with it
+  collectgarbage("collect")
+  --> close shared conn (anchor)
+  print("w2 dropped, conn open:", lifetime.alive(conn))
+  --> w2 dropped, conn open:  false
+end

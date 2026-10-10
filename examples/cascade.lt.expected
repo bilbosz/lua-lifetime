@@ -1,0 +1,11 @@
+destroyed c (anchor)
+destroyed d (anchor)
+destroyed a (anchor)
+destroyed e (anchor)
+destroyed b (anchor)
+token e2
+destroyed a2 (anchor)
+1	e2	token e2
+destroyed registry (destroy)
+destroyed e2 (anchor)
+false	false
