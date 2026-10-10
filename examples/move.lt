@@ -5,14 +5,15 @@
 -- and the decisions that cause it:
 --   - decision 10: when the provisional scope ends, the root's destructor
 --     runs before its child's; `xd` had the child first;
---   - decision 2: when the collector finds the released subtree, the
---     child has a sentinel of its own (it has a `__destroy`), armed after
---     the root's, so the host finalizes it first, with reason
---     `"unreachable"`, and the root's cascade then skips it
---     (docs/02-semantics.md, "Reachability is the collector's": "Ownership
---     order holds for every death the program causes; the collector's
---     deaths follow its order"); `xd` had the child die `"anchor"` in the
---     root's cascade;
+--   - decision 2: the released subtree dies when the collector finds it,
+--     as one cascade from its root: the runtime keeps the root's sentinel
+--     newer than the child's, so the host finalizes the root first, with
+--     reason `"unreachable"`, and its cascade takes the child with
+--     `"anchor"` (docs/02-semantics.md, "Reachability is the collector's":
+--     "an anchor is finalized before its dependents"; docs/05-decisions.md,
+--     "Anchors are finalized before their dependents"); as at the scope
+--     exit, decision 10 runs the root's destructor before the child's,
+--     where `xd` had the child first;
 --   - decision 4: `lifetime.format` renders the formulas with the implicit
 --     `reachable` term, `(registry, reachable)` and `(root, reachable)`.
 -- Spelling: `lifetime.scope()` after `@` is `lifetime.scope`.
@@ -47,8 +48,8 @@ local r = build(true)
 r @ lifetime.reachable   -- release it: now only `r` keeps it alive
 r = nil                  -- ... and this statement drops that
 collectgarbage("collect")
---> destroyed child (unreachable)    the collector's order: newest sentinel first
---> destroyed root (unreachable)
+--> destroyed root (unreachable)     the collector finalizes the anchor first
+--> destroyed child (anchor)         ... and its cascade takes the subtree
 
 -- Program end: the registry is the newest object still alive.
 --> destroyed registry (exit)
