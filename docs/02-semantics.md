@@ -648,7 +648,12 @@ when that is, except:
   returns, every object that was unreachable before the call has had its
   cascade run, with reason `"unreachable"`. Weak entries that held such an
   object clear one collection later ("Host"), so a test that checks a
-  weak table collects twice.
+  weak table collects twice. The call is a statement of its own, in the
+  frame that dropped the reference: a stack slot of a call still being
+  built counts as a reference on both hosts, so `print(pcall(function()
+  g = nil; collectgarbage("collect") end))` need not collect `g` under
+  LuaJIT, while `g = nil` followed by `collectgarbage("collect")` on its
+  own line does (task 008).
 - Within one collection, objects are finalized **newest first** by
   creation ("Host"), each taking its whole subtree in cascade order; an
   object already destroyed in an earlier walk is skipped. This is the

@@ -15,8 +15,13 @@ An `xd` example is ported into `examples/` of this repository as
    removed (the `all` and `any` constructors, the scope functions,
    nil-on-death, `remaining`) and pins no reachable death to a statement.
    Only the spelling changes: the scope function after `@` becomes
-   `lifetime.scope`, an `all` over `a` and `b` becomes `(a, b)`. The `.expected`
-   file is `xd`'s, byte for byte. `defer f @ a` becomes `f !@ a`, and a bare `defer f` becomes `f !@ lifetime.scope`.
+   `lifetime.scope`, an `all` over `a` and `b` becomes `(a, b)`,
+   `defer f @ a` becomes `f !@ a`, and a bare `defer f` becomes `f !@
+   lifetime.scope`. The criterion is the `.expected` file: it is `xd`'s,
+   byte for byte (the chunk name in an `!error:` line aside). The program
+   may need the host's spelling where the output does not change: a
+   `goto` program guarded by `jit` (decision 1), a registration with
+   `@ lifetime.reachable` (decision 2).
 2. **Rewritten around `collectgarbage`.** The program pins a death by
    `reachable` to a statement. The port inserts `collectgarbage("collect")`
    at that statement, and the `.expected` file is the one `xd` adopts for
