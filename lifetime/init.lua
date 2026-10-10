@@ -16,7 +16,8 @@
 -- tokens (`token`), `pin`, `alive`, the `newproxy` sentinel that runs a
 -- cascade when the collector finds an object, and the exit flag. Task
 -- 012: functions, coroutines and userdata as dependents, their records in
--- the weak-keyed `side` table.
+-- the weak-keyed `side` table. Task 014: `pcall` and `xpcall` unwind from
+-- a message handler, at the raise point.
 --
 -- Rules this file keeps (CLAUDE.md, "Technical decisions"; rule 6):
 --
