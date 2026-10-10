@@ -1,12 +1,12 @@
 ---
 id: 009
 title: Treflove trial: transpile the sessions-and-listeners slice described in `xd/docs/notes/xd-in-treflove.md` and run it under LuaJIT
-status: todo
+status: review
 depends: [008]
-branch:
-pr:
+branch: task/009-treflove-trial
+pr: https://github.com/bilbosz/lua-lifetime/pull/34
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -90,4 +90,77 @@ first numbers from a real program.
 
 ## Spec issues found
 
+1. **Registering in the constructor turns a collected tree's order upside
+   down.** `docs/05-decisions.md`, "Registration is `x @
+   lifetime.reachable`", says a class library registers its instances in
+   its constructor. Doing that in Treflove's `class()` arms every
+   instance's sentinel before its `init`, parents before children, so when
+   the collector finds a whole subtree it finalizes the children first
+   (newest first, `02-semantics.md`, "Reachability is the collector's")
+   and each parent's destructor runs among tombstones: `Login:release`'s
+   nested `release()` raises `attempt to index a dead table` into
+   `destroyerror` (test case 3, `trial/treflove/README.md`, "A collected
+   session"). Without the registration line the same collection runs in
+   ownership order, because a bottom-up tree arms each anchor at its first
+   link, after its dependents, and the root last. The slice needs no
+   registration at all (every instance with a `release()` is anchored or
+   is an anchor). "What a destructor may assume" (02, "Cascading death":
+   "my dependents are still here and die right after me") is qualified
+   only elsewhere ("Ownership order holds for every death the program
+   causes; the collector's deaths follow its order"), and the decision does
+   not mention the cost. Not changed here; for the human: whether the
+   decision should recommend registering, registering after `init`, or
+   leaving arming lazy, and whether "What a destructor may assume" should
+   name the exception. The trial asserts both runs.
+2. **A hook on `(a, b)` cannot tell that the other anchor is dying.**
+   Idiom B's hook learns that the form went first only from a flag the
+   form's `release()` sets; when the cascade reaches an input before the
+   form (one owner, the form attached first), the hook runs while the form
+   is dying but before its body, and unlinks from it. `lifetime.alive` is
+   `true` for a dying object and nothing in the `lifetime` table tells
+   dying from alive. This is the case `docs/06-open-questions.md`,
+   "Whether a hook or destructor learns which anchor died", would settle;
+   the trial's third run uses the shape where the form's body runs first
+   and records the other in the README (finding 8).
+3. **An answer for `docs/06-open-questions.md`, "How an embedding host
+   announces program end"**, which says task 009 settles where Treflove
+   puts the call: in a `love.quit` callback registered by
+   `App:register_love_callbacks` (`app/app.lua`), which LÖVE runs on every
+   quit path before closing the state. Not exercised (LÖVE is out of
+   scope); moving the entry to the decision log is a `/spec-change`.
+
 ## Review log
+
+### Round 1: APPROVE
+
+Head `d26c70a`. `make test`: unit 301/301 under `lua5.1` and `luajit`,
+conformance 75/75 under both, the trial's 8 scenarios match under
+`luajit` (and under `lua5.1`); the skip message checked with `luajit`
+off the `PATH`; `make lint` clean over 41 files. `make bench` on
+`bench/bench-treflove.lua` twice: no `SLOWER`; in-process ratio to the
+hand-written slice `treflove/cycle` 1.5-1.7 (LuaJIT), 1.9-2.2 (Lua
+5.1); `treflove/dispatch-frame` 1.0 within noise. Treflove unmodified;
+every `original/` file byte-identical to Treflove at
+`459607486e82d57e075e1deeb9f3079aa04417f3`. The teardown was traced by
+the reviewer from the attachment order in the `.lt` sources and matches
+"Cascading death"; the expected log predates the first run (`5e9e92c`).
+A program beyond the tests confirmed spec issue 2 (an input hook
+unlinks from a dying form whose `release()` has not run yet).
+
+- F1 (non-blocking): the README's edit list omitted `get_top()`
+  returning the entry and `self._period = nil`. Applied by the
+  orchestrator in the approval commit.
+- F2 (non-blocking): a dead `a, b = nil, nil` in `scenario.one_cascade`.
+  Removed by the orchestrator in the approval commit.
+- Orchestrator rulings: registration stays the default universe, the
+  unregistered variant the second run; the trial runs under `luajit`
+  only in `make test`, as the task says; the single-process harness is
+  test setup.
+- For the human (not findings): spec issue 1, registration in the
+  constructor makes a collected class-built tree finalize newest first
+  so a destructor runs among its dependents' tombstones, while the
+  unregistered variant runs in ownership order; spec issue 2, a hook on
+  `(a, b)` cannot tell the other anchor is dying (06, "Whether a hook or
+  destructor learns which anchor died"; a `lifetime.dying(x)` test is a
+  cheaper alternative); spec issue 3 answers 06 "How an embedding host
+  announces program end" (`love.quit`).
