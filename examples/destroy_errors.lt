@@ -1,7 +1,7 @@
 -- destroy_errors.lt: port of xd/examples/destroy_errors.xd. Heading:
 -- deviation (docs/07-conformance.md). Parts 1 and 2 are unchanged. Two
 -- decisions of xd/docs/10-lua-lifetime-decisions.md change the rest:
---   - decision 10 (part 3): `destroy(e)` runs `e`'s destructor before its
+--   - decision 10 (part 3): `lifetime.destroy(e)` runs `e`'s destructor before its
 --     dependent `f`'s, so `e`'s error is the first of the cascade and
 --     propagates, and `f`'s goes to `destroyerror`; `xd` had it the
 --     other way round;
@@ -58,7 +58,7 @@ end))
 --> destroyerror: d: d failed to close
 --> false  body failed
 
--- 3. destroy(): the anchor's destructor first; its error is the first of
+-- 3. lifetime.destroy(): the anchor's destructor first; its error is the first of
 --    the cascade and propagates from the call.
 local e = Res.new("e", true)
 local f = Res.new("f", true) @ e

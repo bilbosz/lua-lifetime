@@ -68,7 +68,7 @@ function ConnectionManager:remove(connection)
     -- release() first (docs/02-semantics.md, "Cascading death"). The three
     -- table removals above stay: a dead connection is a tombstone, not
     -- nil, so it does not leave a strong table by itself ("Tombstones").
-    destroy(connection)
+    lifetime.destroy(connection)
 end
 
 ---@return table<Connection, boolean>

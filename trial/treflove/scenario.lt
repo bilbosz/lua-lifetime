@@ -19,7 +19,7 @@ local function count_entries(t)
 end
 
 -- Test case 1: connect, log in, then each side removes its connection.
--- ConnectionManager:remove ends in one destroy(connection).
+-- ConnectionManager:remove ends in one lifetime.destroy(connection).
 function scenario.teardown(harness, env)
     local client = harness.new_app(env, "client")
     local server = harness.new_app(env, "server")
@@ -56,7 +56,7 @@ function scenario.teardown(harness, env)
     trial_log("upload entries after collect: " .. count_entries(client.asset_manager._upload_asset_rp))
 end
 
--- Idiom C: the back key logs out; destroy(period) pops nothing twice. Then
+-- Idiom C: the back key logs out; lifetime.destroy(period) pops nothing twice. Then
 -- the disconnect takes the login screen the logout showed.
 function scenario.logout(harness, env)
     local client = harness.new_app(env, "client")
@@ -108,12 +108,12 @@ function scenario.input_first(harness, env)
     local b = TestInput(form, "b")
     local inputs = form._inputs
     trial_log("inputs: " .. names(inputs))
-    trial_log("> destroy(a)")
-    destroy(a)
+    trial_log("> lifetime.destroy(a)")
+    lifetime.destroy(a)
     trial_log("inputs: " .. names(inputs) .. ", a alive: " .. tostring(lifetime.alive(a)) .. ", b alive: " .. tostring(lifetime.alive(b)))
-    trial_log("> cleanup: destroy(form), destroy(b)")
-    destroy(form)
-    destroy(b)
+    trial_log("> cleanup: lifetime.destroy(form), lifetime.destroy(b)")
+    lifetime.destroy(form)
+    lifetime.destroy(b)
 end
 
 -- Test case 2, second run: the form dies first; the hooks do nothing and
@@ -124,13 +124,13 @@ function scenario.form_first(harness, env)
     local b = TestInput(form, "b")
     local inputs = form._inputs
     trial_log("hooks on a: " .. #lifetime.dependents(a) .. ", on b: " .. #lifetime.dependents(b))
-    trial_log("> destroy(form)")
-    destroy(form)
+    trial_log("> lifetime.destroy(form)")
+    lifetime.destroy(form)
     trial_log("inputs: " .. names(inputs) .. ", form alive: " .. tostring(lifetime.alive(form)))
     trial_log("hooks on a: " .. #lifetime.dependents(a) .. ", on b: " .. #lifetime.dependents(b))
-    trial_log("> cleanup: destroy(a), destroy(b)")
-    destroy(a)
-    destroy(b)
+    trial_log("> cleanup: lifetime.destroy(a), lifetime.destroy(b)")
+    lifetime.destroy(a)
+    lifetime.destroy(b)
 end
 
 -- Test case 2, third run: form and inputs die in one cascade, the inputs
@@ -141,8 +141,8 @@ function scenario.one_cascade(harness, env)
     local a = TestInput(form, "a") @ form
     local b = TestInput(form, "b") @ form
     local inputs = form._inputs
-    trial_log("> destroy(period)")
-    destroy(period)
+    trial_log("> lifetime.destroy(period)")
+    lifetime.destroy(period)
     trial_log("inputs: " .. names(inputs) .. ", form alive: " .. tostring(lifetime.alive(form)))
 end
 

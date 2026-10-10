@@ -15,7 +15,7 @@
 -- Spelling: a bare `defer f` is `f !@ lifetime.scope`, `defer f @ a` is
 -- `f !@ a`, `lifetime.scope()` after `@` is `lifetime.scope`.
 --
--- Hooks beyond defer.lt: a hook on `reachable`, `destroy(h)`, a hook that
+-- Hooks beyond defer.lt: a hook on `reachable`, `lifetime.destroy(h)`, a hook that
 -- runs when the last of two jobs dies, and a rollback hook that an error
 -- sets off.
 
@@ -30,7 +30,7 @@ local function last_of(name, ...)
   local live = select("#", ...)
   local function count_down()
     live = live - 1
-    if live == 0 then destroy(span) end
+    if live == 0 then lifetime.destroy(span) end
   end
   for i = 1, live do
     local anchor = select(i, ...)
@@ -51,10 +51,10 @@ print("after")
 --> hook ran (unreachable)
 --> after
 
--- 2. destroy(h) runs the hook now; it runs at most once.
+-- 2. lifetime.destroy(h) runs the hook now; it runs at most once.
 do
   local h = function(reason) print("hook h (" .. reason .. ")") end !@ lifetime.scope
-  destroy(h)
+  lifetime.destroy(h)
   print("h is now", h)
 end
 --> hook h (destroy)
@@ -69,9 +69,9 @@ do
   function(reason)
     print("all jobs finished (" .. reason .. ")")
   end !@ last_of("jobs", job1, job2)
-  destroy(job2)
+  lifetime.destroy(job2)
   print("job2 gone")
-  destroy(job1)
+  lifetime.destroy(job1)
   print("job1 gone")
 end
 --> job2 gone
@@ -85,7 +85,7 @@ local function transfer(fail)
   local rollback = function(reason) print("rollback (" .. reason .. ")") end !@ lifetime.scope
   if fail then error("debit failed", 0) end
   print("commit")
-  discard(rollback)
+  lifetime.discard(rollback)
 end
 
 print(pcall(transfer, false))

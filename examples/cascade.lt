@@ -35,7 +35,7 @@ local function last_of(name, ...)
   local live = select("#", ...)
   local function count_down()
     live = live - 1
-    if live == 0 then destroy(span) end
+    if live == 0 then lifetime.destroy(span) end
   end
   for i = 1, live do
     local anchor = select(i, ...)
@@ -81,9 +81,9 @@ local deps = lifetime.dependents(e2_span)
 print(#deps, deps[1].id, lifetime.format(lifetime.of(deps[1])))
 --> 1  e2  token e2
 
--- 3. destroy() runs the same walk: the registry's body first, then its
+-- 3. lifetime.destroy() runs the same walk: the registry's body first, then its
 --    dependents, here the counting hook that ends e2's token.
-destroy(registry)
+lifetime.destroy(registry)
 --> destroyed registry (destroy)
 --> destroyed e2 (anchor)
 print(lifetime.alive(registry), lifetime.alive(deps[1]))

@@ -37,7 +37,7 @@ local conn = named("conn") @ lifetime.scope
 local holder = { conn = conn }
 g = conn
 local seen = { [conn] = true }
-destroy(conn)
+lifetime.destroy(conn)
 print(lifetime.alive(conn), holder.conn == conn, g == conn, next(seen) == conn)
 --> false  true  true  true
 print(pcall(function() local c = conn; return c.peer end))
@@ -51,6 +51,6 @@ print(pcall(function() g.peer = 1 end))
 -- f()`, which would leave Lua no caller's line to put in front of the
 -- message.)
 local f = named("f", { __call = function() return 1 end }) @ lifetime.scope
-destroy(f)
+lifetime.destroy(f)
 print(pcall(function() local v = f(); return v end))
 --> false  examples/dead_reference.lt:55: attempt to call a dead table (f, died at examples/dead_reference.lt:54, destroy)

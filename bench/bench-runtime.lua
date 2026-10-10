@@ -7,7 +7,7 @@
 -- runtime calls as `__destroy`.
 --
 --   runtime/attach-destroy-100  an anchor, 100 dependents attached, then
---                               destroy(anchor); against an array of 100
+--                               lifetime.destroy(anchor); against an array of 100
 --                               children and a close loop
 --   runtime/move                one move of an object between two anchors;
 --                               against moving it between two sets
@@ -22,7 +22,7 @@
 --                               anchor's list collects holes and compacts);
 --                               against storing it in a weak-valued array
 --   runtime/attach-function     attach of a fresh function to a long-lived
---                               anchor, then destroy(function) (task 012:
+--                               anchor, then lifetime.destroy(function) (task 012:
 --                               its record in the weak-keyed side table,
 --                               its death remembered there); against
 --                               appending it to an array, removing it and

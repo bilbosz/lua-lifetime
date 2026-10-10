@@ -14,7 +14,7 @@ documents are derived from `xd/docs/10-lua-lifetime-decisions.md` in the
 | Path | What |
 | --- | --- |
 | `docs/01-overview.md` | What lua-lifetime is, the one-screen taste, where the semantics come from, the relation to `xd` and `teal-lifetime`. Read once. |
-| `docs/02-semantics.md` | **The spec** of the language extension: `@` and the list form, the implicit `reachable` term and `lifetime.pin`, `lifetime.scope`, hooks and the `!@` operator, tokens, `destroy`, the cascade order, `__destroy`, tombstones, errors, reachability, program end. |
+| `docs/02-semantics.md` | **The spec** of the language extension: `@` and the list form, the implicit `reachable` term and `lifetime.pin`, `lifetime.scope`, hooks and the `!@` operator, tokens, `lifetime.destroy`, the cascade order, `__destroy`, tombstones, errors, reachability, program end. |
 | `docs/03-runtime.md` | The design of the `lifetime` module: state records inside the anchor, the sentinel, the cascade, scope records, tokens. |
 | `docs/04-transpiler.md` | The grammar and the code generation: what `@` expands to, block epilogues on every exit path, the error path at the raise point, the command. |
 | `docs/05-decisions.md` | Decision log of this repository. Check here before proposing a change. |
@@ -71,7 +71,7 @@ Skills, invoked with `/name`:
    test pass unless the spec says the old expectation was wrong, and then
    say so in the commit.
 3. **Ownership order is the product; reachability timing is not.**
-   Cascade order, scope-exit order, the moment a `destroy` or a block exit
+   Cascade order, scope-exit order, the moment a `lifetime.destroy` or a block exit
    runs a destructor, and the tombstone afterwards are all specified. A
    test that checks *that* something was destroyed but not *in what order*
    and *at which statement* is not finished. A death by `reachable`
@@ -168,7 +168,7 @@ Skills, invoked with `/name`:
   `collectgarbage("collect")`, twice when a weak table must have cleared.
 - `local tmp = {} @ lifetime.scope` followed by `tmp = nil` is collected whenever
   the collector runs, not at the block exit.
-- `destroy` on a dead or dying object is a no-op, so a destructor may
+- `lifetime.destroy` on a dead or dying object is a no-op, so a destructor may
   destroy its own dependents by hand.
 - `f !@ x` is pinned by `x` even though every other `@ x` is not, and
   stays pinned when moved with `@`.

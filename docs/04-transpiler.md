@@ -81,19 +81,24 @@ Every output chunk that uses the extension begins with one line that
 binds the runtime, and the runtime functions the chunk calls, to locals:
 
 ```lua
-local lifetime = require("lifetime"); local destroy, discard = lifetime.destroy, lifetime.discard; local __lt_attach = lifetime.attach
+local lifetime = require("lifetime"); local __lt_attach = lifetime.attach
 ```
 
-so that `destroy(x)`, `discard(x)` and `lifetime.*` in the source resolve
-without installing globals, and generated code reaches the runtime
-through locals (upvalues in nested functions), never through a global and
-a field lookup. The header names only what the chunk uses; a chunk that
-uses no extension syntax and names no lifetime builtin gets no header
-and is its input unchanged. `destroyerror` is not bound: the runtime reads
-it raw from `_G` (02, "Errors in destructors"). A source file that shadows
-these names gets what it wrote. An assignment to the global `lifetime` in a transpiled chunk assigns
-the header's local (an assignment target counts as naming the builtin); a
-program that wants the global sets `_G.lifetime`.
+so that `lifetime.*` in the source (`lifetime.destroy(x)`,
+`lifetime.discard(x)`, `lifetime.of`, …) resolves without installing
+globals, and generated code reaches the runtime through locals (upvalues
+in nested functions), never through a global and a field lookup. The
+header names only what the chunk uses; a chunk that uses no extension
+syntax and does not name `lifetime` gets no header and is its input
+unchanged. There are no builtins: `destroy` and `discard` are ordinary
+names, and a program that defines its own is not shadowed
+([05-decisions.md](05-decisions.md), "`destroy` and `discard` are spelled
+`lifetime.destroy` and `lifetime.discard`"). `destroyerror` is not bound:
+the runtime reads it raw from `_G` (02, "Errors in destructors"). A
+source file that shadows `lifetime` gets what it wrote. An assignment to
+the global `lifetime` in a transpiled chunk assigns the header's local (an
+assignment target counts as naming it); a program that wants the global
+sets `_G.lifetime`.
 
 ## What `@` expands to
 

@@ -15,13 +15,13 @@ end
 local owner = {}
 local hook = function(r) print("ran " .. r) end !@ owner
 print(tostring(hook))
-destroy(hook)
+lifetime.destroy(hook)
 print("after the first destroy")
-destroy(hook)
+lifetime.destroy(hook)
 print("after the second destroy")
 print(tostring(hook), getmetatable(hook))
 died(hook)
-destroy(owner)
+lifetime.destroy(owner)
 print("owner destroyed")
 --> hook hook
 --> ran destroy
@@ -34,9 +34,9 @@ print("owner destroyed")
 -- `discard` cancels a hook: its function never runs.
 local session = {}
 local cancelled = function(r) print("never runs " .. r) end !@ session
-discard(cancelled)
+lifetime.discard(cancelled)
 print(tostring(cancelled))
-destroy(session)
+lifetime.destroy(session)
 print("session destroyed")
 --> dead hook cancelled
 --> session destroyed
@@ -49,9 +49,9 @@ moved @ second
 moved = nil
 collectgarbage("collect")
 collectgarbage("collect")
-destroy(first)
+lifetime.destroy(first)
 print("first destroyed")
-destroy(second)
+lifetime.destroy(second)
 print("second destroyed")
 --> first destroyed
 --> moved ran anchor

@@ -76,7 +76,7 @@ do
   local shared = lifetime.token("shared")
   local function count_down()
     live = live - 1
-    if live == 0 then destroy(shared) end
+    if live == 0 then lifetime.destroy(shared) end
   end
   local function body()
     count_down !@ lifetime.scope         -- runs when this worker's body scope ends

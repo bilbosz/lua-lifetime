@@ -88,7 +88,7 @@ do
   local c = add_input(form, "c")
   print("listeners: " .. count(listeners) .. ", inputs: " .. #form.inputs)
   --> listeners: 3, inputs: 3
-  destroy(b)
+  lifetime.destroy(b)
   --> input b destroyed (destroy)       b's destructor first
   --> unlinked b, 2 inputs left         then its hook, with b dying and findable
   print("listeners: " .. count(listeners) .. ", inputs: " .. #form.inputs .. ", b alive: " .. tostring(lifetime.alive(b)))

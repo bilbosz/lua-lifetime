@@ -15,7 +15,7 @@
 --                            the client's logged-in period with its menu
 --                            screen and back entry; the login round trip;
 --                            then ConnectionManager:remove on both sides,
---                            which is one destroy(connection) each in the
+--                            which is one lifetime.destroy(connection) each in the
 --                            benchmark and the release() chain in the
 --                            baseline
 --   treflove/dispatch-frame  one frame of the client's update event

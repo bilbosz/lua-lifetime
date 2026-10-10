@@ -768,3 +768,30 @@ Recorded in 03; task 014 round 2 implements it.
 → [02-semantics.md](02-semantics.md), "Scopes: `lifetime.scope`";
 [03-runtime.md](03-runtime.md), "The scope stack and the error path",
 "Forced, and measured"
+
+## `destroy` and `discard` are spelled `lifetime.destroy` and `lifetime.discard`
+
+Decided by the human on 2026-10-10 ("Change destroy to lifetime.destroy").
+`xd/docs/04-syntax.md`, "Built-in functions", makes `destroy` and
+`discard` builtins, and the transpiler bound a chunk's free `destroy`
+and `discard` to the runtime's functions in the generated header. They
+are now fields of the `lifetime` table and nothing else, written
+`lifetime.destroy(x)` and `lifetime.discard(x)` like `lifetime.of`,
+`lifetime.alive` and `lifetime.token`; the header binds only `lifetime`
+and the runtime entry points the generated code calls. `destroy` and
+`discard` are ordinary names: a program that defines its own is not
+shadowed, and a chunk that names neither `lifetime` nor the extension
+syntax is its input unchanged. The argument error reads `bad argument #1
+to 'destroy'` as before, since Lua names a function called through a
+field by the field. Why: one spelling for everything the extension adds
+as a value (`lifetime.scope` is syntax, the rest are fields of one
+table), and no name taken from the program. Same shape as "`defer`,
+`token`, `scope` and `caller` are ordinary names". The examples and the
+Treflove trial are rewritten in the same commit; no `.expected` changes
+(the trial's own log lines, which quote the statement, change with it).
+This departs from `xd`'s "Built-in functions" and from decision 5 of
+file 10 where it names the builtins; the human carries it back to `xd`.
+Task 016 removes the binding from the emitter.
+→ [02-semantics.md](02-semantics.md), "Explicit destruction: `destroy` and
+`discard`"; [04-transpiler.md](04-transpiler.md), "The generated chunk
+header"

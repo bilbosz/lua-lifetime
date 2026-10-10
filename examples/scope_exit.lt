@@ -96,7 +96,7 @@ do
     kept = f
 end
 print("after a block without a record", kept.name)
-destroy(owner)
+lifetime.destroy(owner)
 --> after a block without a record	f
 --> destroy owner (destroy)
 --> destroy f (anchor)

@@ -52,7 +52,7 @@ do
   function(reason)
     print("unsubscribed (" .. reason .. ")")
   end !@ (emitter, listener)
-  destroy(listener)
+  lifetime.destroy(listener)
   print("emitter still alive:", lifetime.alive(emitter))
 end
 --> destroyed listener (destroy)
@@ -64,7 +64,7 @@ end
 do
   local rollback = function() print("rolled back") end !@ lifetime.scope
   local keep     = function() print("kept past the block") end !@ lifetime.scope
-  discard(rollback)                       -- never runs; `rollback` is now a tombstone
+  lifetime.discard(rollback)                       -- never runs; `rollback` is now a tombstone
   keep @ registry                         -- no longer tied to this block
   print(rollback, keep ~= nil)            --> dead hook rollback  true
 end
