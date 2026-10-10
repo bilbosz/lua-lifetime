@@ -1,9 +1,9 @@
 ---
 id: 015
 title: Make the unit tests that fail now and then under LuaJIT deterministic without weakening what they assert
-status: todo
+status: in-progress
 depends: [012]
-branch:
+branch: task/015-flaky-unit-tests
 pr:
 commits:
 review:
