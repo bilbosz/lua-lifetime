@@ -4,7 +4,7 @@ title: Treflove trial: transpile the sessions-and-listeners slice described in `
 status: review
 depends: [008]
 branch: task/009-treflove-trial
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/34
 commits:
 review: APPROVE (round 1)
 ---
