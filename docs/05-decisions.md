@@ -795,3 +795,63 @@ Task 016 removes the binding from the emitter.
 → [02-semantics.md](02-semantics.md), "Explicit destruction: `destroy` and
 `discard`"; [04-transpiler.md](04-transpiler.md), "The generated chunk
 header"
+
+## Anchors are finalized before their dependents
+
+Decided by the human on 2026-10-10 ("File the spec change and task 017"),
+on the question whether the collector's children-first order could be
+corrected without a dependency graph of its own. Task 009 had shown the
+cost of the old rule: with Treflove's `class()` registering every
+instance at construction, a collected connection tree was finalized
+newest first, so every procedure died before its session and the
+session's nested `release()` met a tombstone and went to `destroyerror`,
+while the same tree without registration died in ownership order.
+
+What the hosts give: finalizers run in reverse creation order of the
+finalizable userdata, which for this runtime are the sentinel proxies.
+What the runtime already has: every `@` records the dependent in its
+anchor's list and the anchor in the dependent's record, and the runtime
+owns and pools the proxies. Decided: after every link the runtime keeps
+each anchor's proxy newer than its dependents' by exchanging proxies
+between the two records and climbing through the anchor's own anchors
+while needed (03, "The sentinel", "Anchors first"). The host's order
+then equals the cascade order: a subtree collected at once dies as one
+cascade from its root, the root `"unreachable"` and its dependents
+`"anchor"`, owner's body first, as a `lifetime.destroy` of the root
+would do it. Old sentence of 02, "Reachability is the collector's": "a
+dependent that needs a sentinel of its own ... was armed after its anchor
+and so dies first, with reason `"unreachable"`, before its anchor's own
+cascade, which then skips it". New: "an anchor is finalized before its
+dependents, and objects not ordered by ownership are finalized newest
+first". A cycle of anchors has no such order; the climb stops at a
+record it has visited and the host's order picks the root.
+
+Why this and not detection: there is nothing to detect, the ownership
+edges are the ones `@` recorded, and the fix is a constant number of
+writes per link with no allocation. Rejected: holding a finalized
+dependent until its anchor's finalizer (the runtime would hold a
+collectable object, rule 6, and the hosts give no end-of-batch hook);
+tracing at finalization time (reachability is Lua's, binding decision).
+Guardrails: monotonic (nothing comes back); ownership order survives
+and now holds for the collector's deaths too; the collector's authority
+survives, since only the order among objects collected together changes,
+never when they are collected. A prototype on 2026-10-10 gave the
+ownership order on both hosts, under an eager collector too, for the
+registered tree and for the Treflove trial's collected session, whose
+registered and unregistered runs then agree.
+
+Consequences: `examples/move.lt` and `examples/pinned_parent.lt` print
+`child (anchor)` after the root instead of `child (unreachable)` before
+it, and the Treflove trial's "collected" scenario loses its
+`destroyerror`; those `.expected` files, the examples' comments, their
+rows in 07 and the trial's expected log are updated by task 017, in the
+pull request that carries the runtime change, so that `master` stays
+green at every merge (rule 2: the spec says the old expectation was
+wrong, and the commit says so). Two tests of `tests/test-sentinel.lua`
+that pinned the old order flip with it. This refines decision 2 of file
+10 ("Reachability is the collector's") in what it says about the order
+within one collection, not in when a collection happens; the human
+carries it back to `xd`.
+→ [02-semantics.md](02-semantics.md), "Reachability is the collector's",
+"Host"; [03-runtime.md](03-runtime.md), "The sentinel", "Anchors first";
+task 017

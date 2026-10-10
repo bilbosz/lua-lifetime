@@ -15,7 +15,7 @@ page is corrected.
 | `__gc` on userdata only | A table whose destructor must run when the collector finds it carries a `newproxy(true)` sentinel ("The sentinel"). |
 | No ephemerons | No side table keyed by anchor. Dependents live inside the anchor (decision 3). The only side table is weak-keyed, by non-table dependent, with values that name the dependent's anchors weakly, so no value keeps its own key reachable. |
 | No yield across `pcall` on plain 5.1 | The runtime puts no `pcall` between a block and its body: the error path unwinds at the raise point, from the message handler of the catching `pcall` or `xpcall` ("Scope records"), so a scoped block may yield. Destructor bodies are called in protected mode only where 02 says errors are routed. |
-| Finalizers run in reverse creation order | The collector's order of 02, "Reachability is the collector's", comes for free. |
+| Finalizers run in reverse creation order | Of the proxies, which the runtime hands out: it keeps an anchor's proxy newer than its dependents' ("The sentinel"), so the collector's order of 02, "Reachability is the collector's", anchors first then newest first, is the host's own. |
 | A finalized object stays in weak tables one more cycle | The cascade unlinks a dying dependent from its anchors' lists explicitly; it never waits for the weak entry to clear. |
 
 ## The state of an object
@@ -178,9 +178,10 @@ protected mode, routing every error of the cascade to `destroyerror` (02,
 "Errors in destructors": a finalizer has no statement to raise at, and
 Lua 5.1 would surface the error at an unrelated allocation), if the
 object is still `"dying"`-eligible (not already dead through an earlier
-walk of the same collection, which the reverse-creation order makes
-common), with the exit flag of "Program end" turning the reason into
-`"exit"`. Which objects carry a sentinel:
+walk of the same collection: the anchors-first order below makes that the
+rule for every dependent of a collected subtree), with the exit flag of
+"Program end" turning the reason into `"exit"`. Which objects carry a
+sentinel:
 
 - a table whose formula has the `reachable` term and that has a
   `__destroy`, dependents or hooks, because its collection must run a
@@ -205,7 +206,30 @@ the proxy's metatable in its `reachable` field (a scope record in
 reused for a later owner, never twice for the same object and never while
 its finalizer is pending, so the position of each proxy, and with it the
 host's finalization order, is the order of the `@`s that armed them
-(a fresh `newproxy` per object costs 400 to 600 ns more). A finalizer
+(a fresh `newproxy` per object costs 400 to 600 ns more).
+
+**Anchors first.** A proxy's position is its age, and the host finalizes
+the newest first, so left alone a child registered after its parent
+(the class-library idiom, `obj @ lifetime.reachable` in every
+constructor) would be finalized before the parent and the parent's
+destructor would run among tombstones. The runtime owns the proxies and
+reassigns them: after every link, if the dependent's proxy is newer than
+an anchor's, the two records exchange proxies (two record writes and two
+`owner` writes, no allocation), and the exchange climbs through that
+anchor's own anchors while the proxy it now holds is newer than theirs.
+The invariant "an anchor's proxy is newer than every dependent's" then
+holds along every ownership path, and the host's order is the cascade
+order (02, "Reachability is the collector's"). A scope record's
+sentinel (`sentinel`) is ordered the same way against the records' and
+objects' it anchors, so a collected suspended coroutine's records die
+innermost first with their dependents in cascade order. The climb marks
+the records it has visited with the phase counter the cascade uses, so a
+cycle of anchors ends it: the cycle's proxies keep their order and the
+host picks the root. Cost: one comparison per link in the common case
+(a lazily armed anchor's proxy is made at its first link and is already
+the newer one), and one exchange per ancestor whose proxy is older when
+both sides were armed before the link; measured in "Performance"
+(`sentinel/register-tree`). A finalizer
 that fires inside a runtime operation is queued and run when the
 operation ends; a foreign `__gc` that raises through such an operation
 leaves the guard set until the next operation, which delays, never
@@ -319,8 +343,9 @@ stack and die through their sentinels, not at a later exit. `coroutine.running`,
 
 A coroutine the collector finds unreachable drops its stack with it; the
 records of a suspended coroutine are then reached only through their
-sentinels ("The sentinel"), which run innermost first by the host's
-reverse creation order.
+sentinels ("The sentinel"), which run innermost first: the runtime keeps
+each record's proxy newer than those of the records and objects it
+anchors ("Anchors first").
 
 ## Tokens
 

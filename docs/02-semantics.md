@@ -19,8 +19,10 @@ The generated code and the runtime run on Lua 5.1 and LuaJIT. Later Lua
 versions may work but are not targets. Everything below is shaped by what
 these hosts offer: no `<close>`, `goto` only on LuaJIT, `__gc` on userdata
 only, no ephemerons, no yield across `pcall` on plain 5.1, finalizers in
-reverse creation order, and an object with a pending finalizer staying in
-weak tables for one more cycle.
+reverse creation order of the finalizable userdata (which the runtime
+turns into ownership order by choosing which proxy each object carries,
+"Reachability is the collector's"), and an object with a pending
+finalizer staying in weak tables for one more cycle.
 
 ## Vocabulary
 
@@ -695,17 +697,26 @@ when that is, except:
   g = nil; collectgarbage("collect") end))` need not collect `g` under
   LuaJIT, while `g = nil` followed by `collectgarbage("collect")` on its
   own line does (task 008).
-- Within one collection, objects are finalized **newest first** by
-  creation ("Host"), each taking its whole subtree in cascade order; an
-  object already destroyed in an earlier walk is skipped. This is the
-  order `xd/docs/03-destruction.md`, "A cycle", step 4 gives. A
-  consequence the host forces: when a whole subtree is collected at once,
-  a dependent that needs a sentinel of its own (it has a `__destroy`,
-  dependents or hooks) was armed after its anchor and so dies first, with
-  reason `"unreachable"`, before its anchor's own cascade, which then
-  skips it; only a dependent without a sentinel dies through its anchor
-  with `"anchor"`. Ownership order holds for every death the program
-  causes; the collector's deaths follow its order.
+- Within one collection, **an anchor is finalized before its
+  dependents**, and objects not ordered by ownership are finalized
+  **newest first** by creation ("Host"); each finalizer takes its whole
+  subtree in cascade order, and an object already destroyed in an
+  earlier walk is skipped. A subtree collected at once therefore dies as
+  one cascade from its root, in ownership order: the root with reason
+  `"unreachable"`, its dependents with `"anchor"`, the owner's body
+  before its dependents' as for any cascade, so a destructor run by the
+  collector sees its dependents alive exactly as one run by
+  `lifetime.destroy` does. The host finalizes in reverse creation order
+  of the sentinel proxies; the runtime keeps every anchor's proxy newer
+  than its dependents' by exchanging proxies at each `@`, so the host's
+  order is the cascade order ([03-runtime.md](03-runtime.md), "The
+  sentinel"; [05-decisions.md](05-decisions.md), "Anchors are finalized
+  before their dependents"). Where the ownership graph has a cycle
+  (`a @ b` and `b @ a`) no such order exists; the proxies stay as they
+  are and the host's order decides which of the cycle's objects is the
+  root of the one cascade that takes them all. Newest first is `xd/docs/
+  03-destruction.md`, "A cycle", step 4; the anchors-first rule
+  restores, for a collected subtree, the order every other death has.
 - A destructor run by the collector runs at an arbitrary allocation point,
   in the middle of whatever the program was doing. Deterministic ownership
   does not remove reentrancy; code that dispatches events keeps its
