@@ -1,12 +1,12 @@
 ---
 id: 015
 title: Make the unit tests that fail now and then under LuaJIT deterministic without weakening what they assert
-status: in-progress
+status: review
 depends: [012]
 branch: task/015-flaky-unit-tests
 pr:
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -120,3 +120,27 @@ measured loop stays covered by `bench/bench-scopes.lua`.
    for a `/spec-change` if the human wants it.
 
 ## Review log
+
+### Round 1: APPROVE
+
+Head `83f22a1`. `make test` 333/333 under `lua5.1` and `luajit`,
+conformance 75/75, trial matches; `make lint` clean. `luajit
+tests/run.lua unit` 100/100; eager runner 20/20 under each interpreter;
+the same runners on master reproduce all three flakes (eager LuaJIT
+28/30, plain LuaJIT 59/60). Benchmarks not applicable (tests only).
+The reviewer traced the proxy-reuse case through the runtime's slot
+arithmetic and the two-collection split under the fix, and checked by
+instrumentation that the retake decision reads only the compiler's
+"trace" events, never the value read; every assertion stays an exact
+equality; the expected logs are unchanged and unsorted.
+
+- F1 (non-blocking): the rewritten comment in `tests/test-sentinel.lua`
+  said the kept proxies move down over the hole, which this program
+  does not do (both disarms take the last-slot path). Applied by the
+  orchestrator in the approval commit.
+- Orchestrator rulings: the priming call is acceptable; the retake
+  limit of 10 is acceptable.
+- Spec issue (non-blocking, for the human): 02 "Reachability is the
+  collector's" does not say that objects dropped together may die in
+  two collections when a collector step runs between the drop and
+  `collectgarbage("collect")`; the task file proposes a sentence.

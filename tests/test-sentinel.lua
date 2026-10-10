@@ -583,8 +583,9 @@ end)
 -- "The sentinel": never twice for the same object, "so the position of
 -- each proxy, and with it the host's finalization order, is the order of
 -- the `@`s that armed them"). x2 dies below the last slot (a hole), x4
--- and x3 from the last slot (kept); the step down over the hole moves the
--- kept proxies down; y1 and y2 then take x3's and x4's proxies, in order.
+-- and x3 from the last slot (kept); `armed_n` steps down to 2, below
+-- x3's and x4's slots, where their proxies stay kept; y1 and y2 then
+-- take x3's and x4's proxies, in order.
 --
 -- Which "newest first" the expected log relies on: the host finalizes in
 -- reverse creation order of the *proxies* (docs/02-semantics.md, "Host"),
