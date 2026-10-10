@@ -64,9 +64,10 @@ Teal needs to give it up.
 ### How an embedding host announces program end
 
 The CLI sets the exit flag so that finalizers at state close report
-`"exit"`. A host such as LÖVE closes the state itself. *Leaning:* a
-function on the runtime that the host calls from its quit callback; name
-to be chosen when Treflove needs it (task 009).
+`"exit"`; the runtime's entry point is `lifetime.set_exiting(flag)` (task
+004). A host such as LÖVE closes the state itself. *Leaning:* the host
+calls `lifetime.set_exiting(true)` from its quit callback; where Treflove
+puts that call is settled by task 009.
 
 ### Program end on plain Lua 5.1 after `os.exit`
 

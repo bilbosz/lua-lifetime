@@ -536,8 +536,8 @@ end
    most-derived first; a merged-index class library must chain its own.
 7. Which objects the runtime can notify: those it has seen. An object is
    seen once it has been anchored with `@` (`@ lifetime.reachable`
-   included), given a hook, created by `lifetime.token`, or passed to `destroy`,
-   `discard` or `lifetime.of`. A plain Lua table with a `__destroy` that
+   included), used as an anchor, given a hook, created by `lifetime.token`,
+   or passed to `destroy`, `discard` or `lifetime.of`. A plain Lua table with a `__destroy` that
    the runtime never saw is collected silently, as Lua collects it; `x @
    lifetime.reachable` is the way to register an object on the default
    lifetime so that its destructor runs when the collector finds it. This
@@ -579,6 +579,8 @@ dead objects are still different, and `t[dead]` still finds the entry.
   `true` for an object that is alive or dying, `false` for a tombstone and
   for `nil` or `false`; a value that is not an object is `bad argument #1
   to 'lifetime.alive' (object expected, got number)`.
+  A lifetime value and the `lifetime.scope` marker are tables the
+  runtime made and never kills, so `alive` is `true` for them.
 - A dead function, coroutine or userdata cannot be emptied or given a
   per-instance metatable. The runtime remembers that it died so that
   `lifetime.alive` reads `false` and `@` refuses it; using it otherwise is
@@ -650,7 +652,14 @@ when that is, except:
 - Within one collection, objects are finalized **newest first** by
   creation ("Host"), each taking its whole subtree in cascade order; an
   object already destroyed in an earlier walk is skipped. This is the
-  order `xd/docs/03-destruction.md`, "A cycle", step 4 gives.
+  order `xd/docs/03-destruction.md`, "A cycle", step 4 gives. A
+  consequence the host forces: when a whole subtree is collected at once,
+  a dependent that needs a sentinel of its own (it has a `__destroy`,
+  dependents or hooks) was armed after its anchor and so dies first, with
+  reason `"unreachable"`, before its anchor's own cascade, which then
+  skips it; only a dependent without a sentinel dies through its anchor
+  with `"anchor"`. Ownership order holds for every death the program
+  causes; the collector's deaths follow its order.
 - A destructor run by the collector runs at an arbitrary allocation point,
   in the middle of whatever the program was doing. Deterministic ownership
   does not remove reentrancy; code that dispatches events keeps its

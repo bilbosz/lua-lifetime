@@ -1,11 +1,11 @@
 ---
 id: 004
 title: Runtime: `lifetime.token`, `lifetime.pin`, `lifetime.alive`, reachable-only destructors via `newproxy`, `collectgarbage`
-status: review
+status: done
 depends: [002]
 branch: task/004-runtime-tokens-pin-alive-sentinel
 pr: https://github.com/bilbosz/lua-lifetime/pull/28
-commits:
+commits: 99d94e8ba656e3bd7078c3c38d1cade313990b2a
 review: APPROVE (round 2)
 ---
 
