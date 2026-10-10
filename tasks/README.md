@@ -55,5 +55,6 @@ during implementation and review.
 | 011 | Benchmark harness: bake the two-run rule into `make bench BASE=`, base exit status, README noise range | 010 |
 | 012 | Runtime: functions, coroutines and userdata as dependents (the weak-keyed side table) | 004 |
 | 013 | Benchmark harness: one process per benchmark file | 011 |
+| 014 | Runtime: unwind scopes at the raise point from a message handler of `pcall` and `xpcall` | 012 |
 
 Keep this table in sync when adding tasks.

@@ -53,8 +53,8 @@ print("not reached")
 -- (docs/03-runtime.md, "Program end"), so on a merged stream `close log
 -- (exit)` follows the report. Standard output is the same. `log` is a
 -- global where `xd` has a local: once the error has left the main chunk
--- its locals are gone, and the collector could take `log` (reason
--- "unreachable") while the scopes unwind at the catch site, before the
--- sweep (decision 2; docs/02-semantics.md, "Reachability is the
--- collector's"); a global is referenced until the state closes, so
--- "exit" is the only reason it can die with.
+-- (its scopes unwound at the raise point) its locals are gone, and the
+-- collector could take `log` (reason "unreachable") while the error is
+-- being reported, before the sweep (decision 2; docs/02-semantics.md,
+-- "Reachability is the collector's"); a global is referenced until the
+-- state closes, so "exit" is the only reason it can die with.

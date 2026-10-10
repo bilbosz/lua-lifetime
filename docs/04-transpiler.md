@@ -161,17 +161,20 @@ token's; for the main chunk it is the line of `<eof>`.
 - **A function body** is a block; its epilogue runs on fall-through and on
   every `return`.
 
-## The error path: unwinding at the catch site
+## The error path: unwinding at the raise point
 
 Scope destructors must run when an error unwinds through the block
 (decision 10, "Every exit path"). The transpiler emits nothing for it:
 the runtime keeps a stack of the active scope records per coroutine, and
 its replacements for `pcall`, `xpcall`, `coroutine.resume` and
 `coroutine.wrap` unwind, innermost first, every record pushed since the
-call began before they return `false` or re-raise
-([03-runtime.md](03-runtime.md), "The scope stack and the error path";
-[05-decisions.md](05-decisions.md), "Scopes unwind at the catch site").
-What this buys the generated code:
+call began, at the raise point: `pcall` and `xpcall` from a message
+handler, while the frames that raised are still on the stack; `resume`
+and the `wrap` function in the resumer's context, while the dead
+coroutine still holds its frames; all before they return `false` or
+re-raise ([03-runtime.md](03-runtime.md), "The scope stack and the
+error path"; [05-decisions.md](05-decisions.md), "Scopes unwind at the
+raise point"). What this buys the generated code:
 
 - A block body stays a block body: no closure, no rewrite of `return` and
   `break`, no forwarding of `...`. A loop whose body owns something is
@@ -180,7 +183,8 @@ What this buys the generated code:
 - A `return f(x)` inside such a block is still not a tail call, because
   the epilogue runs after `f(x)`; that is the only cost that remains.
 - Message handlers of an enclosing `xpcall` run at the raise point, before
-  any epilogue, as they would in Lua.
+  any epilogue, as they would in Lua; the runtime's unwinding follows at
+  the same point, so a dependent is reachable until its destructor runs.
 - The main chunk is a block like any other. `lifetime run` calls it
   through the runtime's `pcall`, so an uncaught error still unwinds the
   main scope before the error is reported ("The command"); an embedding
