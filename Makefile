@@ -3,10 +3,13 @@
 # lua5.1 and luajit, then the conformance suite once, which itself runs
 # every example under every interpreter found (tests/conformance.lua).
 # At least one interpreter must be present. Override the list with
-# `make test INTERPRETERS="luajit"`.
+# `make test INTERPRETERS="luajit"`. Last, the Treflove trial
+# (trial/treflove/run.lua, task 009) runs under luajit when luajit is on
+# PATH, and is skipped with a message otherwise.
 #
 # `make lint` runs luacheck over the runtime, the transpiler, the tests,
-# the benchmarks and the command (config in .luacheckrc).
+# the benchmarks, the command and the trial's own Lua files (not the
+# copies of Treflove's code; config in .luacheckrc).
 #
 # `make bench` (task 010; CLAUDE.md, rule 5) runs bench/run.lua under every
 # interpreter found and writes build/bench-<interpreter>.txt, one line per
@@ -42,9 +45,9 @@ BASE_DIR ?= $(BASE_WORKTREE)
 BENCH_FILES ?=
 BENCH_OUT ?= build
 
-.PHONY: test unit conformance lint bench clean
+.PHONY: test unit conformance trial lint bench clean
 
-test: unit conformance
+test: unit conformance trial
 
 unit:
 	@if [ -z "$(INTERPRETERS)" ]; then \
@@ -60,8 +63,16 @@ conformance:
 	@echo "== conformance suite (runner: $(FIRST); examples run under every interpreter found)"
 	@$(FIRST) tests/run.lua conformance
 
+trial:
+	@if command -v luajit >/dev/null 2>&1; then \
+		echo "== Treflove trial under luajit (trial/treflove/run.lua)"; \
+		luajit trial/treflove/run.lua || exit 1; \
+	else \
+		echo "== Treflove trial skipped: luajit not found on PATH (trial/treflove/run.lua runs under luajit)"; \
+	fi
+
 lint:
-	luacheck lifetime tests bench bin/lifetime
+	luacheck lifetime tests bench bin/lifetime trial/treflove/run.lua trial/treflove/harness.lua trial/treflove/stubs
 
 bench:
 	@if [ -z "$(INTERPRETERS)" ]; then \

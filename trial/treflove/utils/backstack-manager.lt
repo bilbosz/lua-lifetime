@@ -1,0 +1,57 @@
+local Consts = require("app.consts")
+local KeyboardEventListener = require("events.keyboard").Listener
+
+---@alias BackstackManagerCb fun()
+---@alias BackstackEntry {cb: BackstackManagerCb}
+
+---@class BackstackManager: KeyboardEventListener
+---@field private _stack BackstackEntry[]
+local BackstackManager = class("BackstackManager", KeyboardEventListener)
+
+function BackstackManager:init()
+    self._stack = {}
+    KeyboardEventListener.init(self, true)
+    app.keyboard_manager:register_listener(self)
+end
+
+-- lua-lifetime: push returns an entry that the caller anchors; the entry
+-- removes itself from the stack when it dies, while it is dying and still
+-- findable by identity (idiom C of xd/docs/notes/xd-in-treflove.md;
+-- docs/02-semantics.md, "Hooks: the `!@` operator"). pop(cb) is gone.
+---@param cb BackstackManagerCb
+---@return BackstackEntry
+function BackstackManager:push(cb)
+    assert_type(cb, "function")
+    local entry = {
+        cb = cb
+    }
+    table.insert(self._stack, entry)
+    function()
+        table.remove(self._stack, table.find_array_idx(self._stack, entry))
+    end !@ entry
+    return entry
+end
+
+---@return BackstackEntry|nil
+function BackstackManager:get_top()
+    return self._stack[#self._stack]
+end
+
+-- lua-lifetime: the entry is destroyed before its callback runs.
+function BackstackManager:back()
+    local top = self:get_top()
+    if top then
+        local cb = top.cb
+        destroy(top)
+        cb()
+    end
+end
+
+---@param key love.KeyConstant
+function BackstackManager:on_key_pressed(key)
+    if key == Consts.BACKSTACK_KEY then
+        self:back()
+    end
+end
+
+return BackstackManager
