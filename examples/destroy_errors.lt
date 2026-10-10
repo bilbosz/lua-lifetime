@@ -62,7 +62,7 @@ end))
 --    the cascade and propagates from the call.
 local e = Res.new("e", true)
 local f = Res.new("f", true) @ e
-print(pcall(destroy, e))
+print(pcall(lifetime.destroy, e))
 --> close e (destroy)
 --> close f (anchor)
 --> destroyerror: f: f failed to close
