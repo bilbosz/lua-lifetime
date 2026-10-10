@@ -17,6 +17,7 @@ local TEST_MODULES = {
     "tests.test-runtime",
     "tests.test-scopes",
     "tests.test-sentinel",
+    "tests.test-functions",
     "tests.test-lexer",
     "tests.test-parser",
     "tests.test-emit",

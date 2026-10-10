@@ -14,12 +14,17 @@
 -- `coroutine.wrap` that unwind it on the error path, the `lifetime.scope`
 -- marker, hooks (`hook`) and the anchor's `strong` table. Task 004:
 -- tokens (`token`), `pin`, `alive`, the `newproxy` sentinel that runs a
--- cascade when the collector finds an object, and the exit flag.
+-- cascade when the collector finds an object, and the exit flag. Task
+-- 012: functions, coroutines and userdata as dependents, their records in
+-- the weak-keyed `side` table.
 --
 -- Rules this file keeps (CLAUDE.md, "Technical decisions"; rule 6):
 --
--- * State lives inside the object, under the private key STATE. There is
---   no side table keyed by an object.
+-- * State lives inside the object, under the private key STATE. The one
+--   exception is a dependent that is not a table (a function, coroutine
+--   or userdata): its record lives in the weak-keyed `side` table, whose
+--   values never refer to their key. There is no side table keyed by an
+--   anchor.
 -- * An anchor's `deps` table is weak-valued: the runtime never keeps a
 --   dependent alive. Its `strong` table holds what the language says the
 --   anchor keeps alive (hooks and pinned dependents) and nothing else. A
@@ -49,6 +54,20 @@ local newproxy = newproxy
 -- docs/03-runtime.md, "The state of an object": "The field's key is one
 -- table the runtime creates when it is loaded and never hands out".
 local STATE = {}
+
+-- docs/03-runtime.md, "The state of an object": "A dependent that is not
+-- a table (a function, coroutine or userdata) has no hidden field; its
+-- state record lives in a weak-keyed side table whose value refers to the
+-- dependent's anchors, never to the dependent itself, so no cycle passes
+-- through the weak key. Such an object cannot be an anchor." Keyed by the
+-- dependent, never by an anchor (CLAUDE.md, rule 6). The record stays
+-- after the dependent dies, reduced to what the error messages need: it
+-- is the weak-keyed set that remembers the death so that
+-- `lifetime.alive` and `@` see it (docs/02-semantics.md, "Tombstones and
+-- `lifetime.alive`"; docs/05-decisions.md, "A dead function, coroutine
+-- or userdata is remembered, not caught"). A table is never a key here,
+-- so a table dependent never touches it.
+local side = setmetatable({}, {__mode = "k"})
 
 -- The dependents table of an anchor is weak-valued (docs/03-runtime.md,
 -- "The state of an object"; CLAUDE.md, rule 6).
@@ -278,6 +297,31 @@ local function new_state(obj)
     return st
 end
 
+-- The state record of a dependent that is not a table, in `side`
+-- (docs/03-runtime.md, "The state of an object"): the fields of a table's
+-- record, with `side` set so that the cascade and the error messages can
+-- tell the two apart. Such an object is never an anchor, so `deps` stays
+-- `false`; it never carries a sentinel, so `reachable` is only ever
+-- `true` or `false` (see `attach_side`). Nothing in it refers to the
+-- object.
+local function new_side_state(obj)
+    local st = {
+        false,
+        false,
+        n = 0,
+        reachable = true,
+        deps = false,
+        phase = false,
+        phase_id = phase_id,
+        name = false,
+        where = false,
+        reason = false,
+        side = true
+    }
+    side[obj] = st
+    return st
+end
+
 -- docs/02-semantics.md, "The `lifetime` table": `lifetime.is_state(k)` is
 -- `true` when `k` is the key of the state record, `false` for anything
 -- else.
@@ -397,6 +441,29 @@ end
 -- (docs/02-semantics.md, "Tombstones and `lifetime.alive`").
 local function dead_message(obj, st, verb)
     return "attempt to " .. verb .. " a dead table (" .. name_of(obj, st) .. ", died at " .. tostring(st.where) .. ", " .. tostring(st.reason) .. ")"
+end
+
+-- The same message for a dead function, coroutine or userdata, which has
+-- no tombstone to raise it: the runtime raises it where it refuses the
+-- object (`@`, `lifetime.of`, `lifetime.format`), with Lua's type name
+-- (`attempt to move a dead function (function: 0x…, died at …, destroy)`,
+-- `thread`, `userdata`). `<name>` is `tostring(obj)` before death: the
+-- name captured when it started dying if its metatable had a
+-- `__tostring` (`decide`), else `tostring` now, which without a
+-- `__tostring` depends only on identity. Error path only.
+local function dead_side_message(obj, st, verb)
+    local name = st.name
+    if name then
+        name = tostring(name)
+    else
+        local mt = debug_getmetatable(obj)
+        if mt ~= nil and rawget(mt, "__tostring") ~= nil then
+            name = raw_tostring(obj)
+        else
+            name = tostring(obj)
+        end
+    end
+    return "attempt to " .. verb .. " a dead " .. type(obj) .. " (" .. name .. ", died at " .. tostring(st.where) .. ", " .. tostring(st.reason) .. ")"
 end
 
 -- docs/03-runtime.md, "The tombstone": `__index`, `__newindex` and
@@ -534,6 +601,14 @@ end
 -- on the first pinned link; a plain record does not carry the field until
 -- then (hooks and scope records do), so an anchor that never holds a hook
 -- pays nothing for it.
+--
+-- `deps.other` is `true` once the anchor has had a dependent that is not
+-- a table (a function, coroutine or userdata), whose record is in `side`
+-- rather than under STATE; a walk reads it once and looks a dependent's
+-- record up in `side` only then, so an anchor whose dependents are all
+-- tables pays one test of a local per walk and never touches `side`
+-- (task 012, "Performance": "a table dependent never touches the side
+-- table").
 
 -- docs/03-runtime.md, "The state of an object": "When holes outnumber
 -- live entries the runtime compacts: it renumbers the live entries
@@ -541,7 +616,7 @@ end
 -- number, and resets `seq`." Called from `link` only, never during a
 -- destroy phase. Returns the next free sequence number.
 local function compact(anchor, ast, deps)
-    local strong = ast.strong
+    local strong, other = ast.strong, deps.other
     local lo, seq = deps.lo, deps.seq
     local live = 0
     for i = lo, seq - 1 do
@@ -564,7 +639,9 @@ local function compact(anchor, ast, deps)
                 if from ~= to then
                     list[to] = dep
                     list[from] = nil
-                    local dst = rawget(dep, STATE)
+                    -- A dependent that is not a table has its record in
+                    -- `side` (`deps.other`, see "Dependents lists").
+                    local dst = other and side[dep] or rawget(dep, STATE)
                     for j = 1, 2 * dst.n, 2 do
                         if rawequal(dst[j], anchor) and dst[j + 1] == from then
                             dst[j + 1] = to
@@ -702,7 +779,12 @@ end
 
 -- docs/02-semantics.md, "Errors in destructors and `destroyerror`": "The
 -- default writes `destroyerror: <message>` and a traceback to `stderr`."
+-- Standard output is flushed first, so that when both streams go to one
+-- place the report comes after what the program printed before the error
+-- (task 007, review round 2, carried to task 012), as the report of
+-- `lifetime run` does.
 local function default_destroyerror(obj, err)
+    io.stdout:flush()
     io.stderr:write(debug_traceback("destroyerror: " .. tostring(err), 3), "\n")
 end
 
@@ -723,6 +805,7 @@ local function call_destroyerror(obj, err)
         if stack.n > depth then
             unwind(stack, depth)
         end
+        io.stdout:flush()
         io.stderr:write("destroyerror: ", tostring(err), "\n", "destroyerror: error in destroyerror (", tostring(err2), ")\n")
     end
 end
@@ -752,8 +835,10 @@ end
 -- A hook or a token needs no capture: its name is fixed at creation
 -- (`hook_name`, `token_name`).
 --
--- A dependent's record, and an anchor's in a dependent's formula, is read
--- as `x[STATE]`, not `rawget(x, STATE)`: every object in a dependents list
+-- A dependent that is not a table (`deps.other`) has its record in
+-- `side`, and nothing more to decide: it is never an anchor. A table
+-- dependent's record, and an anchor's in a dependent's formula, is read
+-- as `x[STATE]`, not `rawget(x, STATE)`: every table in a dependents list
 -- or a formula has the key, and an index that finds its key consults no
 -- metamethod (Lua 5.1 reference manual, 2.8, "index"), so the two read the
 -- same; the index is an instruction where `rawget` is a C call, which on
@@ -774,14 +859,14 @@ local function decide(obj, st, id)
     end
     local deps = st.deps
     if deps then
-        local strong = st.strong
+        local strong, other = st.strong, deps.other
         for i = deps.seq - 1, deps.lo, -1 do
             local dep = deps[i]
             if dep == nil and strong then
                 dep = strong[i]
             end
             if dep ~= nil then
-                local dst = dep[STATE]
+                local dst = other and side[dep] or dep[STATE]
                 if not dst.phase then
                     decide(dep, dst, id)
                 end
@@ -797,6 +882,44 @@ local function body_failed(obj, err, depth)
         unwind(stack, depth)
     end
     route(obj, err)
+end
+
+-- docs/02-semantics.md, "Cascading death", step 2, **Destroy**, for a
+-- dependent that is not a table (a function, coroutine or userdata):
+-- (1) its body, `__destroy` read from "the shared per-type metatable read
+-- by `debug.getmetatable`, as in Lua" ("`__destroy` and reasons", rule
+-- 1), in protected mode as for a table; (2) no dependents, since it is
+-- never an anchor ("Vocabulary"); (3) instead of a tombstone, which it
+-- cannot become ("Tombstones and `lifetime.alive`": "A dead function,
+-- coroutine or userdata cannot be emptied or given a per-instance
+-- metatable. The runtime remembers that it died so that `lifetime.alive`
+-- reads `false` and `@` refuses it; using it otherwise is not caught"),
+-- it is unlinked from its anchors and its record in `side` is reduced to
+-- the phase, `where` and `reason`. The record stays in `side` until the
+-- collector takes the object, which clears the weak key.
+local function destroy_side(obj, st, reason, where, skip_body)
+    st.phase_id = 0
+    if not skip_body then
+        local mt = debug_getmetatable(obj)
+        local body = mt ~= nil and rawget(mt, "__destroy")
+        if body then
+            local depth = stack.n
+            local ok, err = pcall(body, obj, reason)
+            if not ok then
+                body_failed(obj, err, depth)
+            end
+        end
+    end
+    local pinned = not st.reachable
+    for j = 1, 2 * st.n, 2 do
+        unlink(st[j][STATE], st[j + 1], pinned)
+        st[j] = nil
+        st[j + 1] = nil
+    end
+    st.n = 0
+    st.phase = "dead"
+    st.where = where
+    st.reason = reason
 end
 
 -- docs/02-semantics.md, "Cascading death", step 2, **Destroy**, for one
@@ -848,19 +971,27 @@ local function destroy_object(obj, st, reason, where, skip_body)
     -- (docs/02-semantics.md, "Hooks: the `!@` operator"). The bounds are
     -- read once; nothing can be linked to a dying anchor, and unlinking
     -- only empties slots.
+    --
+    -- A dependent that is not a table (`deps.other`) has its record in
+    -- `side` and dies by `destroy_side`.
     local deps = st.deps
     local strong = false
     if deps then
         strong = st.strong
+        local other = deps.other
         for i = deps.seq - 1, deps.lo, -1 do
             local dep = deps[i]
             if dep == nil and strong then
                 dep = strong[i]
             end
             if dep ~= nil then
-                local dst = dep[STATE]
+                local dst = other and side[dep] or dep[STATE]
                 if dst.phase_id == id and dst.phase == "dying" then
-                    destroy_object(dep, dst, "anchor", where, false)
+                    if other and dst.side then
+                        destroy_side(dep, dst, "anchor", where, false)
+                    else
+                        destroy_object(dep, dst, "anchor", where, false)
+                    end
                 end
             end
         end
@@ -941,7 +1072,11 @@ end
 -- inside a destructor is a cascade of its own and raises to that call").
 -- A root already decided dying by a running cascade and not yet reached
 -- (a destructor destroying its own dependent by hand, early) is
--- destroyed now with the subtree that cascade decided, which is closed.
+-- destroyed now with the subtree that cascade decided, which is closed
+-- (docs/02-semantics.md, "Explicit destruction: `destroy` and
+-- `discard`"; docs/05-decisions.md, "`destroy` by hand inside a
+-- destructor"). A root whose record is in `side` (a function, coroutine
+-- or userdata) dies by `destroy_side`.
 --
 -- `propagating` is the finalizer's: "the sentinel's finalizer runs the
 -- cascade in protected mode and every error of it goes to
@@ -956,7 +1091,11 @@ local function cascade(root, st, reason, where, skip_body, propagating)
     end
     local outer_id, outer_held, outer_error = phase_id, held, held_error
     phase_id, phase_depth, held, held_error = id, phase_depth + 1, propagating or false, nil
-    destroy_object(root, st, reason, where, skip_body)
+    if st.side then
+        destroy_side(root, st, reason, where, skip_body)
+    else
+        destroy_object(root, st, reason, where, skip_body)
+    end
     local raise, err = held and not propagating, held_error
     phase_id, phase_depth, held, held_error = outer_id, phase_depth - 1, outer_held, outer_error
     if raise then
@@ -978,12 +1117,25 @@ local function where_of_caller()
     return info.short_src
 end
 
-local function not_implemented(what)
-    error("lifetime: " .. what .. " of a function, coroutine or userdata is not implemented yet (task 002 covers tables)", 3)
-end
-
+-- docs/02-semantics.md, "Explicit destruction: `destroy` and `discard`":
+-- "`destroy` on a dead object, or on one whose own destruction has begun
+-- (its body has started or it is being tombstoned), is a no-op. On a
+-- dependent that the decide phase has marked dying but the destroy phase
+-- has not reached yet, `destroy` runs it now, as a cascade of its own: a
+-- destructor body may therefore destroy its own dependents by hand, early
+-- and in the order it chooses, and the runtime's later pass skips them"
+-- (docs/05-decisions.md, "`destroy` by hand inside a destructor"). Whether
+-- the destruction has begun is `phase_id` 0 on a dying record
+-- (`destroy_object`, `destroy_side`); `destroy_target` tests it inline.
+--
 -- The state record of the object `destroy` or `discard` was given, or
--- `nil` when there is nothing to do (`nil`, dying, dead).
+-- `nil` when there is nothing to do (`nil`, a dead object, one whose
+-- destruction has begun). A function, coroutine or userdata gets its
+-- record in `side` ("`destroy` ... works on any object the runtime can
+-- see"; passing it to `destroy` is what makes the runtime see it,
+-- "`__destroy` and reasons", rule 7), so that its death is remembered.
+-- Every error is raised at the caller of `destroy` or `discard` (level 3
+-- from here; task 002, review finding F3).
 local function destroy_target(obj, fname)
     local t = type(obj)
     if t ~= "table" then
@@ -991,18 +1143,20 @@ local function destroy_target(obj, fname)
             return nil
         end
         if t == "function" or t == "thread" or t == "userdata" then
-            not_implemented(fname)
+            local st = side[obj]
+            if st == nil then
+                return new_side_state(obj)
+            end
+            local phase = st.phase
+            if phase == "dead" or (phase == "dying" and st.phase_id == 0) then
+                return nil
+            end
+            return st
         end
         error("bad argument #1 to '" .. fname .. "' (object expected, got " .. t .. ")", 3)
     end
     local st = rawget(obj, STATE)
     if st then
-        -- "`destroy` on a dead or dying object is a no-op, so a
-        -- destructor body may destroy its own dependents by hand, early,
-        -- and the runtime's later pass skips them": no-op once dead or
-        -- once its destruction has begun (`phase_id` 0); a dependent
-        -- decided dying and not yet reached is destroyed now. See the
-        -- task file, "Spec issues found".
         local phase = st.phase
         if phase == "dead" or (phase == "dying" and st.phase_id == 0) then
             return nil
@@ -1023,9 +1177,11 @@ end
 
 -- docs/02-semantics.md, "Explicit destruction: `destroy` and `discard`":
 -- "`destroy(obj)` ends `obj`'s lifetime now, whatever its formula, with
--- the full cascade ... `destroy(nil)` is a no-op. `destroy` on a dead or
--- dying object is a no-op ... `destroy(5)` is `bad argument #1 to
--- 'destroy' (object expected, got number)`."
+-- the full cascade. It works on any object the runtime can see, including
+-- one on the default lifetime. `destroy(nil)` is a no-op. `destroy` on a
+-- dead object, or on one whose own destruction has begun ..., is a no-op"
+-- (`destroy_target`); "`destroy(5)` is `bad argument #1 to 'destroy'
+-- (object expected, got number)`."
 --
 -- `where_of_caller` allocates, so the collector may run a finalizer
 -- there ("Sentinels" above) whose cascade kills `obj`: the test is
@@ -1124,6 +1280,96 @@ local function link_element(obj, st, a, k, pinned)
     return k + 2
 end
 
+-- `@` on a function, coroutine or userdata: steps 2 to 4 of
+-- docs/02-semantics.md, "Acquiring a lifetime", for a dependent whose
+-- record lives in `side` (docs/03-runtime.md, "The state of an object").
+-- `t` is its type. Called by `attach_general` only, without a tail call,
+-- so every error is raised at the level of the entry point's caller (4
+-- from here; task 002, review finding F3).
+--
+-- Step 3 refuses a dying object as for a table (`attempt to move a dying
+-- function`) and a dead one with the message a tombstone would give, with
+-- the verb `move` since nothing was indexed (docs/02-semantics.md,
+-- "Tombstones and `lifetime.alive`": the runtime remembers the death "so
+-- that ... `@` refuses it"; the task's `attempt to move a dead
+-- function`).
+--
+-- Such an object never carries a sentinel: the proxy's metatable would
+-- have to hold the object (`owner`), which from the side table's value
+-- is the cycle through the weak key that docs/03-runtime.md rules out,
+-- and the object has nothing a cascade at collection could run: no
+-- dependents and no hooks, since it is never an anchor; a `__destroy` on
+-- its type's metatable runs on `destroy` and with an anchor's death, not
+-- at collection (task file, "Spec issues found"). The `reachable` field is
+-- therefore only ever `true` or `false`, and a collected object's record
+-- goes with the weak key.
+local function attach_side(fname, obj, t, pin, count, ...)
+    -- Step 2: every element, left to right, before anything changes.
+    local term = false
+    if count == 1 then
+        term = check_anchor((...), 5)
+    else
+        if count == 0 then
+            error("bad argument #3 to '" .. fname .. "' (anchor expected, got no value)", 4)
+        end
+        for i = 1, count do
+            if check_anchor((select(i, ...)), 5) then
+                term = true
+            end
+        end
+    end
+
+    -- Step 3: the object itself.
+    local st = side[obj]
+    if st then
+        local phase = st.phase
+        if phase == "dying" then
+            error("attempt to move a dying " .. t, 4)
+        elseif phase == "dead" then
+            error(dead_side_message(obj, st, "move"), 4)
+        end
+        -- docs/02-semantics.md, "No moves during destruction".
+        if phase_depth > 0 and (st.n > 0 or not st.reachable) and st.phase_id ~= phase_id then
+            error("attempt to move an anchored " .. t .. " during destruction", 4)
+        end
+    end
+
+    busy = 1
+    if st == nil then
+        st = new_side_state(obj)
+    end
+
+    -- Step 4, as in `attach_general`; then every new anchor learns that it
+    -- has a dependent whose record is in `side` (`deps.other`).
+    local reachable = term and not pin
+    local old = 2 * st.n
+    local had = st.reachable
+    for j = 1, old, 2 do
+        unlink(st[j][STATE], st[j + 1], not had)
+    end
+    local k = 1
+    if count == 1 then
+        k = link_element(obj, st, (...), k, not reachable)
+    else
+        for i = 1, count do
+            k = link_element(obj, st, (select(i, ...)), k, not reachable)
+        end
+    end
+    for j = k, old do
+        st[j] = nil
+    end
+    st.n = (k - 1) / 2
+    st.reachable = reachable and true or false
+    for j = 1, k - 1, 2 do
+        st[j][STATE].deps.other = true
+    end
+    busy = 0
+    if busy == 0 and queue_tail ~= 0 then
+        drain()
+    end
+    return obj
+end
+
 -- The general path of `@` and `!@`: steps 1 to 4 of docs/02-semantics.md,
 -- "Acquiring a lifetime", for any arguments. `fname` names the entry point
 -- in the argument error; every error is raised at the level of the
@@ -1131,10 +1377,12 @@ end
 local function attach_general(fname, obj, pin, count, ...)
     local t = type(obj)
 
-    -- Step 1: an object.
+    -- Step 1: an object. A function, coroutine or userdata is a dependent
+    -- whose record lives in `side` (`attach_side`).
     if t ~= "table" then
         if t == "function" or t == "thread" or t == "userdata" then
-            error("lifetime: attach of a function, coroutine or userdata is not implemented yet (task 002 covers tables)", 3)
+            local result = attach_side(fname, obj, t, pin, count, ...)
+            return result
         end
         error("attempt to anchor a " .. t .. " value", 3)
     end
@@ -1376,11 +1624,25 @@ end
 -- lifetime it returns `lifetime.reachable`. Seen with the term and a
 -- `__destroy`, the object gets its sentinel now, so that the collector
 -- finds it (rule 7: the runtime can notify the objects it has seen).
+--
+-- A function, coroutine or userdata answers from its record in `side`; a
+-- dead one raises the message a tombstone would ("Error on ... a dead
+-- object"), with its type (`dead_side_message`). One the runtime has no
+-- record of is on the default lifetime, and seeing it needs no record:
+-- it can carry no sentinel (`attach_side`), and an object on the default
+-- formula may be moved during a destroy phase anyway.
 function lifetime.of(obj)
     local t = type(obj)
     if t ~= "table" then
         if t == "function" or t == "thread" or t == "userdata" then
-            not_implemented("lifetime.of")
+            local st = side[obj]
+            if st == nil then
+                return REACHABLE
+            end
+            if st.phase == "dead" then
+                error(dead_side_message(obj, st, "index"), 2)
+            end
+            return value_of(st)
         end
         error("bad argument #1 to 'lifetime.of' (object expected, got " .. t .. ")", 2)
     end
@@ -1473,9 +1735,27 @@ end
 -- for a named hook and `hook` for an anonymous one"; a scope record as
 -- `scope`; a token as `token period` ("Tokens": "`lifetime.format` and
 -- the tombstone's message use the same text" as `tostring`).
+--
+-- The formula of a function, coroutine or userdata is read from its
+-- record in `side`, like `lifetime.of`.
 function lifetime.format(v)
-    if type(v) ~= "table" then
-        error("bad argument #1 to 'lifetime.format' (lifetime expected, got " .. type(v) .. ")", 2)
+    local t = type(v)
+    if t ~= "table" then
+        if t == "function" or t == "thread" or t == "userdata" then
+            local st = side[v]
+            if st == nil then
+                return "reachable"
+            end
+            if st.phase == "dead" then
+                error(dead_side_message(v, st, "index"), 2)
+            end
+            local items, n = {}, st.n
+            for i = 1, n do
+                items[i] = tostring(st[2 * i - 1])
+            end
+            return format_items(items, n, st.reachable)
+        end
+        error("bad argument #1 to 'lifetime.format' (lifetime expected, got " .. t .. ")", 2)
     end
     local mt = debug_getmetatable(v)
     if mt == HOOK_MT then
@@ -1657,9 +1937,10 @@ end
 -- object that is alive or dying, `false` for a tombstone and for `nil` or
 -- `false`; a value that is not an object is `bad argument #1 to
 -- 'lifetime.alive' (object expected, got number)`." A function,
--- coroutine or userdata is alive: the runtime cannot destroy one yet
--- (docs/06-open-questions.md, "Non-table dependents after death"; task
--- 012).
+-- coroutine or userdata is alive unless its record in `side` says it died:
+-- "The runtime remembers that it died so that `lifetime.alive` reads
+-- `false`" (docs/05-decisions.md, "A dead function, coroutine or userdata
+-- is remembered, not caught"). A table never reaches the `side` lookup.
 function lifetime.alive(x)
     if type(x) == "table" then
         local st = rawget(x, STATE)
@@ -1670,7 +1951,8 @@ function lifetime.alive(x)
     end
     local t = type(x)
     if t == "function" or t == "thread" or t == "userdata" then
-        return true
+        local st = side[x]
+        return not st or st.phase ~= "dead"
     end
     error("bad argument #1 to 'lifetime.alive' (object expected, got " .. t .. ")", 2)
 end
@@ -1721,28 +2003,35 @@ end
 --
 -- A record with one entry, the most common block, is walked without a
 -- loop, for the reason given at the tombstone step of `destroy_object`.
-local function decide_entry(deps, strong, i, id)
+--
+-- `other` is the record's `deps.other`: a dependent that is not a table has
+-- its record in `side` and dies by `destroy_side`.
+local function decide_entry(deps, strong, other, i, id)
     local dep = deps[i]
     if dep == nil and strong then
         dep = strong[i]
     end
     if dep ~= nil then
-        local dst = dep[STATE]
+        local dst = other and side[dep] or dep[STATE]
         if not dst.phase then
             decide(dep, dst, id)
         end
     end
 end
 
-local function destroy_entry(deps, strong, i, id, where)
+local function destroy_entry(deps, strong, other, i, id, where)
     local dep = deps[i]
     if dep == nil and strong then
         dep = strong[i]
     end
     if dep ~= nil then
-        local dst = dep[STATE]
+        local dst = other and side[dep] or dep[STATE]
         if dst.phase_id == id and dst.phase == "dying" then
-            destroy_object(dep, dst, "anchor", where, false)
+            if other and dst.side then
+                destroy_side(dep, dst, "anchor", where, false)
+            else
+                destroy_object(dep, dst, "anchor", where, false)
+            end
         end
     end
 end
@@ -1751,22 +2040,22 @@ local function scope_cascade(rec, where)
     rec.phase = "dying"
     local deps = rec.deps
     if deps then
-        local strong = rec.strong
+        local strong, other = rec.strong, deps.other
         local id = phase_counter + 1
         phase_counter = id
         local hi, lo = deps.seq - 1, deps.lo
         local outer_id = phase_id
         if hi == lo then
-            decide_entry(deps, strong, hi, id)
+            decide_entry(deps, strong, other, hi, id)
             phase_id, phase_depth = id, phase_depth + 1
-            destroy_entry(deps, strong, hi, id, where)
+            destroy_entry(deps, strong, other, hi, id, where)
         else
             for i = hi, lo, -1 do
-                decide_entry(deps, strong, i, id)
+                decide_entry(deps, strong, other, i, id)
             end
             phase_id, phase_depth = id, phase_depth + 1
             for i = hi, lo, -1 do
-                destroy_entry(deps, strong, i, id, where)
+                destroy_entry(deps, strong, other, i, id, where)
             end
         end
         phase_id, phase_depth = outer_id, phase_depth - 1
@@ -1777,6 +2066,9 @@ local function scope_cascade(rec, where)
         -- hole a collected dependent left keeps it from being reused.
         if deps.seq == 1 then
             deps.limit = MIN_LIMIT
+            if other then
+                deps.other = nil
+            end
             spare_deps = deps
             if strong then
                 spare_strong = strong
@@ -2106,7 +2398,18 @@ end
 -- it on as it is. `error(e, level)` adds that prefix; the level that
 -- reaches the caller from a function entered by a tail call is 3 on Lua
 -- 5.1, which counts the tail call as a level, and 2 on LuaJIT.
-local WRAP_PREFIXES_NUMBERS, TAIL_CALLER_LEVEL
+--
+-- Where the host tail-calls a C function by replacing the caller's frame
+-- (LuaJIT), `return error(e, 1)` from `wrapped` raises with nothing of the
+-- runtime left on the stack: the prefix is the position of the wrap
+-- function's caller, as above, and a traceback shows the C function where
+-- the wrap function was called, as the standalone interpreter shows
+-- `[C]: in function 'w'` (task 007, review round 2, carried to task 012).
+-- Lua 5.1 runs a tail-called C function in a frame of its own above the
+-- caller's, so the runtime's frames stay whatever the call looks like;
+-- there `wrapped` keeps the plain call, which gives the same message.
+-- `TAIL_RAISE` is whether the host is the first kind, found by asking it.
+local WRAP_PREFIXES_NUMBERS, TAIL_CALLER_LEVEL, TAIL_RAISE
 do
     local _, number_error = pcall(coroutine.wrap(function()
         error(5, 0)
@@ -2122,6 +2425,20 @@ do
         tail_call()
     end)
     TAIL_CALLER_LEVEL = probe == "probe" and 3 or 2
+    local function raise_by_tail_call()
+        return error("probe", 1)
+    end
+    local function tail_call_raise()
+        return raise_by_tail_call()
+    end
+    -- The call two lines below the `getinfo` is the position expected.
+    local where
+    _, probe = pcall(function()
+        local info = debug_getinfo(1, "Sl")
+        where = info.short_src .. ":" .. (info.currentline + 2)
+        tail_call_raise()
+    end)
+    TAIL_RAISE = probe == where .. ": probe"
 end
 
 -- After a resume through a wrap function: as `resumed`, then return the
@@ -2139,9 +2456,12 @@ local function wrapped(co, saved, ok, ...)
     local err = ...
     local t = type(err)
     if t == "string" or (t == "number" and WRAP_PREFIXES_NUMBERS) then
+        if TAIL_RAISE then
+            return error(err, 1)
+        end
         error(err, TAIL_CALLER_LEVEL)
     end
-    error(err, 0)
+    return error(err, 0)
 end
 
 -- "`coroutine.wrap` creates through the original and returns a function
