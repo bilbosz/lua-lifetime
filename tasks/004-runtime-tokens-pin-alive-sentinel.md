@@ -4,7 +4,7 @@ title: Runtime: `lifetime.token`, `lifetime.pin`, `lifetime.alive`, reachable-on
 status: review
 depends: [002]
 branch: task/004-runtime-tokens-pin-alive-sentinel
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/28
 commits:
 review: APPROVE (round 2)
 ---
