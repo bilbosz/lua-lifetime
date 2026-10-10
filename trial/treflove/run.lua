@@ -184,7 +184,15 @@ local SCENARIOS = {
     }
 }
 
-local only = arg and arg[1]
+-- `run.lua [--print] [SCENARIO]`: one scenario only; print every log.
+local only, print_logs
+for _, a in ipairs(arg or {}) do
+    if a == "--print" then
+        print_logs = true
+    else
+        only = a
+    end
+end
 local failed = 0
 for _, s in ipairs(SCENARIOS) do
     if not only or only == s.name then
@@ -215,6 +223,11 @@ for _, s in ipairs(SCENARIOS) do
             end
         else
             io.write("[PASS] ", s.name, " (", #lines, " lines)\n")
+            if print_logs then
+                for _, line in ipairs(lines) do
+                    io.write("  ", line, "\n")
+                end
+            end
         end
     end
 end

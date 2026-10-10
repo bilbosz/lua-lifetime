@@ -20,6 +20,13 @@ exclude_files = {
     ".lua_modules/**"
 }
 
+files["trial/treflove/stubs"] = {
+    -- The trial's stand-ins for Treflove modules outside the slice (task
+    -- 009) run in the environment of trial/treflove/harness.lua, where
+    -- Treflove's globals live.
+    read_globals = {"class", "app", "trial_log"}
+}
+
 files["bin/lifetime"] = {
     -- The command script: arg is set by the interpreter.
     read_globals = {"arg"}
