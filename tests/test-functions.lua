@@ -573,11 +573,16 @@ test.case("__destroy on the shared metatable of functions and coroutines runs wi
     end
     names[f], names[g], names[h] = "f", "g", "h"
     local a = new_logged(log, "a")
+    -- The test holds h's anchor: h's record names it weakly, so an anchor
+    -- nothing else holds may be collected before the `destroy`, and its
+    -- cascade would kill h with "anchor" (docs/02-semantics.md,
+    -- "Reachability is the collector's").
+    local b = {}
     with_type_metatable(f, type_logger(log, names), function()
         attach(f, false, a)
         attach(g, false, a)
         destroy(a)
-        destroy(attach(h, false, {}))
+        destroy(attach(h, false, b))
     end)
     test.assert_deep_eq(log, {"a (destroy)", "g (anchor)", "f (anchor)", "h (destroy)"})
 
