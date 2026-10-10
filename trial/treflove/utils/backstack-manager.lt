@@ -42,7 +42,7 @@ function BackstackManager:back()
     local top = self:get_top()
     if top then
         local cb = top.cb
-        destroy(top)
+        lifetime.destroy(top)
         cb()
     end
 end

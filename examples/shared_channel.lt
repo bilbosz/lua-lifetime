@@ -36,7 +36,7 @@ local function last_of(name, ...)
   local live = select("#", ...)
   local function count_down()
     live = live - 1
-    if live == 0 then destroy(span) end
+    if live == 0 then lifetime.destroy(span) end
   end
   for i = 1, live do
     local anchor = select(i, ...)
@@ -53,7 +53,7 @@ do
   local ch = Channel.new() @ last_of("channel", producer, consumer)
 
   ch:send("hello")
-  destroy(producer)                   -- producer is gone, channel survives
+  lifetime.destroy(producer)                   -- producer is gone, channel survives
   print(lifetime.alive(ch), ch:recv())   --> true  hello
   -- The formula names the token, which outlives the producer.
   print(lifetime.format(lifetime.of(ch)))
@@ -65,6 +65,6 @@ do
   local buf  = { bytes = 16 } @ lifetime.scope
   local conn = { peer = "a" }  @ lifetime.scope
   local view = { off = 0 }     @ (buf, conn)
-  destroy(conn)
+  lifetime.destroy(conn)
   print(lifetime.alive(buf), lifetime.alive(view))   --> true  false
 end

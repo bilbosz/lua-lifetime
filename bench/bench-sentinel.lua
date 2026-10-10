@@ -5,7 +5,7 @@
 --
 --   sentinel/anchor-100   100 objects with a `__destroy` anchored with the
 --                         implicit `reachable` term (each needs a
---                         sentinel), then destroy(anchor); against the
+--                         sentinel), then lifetime.destroy(anchor); against the
 --                         same 100 objects attached pinned (`attach`'s pin
 --                         flag, as `@ lifetime.pin(a)` is: no proxy)
 --   sentinel/collect-100  100 objects with a `__destroy` registered with

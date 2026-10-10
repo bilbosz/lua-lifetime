@@ -11,8 +11,8 @@ calls into.
   runs on Lua 5.1 and LuaJIT comes out. See [04-transpiler.md](04-transpiler.md).
 - **Runtime.** `require("lifetime")` is the `lifetime` table of the
   language itself: `lifetime.token`, `lifetime.pin`, `lifetime.reachable`, `lifetime.of`,
-  `lifetime.alive`, `lifetime.dependents`, `lifetime.format`, and the
-  builtins `destroy` and `discard`. It keeps every object's anchors and
+  `lifetime.alive`, `lifetime.dependents`, `lifetime.format`,
+  `lifetime.destroy` and `lifetime.discard`. It keeps every object's anchors and
   dependents, runs cascades in a defined order, and tombstones what died.
   See [03-runtime.md](03-runtime.md).
 - **Not a language.** The language is Lua's; `lua-lifetime` adds ownership
@@ -43,7 +43,7 @@ rules this example relies on.
 
 ## What is deterministic and what is not
 
-Ownership is deterministic: anchored lifetimes, scope exits, `destroy`,
+Ownership is deterministic: anchored lifetimes, scope exits, `lifetime.destroy`,
 the cascade order, hooks and destructors run by them happen exactly where
 the program says. Plain reachability is Lua's collector: an object nobody
 anchored, or an anchored object that nothing refers to any more, dies when

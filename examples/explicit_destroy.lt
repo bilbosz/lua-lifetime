@@ -6,7 +6,7 @@
 -- `lifetime.alive`"). Spelling: `lifetime.scope()` after `@` is
 -- `lifetime.scope`.
 --
--- destroy() ends a lifetime early; the later scope exit is then a no-op.
+-- lifetime.destroy() ends a lifetime early; the later scope exit is then a no-op.
 
 local Lock = {}
 Lock.__index = Lock
@@ -23,6 +23,6 @@ end
 do
   local a = Lock.acquire("a") @ lifetime.scope
   local b = Lock.acquire("b") @ lifetime.scope
-  destroy(a)                 --> release a
+  lifetime.destroy(a)                 --> release a
   print(lifetime.alive(a), lifetime.alive(b))   --> false  true   (a is a tombstone)
 end                          --> release b

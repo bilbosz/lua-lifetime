@@ -37,7 +37,7 @@ local function tick(seconds)
   end
   for i = 1, #due do
     local f = due[i].f
-    destroy(due[i])             -- out of the queue, and no longer referring to its owner
+    lifetime.destroy(due[i])             -- out of the queue, and no longer referring to its owner
     f()
   end
 end
@@ -58,7 +58,7 @@ b:show()
 --> show a
 --> show b
 tick(1)                         -- nothing is due yet
-destroy(b)
+lifetime.destroy(b)
 --> hint b closed (destroy)     its timer entry dies in the cascade and leaves the queue
 tick(2)
 --> hide a                      only a's timer is left to fire

@@ -57,5 +57,6 @@ during implementation and review.
 | 013 | Benchmark harness: one process per benchmark file | 011 |
 | 014 | Runtime: unwind scopes at the raise point from a message handler of `pcall` and `xpcall` | 012 |
 | 015 | Make the unit tests that fail now and then under LuaJIT deterministic without weakening what they assert | 012 |
+| 016 | Emitter: drop the `destroy`/`discard` builtin binding; `lifetime.destroy` and `lifetime.discard` are the only spelling | |
 
 Keep this table in sync when adding tasks.

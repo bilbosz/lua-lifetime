@@ -1,7 +1,7 @@
 -- release_chain.lt: port of xd/examples/release_chain.xd. Heading:
 -- deviation (docs/07-conformance.md). What differs, and the decisions of
 -- xd/docs/10-lua-lifetime-decisions.md that cause it:
---   - decision 10: one destroy() runs the chain in C++ order, each
+--   - decision 10: one lifetime.destroy() runs the chain in C++ order, each
 --     object's own destructor before its dependents, most recently
 --     anchored first; `xd` ran dependents before anchors. Inside
 --     `Connection:release` the session is still alive, so a nested
@@ -60,7 +60,7 @@ open(conn)
 print("connection owns " .. #lifetime.dependents(conn) .. ", session owns " .. #lifetime.dependents(conn.session))
 --> connection owns 1, session owns 2
 
-destroy(conn)
+lifetime.destroy(conn)
 --> release connection (destroy)   the anchor's own body first
 -->   session field is session; socket closed
 --> release session (anchor)       then its dependent, body first

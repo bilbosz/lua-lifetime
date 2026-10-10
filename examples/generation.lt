@@ -16,9 +16,9 @@
 --     term.
 --
 -- From the Treflove comparison (xd/docs/09-lessons-from-treflove.md, idioms
--- D and H): a rebuild is destroy(generation) plus recreate. Everything a
+-- D and H): a rebuild is lifetime.destroy(generation) plus recreate. Everything a
 -- script creates is anchored to its generation, so reloading the script is
--- one destroy() and the host never has to know what the script made:
+-- one lifetime.destroy() and the host never has to know what the script made:
 -- lifetime.dependents(generation) is the inventory.
 
 local Token = {}
@@ -36,7 +36,7 @@ local function count(t) local n = 0 for _ in pairs(t) do n = n + 1 end return n 
 local host = {}
 
 function host:load(script)
-  destroy(self.generation)        -- destroy(nil) is a no-op the first time
+  lifetime.destroy(self.generation)        -- lifetime.destroy(nil) is a no-op the first time
   local generation = lifetime.token("generation") @ self
   self.generation = generation
   local api = {
@@ -72,7 +72,7 @@ end)
 --> despawn goblin (anchor)
 --> generation owns: token dragon; timers pending: 0
 
-destroy(host.generation)
+lifetime.destroy(host.generation)
 --> despawn dragon (anchor)
 print("unloaded; host.generation is " .. tostring(host.generation))
 --> unloaded; host.generation is dead token generation

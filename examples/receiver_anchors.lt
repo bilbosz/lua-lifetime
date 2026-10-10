@@ -67,7 +67,7 @@ print("the caller got", tostring(returned))
 local session = {}
 local third = open_log("third") @ session
 print("anchored to the session", third.name)
-destroy(session)
+lifetime.destroy(session)
 print("session destroyed", getmetatable(third))
 --> anchored to the session	third
 --> close third (anchor)

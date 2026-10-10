@@ -3,7 +3,7 @@
 The slice of Treflove that idioms A, B and C of
 `xd/docs/notes/xd-in-treflove.md` describe, rewritten with lifetimes,
 transpiled by this repository's transpiler and run under LuaJIT with
-Treflove's own test doubles. It shows one `destroy(connection)` tearing
+Treflove's own test doubles. It shows one `lifetime.destroy(connection)` tearing
 down the session tree in the order of `docs/02-semantics.md`, "Cascading
 death", and an input unlinking itself from its form.
 
@@ -55,7 +55,7 @@ Each edit carries a `-- lua-lifetime:` comment in the file.
   `__call` registers every instance with `obj @ lifetime.reachable` right
   after `setmetatable`, before `init`. Nothing else.
 - **`networking/connection-manager.lt`**: `ConnectionManager:remove` ends in
-  `destroy(connection)` instead of `connection:release()`. The three table
+  `lifetime.destroy(connection)` instead of `connection:release()`. The three table
   removals before it stay (see "What the note says that does not hold").
 - **`networking/remote-procedure.lt`**: `RemoteProcedure:release` loses
   `self._connection = nil`; it is `self:stop()` only, so a second,
@@ -68,7 +68,7 @@ Each edit carries a `-- lua-lifetime:` comment in the file.
   span is a token (idiom C; `docs/02-semantics.md`, "Tokens"): `_on_login`
   makes `lifetime.token("period") @ self`, keeps it in `self._period`, and
   anchors the user menu screen and the back entry to it; `_on_logout` is
-  `destroy(self._period)` followed by `self._period = nil`, and shows
+  `lifetime.destroy(self._period)` followed by `self._period = nil`, and shows
   `LoginScreen(self._login) @ self`.
   `self._user_menu_screen = nil` stays (a dead screen is a tombstone, not
   `nil`); `_backstack_cb` is gone.
@@ -143,7 +143,7 @@ with two collections that must log nothing.
 
 Written by hand from "Cascading death" before the first run (commit
 `5e9e92c`), then compared. On the client, after a login,
-`ConnectionManager:remove` runs `destroy(connection)`:
+`ConnectionManager:remove` runs `lifetime.destroy(connection)`:
 
 ```
 > client: connection_manager:remove(connection)
@@ -196,7 +196,7 @@ collections clear it.
 
 `backstack_manager:back()` destroys the entry (depth 1 to 0) and runs its
 callback, `session:logout()`; the server answers; the client's
-`_on_logout` runs `destroy(self._period)`: the entry is already dead and
+`_on_logout` runs `lifetime.destroy(self._period)`: the entry is already dead and
 skipped, the menu screen dies with depth 0, and `LoginScreen(...) @ self`
 is shown. The disconnect then destroys the login screen first among the
 session's dependents (the newest), before the procedures.
@@ -205,9 +205,9 @@ session's dependents (the newest), before the procedures.
 
 | Run | Statement | Log | After |
 | --- | --- | --- | --- |
-| input first | `destroy(a)` | `TestInput destroyed (destroy) a`, then `FormScreen:remove_input(a)`: the hook runs after the input's body, while `a` is dying and findable | `inputs: {b}` |
-| form first | `destroy(form)` | `FormScreen:release(destroy)` and nothing else: both hooks find the flag | `inputs: {a, b}`, both inputs alive with no hook left |
-| one cascade | `destroy(period)`, with `form @ period` and each input `@ form` | `FormScreen:release(anchor)`, `TestInput destroyed (anchor) b`, `TestInput destroyed (anchor) a`, no `remove_input` | everything dead |
+| input first | `lifetime.destroy(a)` | `TestInput destroyed (destroy) a`, then `FormScreen:remove_input(a)`: the hook runs after the input's body, while `a` is dying and findable | `inputs: {b}` |
+| form first | `lifetime.destroy(form)` | `FormScreen:release(destroy)` and nothing else: both hooks find the flag | `inputs: {a, b}`, both inputs alive with no hook left |
+| one cascade | `lifetime.destroy(period)`, with `form @ period` and each input `@ form` | `FormScreen:release(anchor)`, `TestInput destroyed (anchor) b`, `TestInput destroyed (anchor) a`, no `remove_input` | everything dead |
 
 In the third run each input was anchored to the form after its own
 `init` had attached the hook, so the form's list reads hook a, a, hook

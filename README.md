@@ -25,7 +25,7 @@ end
 Lua source with `@`, the hook operator `!@` and `lifetime.scope` goes in,
 plain Lua 5.1 comes out, and the generated code calls into the runtime
 module `lifetime`, which is the language's own `lifetime` table.
-Ownership is deterministic: anchored lifetimes, scope exit, `destroy`,
+Ownership is deterministic: anchored lifetimes, scope exit, `lifetime.destroy`,
 the cascade order, hooks and destructors run by them. Plain reachability
 is Lua's collector, with `collectgarbage("collect")` as the point a
 program may rely on.

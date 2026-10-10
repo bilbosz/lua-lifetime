@@ -159,7 +159,7 @@ only to objects on the default formula and to objects created during that
 same destroy phase. Moving an older, explicitly anchored object, the dying
 object included, is `attempt to move an anchored table during destruction`.
 "That same destroy phase" is the innermost one running where the `@`
-executes; one phase is one `destroy()` or `discard()` call, one scope exit
+executes; one phase is one `lifetime.destroy()` or `lifetime.discard()` call, one scope exit
 with dependents, one finalizer run, or the program-end sweep.
 
 Constructors return objects on the default lifetime and leave anchoring to
@@ -277,13 +277,13 @@ of `xd` replaced by syntax through decision 5. `xd`'s "The caller's scope"
   (as does `!@`, and the marker as the left operand of either), indexing,
   assigning or calling it raises `attempt to index lifetime.scope`,
   `tostring` renders `lifetime.scope`, `getmetatable` gives the string
-  `"lifetime.scope"`, and `destroy`, `discard`, `lifetime.of` and
+  `"lifetime.scope"`, and `lifetime.destroy`, `lifetime.discard`, `lifetime.of` and
   `lifetime.format` refuse it with their argument error (`object expected,
   got lifetime.scope`). So a scope cannot be stored, returned,
   compared or passed as an argument. There is therefore no dead scope
   token and no loop-iteration trap: a scope is named only from inside
   itself.
-- `destroy` of a scope is impossible; scopes end when their block exits.
+- `lifetime.destroy` of a scope is impossible; scopes end when their block exits.
 - There is no anchor for the calling function's block. A function cannot
   name its caller's scope; it returns the object on the default lifetime
   and the receiver anchors it where it wants it, as constructors do
@@ -323,7 +323,7 @@ function Session:login(user)
 end
 
 function Session:logout()
-  destroy(self.period)             -- the entry, then the menu, in reverse order of attachment
+  lifetime.destroy(self.period)             -- the entry, then the menu, in reverse order of attachment
 end
 ```
 
@@ -423,9 +423,9 @@ is how a hook is run early, cancelled or moved:
 
 ```lua
 local hook = fn !@ self
-destroy(hook)       -- runs fn now with reason "destroy"; hook is dead afterwards
-destroy(hook)       -- no-op: a dead hook does nothing
--- instead: discard(hook)  cancels it, fn never runs
+lifetime.destroy(hook)       -- runs fn now with reason "destroy"; hook is dead afterwards
+lifetime.destroy(hook)       -- no-op: a dead hook does nothing
+-- instead: lifetime.discard(hook)  cancels it, fn never runs
 -- instead: hook @ other   re-targets it, fn runs when other dies
 ```
 
@@ -439,10 +439,10 @@ destroy(hook)       -- no-op: a dead hook does nothing
 - The name is fixed at creation: storing the hook somewhere else later
   does not rename it.
 - Holding a handle does not lengthen the hook's life; dropping it does not
-  shorten it. A hook dies by its anchors, by `destroy`, or by `discard`.
+  shorten it. A hook dies by its anchors, by `lifetime.destroy`, or by `lifetime.discard`.
 - After it runs the hook is dead: a hook runs at most once.
-  `lifetime.alive(hook)` is then `false`, `destroy` and `discard` on it are
-  no-ops, and `hook @ other` raises the dead-object error. `discard` on a
+  `lifetime.alive(hook)` is then `false`, `lifetime.destroy` and `lifetime.discard` on it are
+  no-ops, and `hook @ other` raises the dead-object error. `lifetime.discard` on a
   live hook cancels it.
 
 Errors raised by the function follow the destructor error rule below.
@@ -452,21 +452,25 @@ Errors raised by the function follow the destructor error rule below.
 *From `xd/docs/02-lifetimes.md`, "Explicit destruction"; `xd/docs/04-syntax.md`,
 "Built-in functions"; no-op rules by decision 10.*
 
-- `destroy(obj)` ends `obj`'s lifetime now, whatever its formula, with
+- `lifetime.destroy(obj)` ends `obj`'s lifetime now, whatever its formula, with
   the full cascade. It works on any object the runtime can see, including
-  one on the default lifetime. `destroy(nil)` is a no-op. `destroy` on a
+  one on the default lifetime. `lifetime.destroy(nil)` is a no-op. `lifetime.destroy` on a
   dead object, or on one whose own destruction has begun (its body has
   started or it is being tombstoned), is a no-op. On a dependent that the
   decide phase has marked dying but the destroy phase has not reached
-  yet, `destroy` runs it now, as a cascade of its own: a destructor body
+  yet, `lifetime.destroy` runs it now, as a cascade of its own: a destructor body
   may therefore destroy its own dependents by hand, early and in the
   order it chooses, and the runtime's later pass skips them (C++ makes
   the double delete undefined; the no-op is the safe reading;
-  [05-decisions.md](05-decisions.md), "`destroy` by hand inside a
+  [05-decisions.md](05-decisions.md), "`lifetime.destroy` by hand inside a
   destructor").
-  `destroy(5)` is `bad argument #1 to 'destroy' (object expected, got
-  number)`.
-- `discard(obj)` does the same but skips `obj`'s own destructor (its
+  `lifetime.destroy(5)` is `bad argument #1 to 'destroy' (object expected, got
+  number)`. `destroy` and `discard` are not builtins and not bound by
+  the transpiler: they are fields of the `lifetime` table like `of` and
+  `alive`, and a program's own global `destroy` is its own
+  ([05-decisions.md](05-decisions.md), "`destroy` and `discard` are
+  spelled `lifetime.destroy` and `lifetime.discard`").
+- `lifetime.discard(obj)` does the same but skips `obj`'s own destructor (its
   `__destroy`, or for a hook its function). Dependents are still destroyed
   normally. On a hook this is "cancel".
 - Destroying an object does not affect its anchors.
@@ -499,7 +503,7 @@ decided. When an anchor `A` dies:
    3. it is emptied and tombstoned.
 
 A scope has no body: scope exit destroys the objects anchored to it in
-reverse attachment order, like locals in C++. `destroy(A)` is the same
+reverse attachment order, like locals in C++. `lifetime.destroy(A)` is the same
 walk with `A` as the root and reason `"destroy"` for `A`.
 
 ```lua
@@ -556,7 +560,7 @@ end
    may not anchor to `self`, to any other dying object, or move anything
    that predates the destroy phase ("No moves during destruction").
 5. `reason` is `"anchor"` when an anchor's death made the formula false
-   (a scope exit included), `"destroy"` for `destroy(obj)`,
+   (a scope exit included), `"destroy"` for `lifetime.destroy(obj)`,
    `"unreachable"` when the collector found the object, and `"exit"` for
    the program-end sweep. There is no third argument: `remaining` is gone
    with the `any` combinator (decision 10). What, if anything, takes its
@@ -568,7 +572,7 @@ end
 7. Which objects the runtime can notify: those it has seen. An object is
    seen once it has been anchored with `@` (`@ lifetime.reachable`
    included), used as an anchor, given a hook, created by `lifetime.token`,
-   or passed to `destroy`, `discard` or `lifetime.of`. A plain Lua table with a `__destroy` that
+   or passed to `lifetime.destroy`, `lifetime.discard` or `lifetime.of`. A plain Lua table with a `__destroy` that
    the runtime never saw is collected silently, as Lua collects it; `x @
    lifetime.reachable` is the way to register an object on the default
    lifetime so that its destructor runs when the collector finds it. This
@@ -583,7 +587,7 @@ end
 repository's decision ([05-decisions.md](05-decisions.md), "The dead
 metatable raises").*
 
-When a table dies by cascade, scope exit or `destroy`, the runtime empties
+When a table dies by cascade, scope exit or `lifetime.destroy`, the runtime empties
 it (every field, including the array part) and gives it the **dead
 metatable**. References to it stay where they are: in locals, upvalues,
 fields, keys of weak and strong tables. Identity is kept: two different
@@ -595,7 +599,7 @@ dead objects are still different, and `t[dead]` still finds the entry.
   with `index`, `assign to` or `call` as the verb. `<name>` is
   `tostring(obj)` as it read just before the object died, so a
   `__tostring` gives it a name; `<where>` is the source position of the
-  statement that caused the cascade (the `destroy` call, the block exit,
+  statement that caused the cascade (the `lifetime.destroy` call, the block exit,
   or `collector` for a death the collector found); `<reason>` is the reason
   of "`__destroy` and reasons".
 - `rawget`, `rawset`, `next`, `pairs`, `#` and `==` do not raise: they see
@@ -614,7 +618,7 @@ dead objects are still different, and `t[dead]` still finds the entry.
   runtime made and never kills, so `alive` is `true` for them.
 - A dead function, coroutine or userdata cannot be emptied or given a
   per-instance metatable. The runtime remembers that it died so that
-  `lifetime.alive` reads `false`, `destroy` and `discard` are no-ops, and
+  `lifetime.alive` reads `false`, `lifetime.destroy` and `lifetime.discard` are no-ops, and
   `@` raises `attempt to move a dead function (<name>, died at <where>,
   <reason>)` (with `thread` or `userdata` for the other two);
   `lifetime.of` and `lifetime.format` raise the same with `index`. Using
@@ -648,15 +652,15 @@ rule, whatever caused the death:
 
 - If no error is already propagating, the **first** error of the cascade is
   held until the rest of the cascade has finished and then propagates to
-  the statement that caused the death: the `destroy` call, or the block
+  the statement that caused the death: the `lifetime.destroy` call, or the block
   exit (`return`, `break`, `goto`, or a loop iteration included). From
   then on it counts as propagating for the rest of its cascade.
 - Every error raised while an error is already propagating (a later
   destructor of the same cascade, or any destructor running because a
   scope is unwinding) goes to `destroyerror` and the original error
   continues.
-- One cascade is one `destroy()` or `discard()` call, one scope exit, one
-  finalizer run, or the whole program-end sweep; a `destroy()` inside a
+- One cascade is one `lifetime.destroy()` or `lifetime.discard()` call, one scope exit, one
+  finalizer run, or the whole program-end sweep; a `lifetime.destroy()` inside a
   destructor is a cascade of its own and raises to that call.
 - A destructor run by the collector (reason `"unreachable"`, or `"exit"`
   at program end) has no statement to raise at: the sentinel's finalizer
@@ -726,7 +730,7 @@ when that is, except:
 - `collectgarbage` keeps all of its Lua 5.1 options; nothing is removed.
 
 Everything else stays exact and synchronous: anchored lifetimes, scope
-exit, `destroy`, the cascade order, hooks and destructors run by them.
+exit, `lifetime.destroy`, the cascade order, hooks and destructors run by them.
 
 ## Coroutines
 
@@ -802,8 +806,8 @@ object being anchored, not of `x`.
 **Error texts** follow `xd/docs/04-syntax.md`, "Error texts": a runtime
 error in the lifetime vocabulary reads `attempt to <verb> … <type> value`;
 an argument error reads Lua's `bad argument #N to 'name' (<what> expected,
-got <type>)`, with `name` qualified by the table for `lifetime.*` and bare
-for `destroy` and `discard`. "object" means a table, function, coroutine,
+got <type>)`, with `name` the field's (`'destroy'`, `'of'`), as Lua
+names a function called through a table field. "object" means a table, function, coroutine,
 hook, token or userdata. Everything the standalone interpreter adds to a
 message (a position prefix, a traceback) is Lua's own.
 
@@ -830,14 +834,14 @@ reduced to what a transpiler can honour.*
 
 | Object is… | Kept alive by | Killed by |
 | --- | --- | --- |
-| `@ lifetime.reachable` (the default) | being referenced | the collector, `destroy()` |
-| `@ a` | `a`, while something refers to the object | `a`'s death, the collector, `destroy()` |
-| `@ lifetime.scope` | the block, while referenced | block exit by any route, the collector, `destroy()` |
-| `@ (a, b)` | both, while referenced | whichever dies first, the collector, `destroy()` |
-| `@ lifetime.pin(a)` | `a` | `a`'s death, `destroy()` |
-| `@ lifetime.pin(a, b)` | both | whichever dies first, `destroy()` |
-| `f !@ a` | `a` | `a`'s death, `destroy()`, cancelled by `discard()` |
-| `@ lifetime.of(x)` | what `x` had at that moment | any part failing, `destroy()` |
+| `@ lifetime.reachable` (the default) | being referenced | the collector, `lifetime.destroy()` |
+| `@ a` | `a`, while something refers to the object | `a`'s death, the collector, `lifetime.destroy()` |
+| `@ lifetime.scope` | the block, while referenced | block exit by any route, the collector, `lifetime.destroy()` |
+| `@ (a, b)` | both, while referenced | whichever dies first, the collector, `lifetime.destroy()` |
+| `@ lifetime.pin(a)` | `a` | `a`'s death, `lifetime.destroy()` |
+| `@ lifetime.pin(a, b)` | both | whichever dies first, `lifetime.destroy()` |
+| `f !@ a` | `a` | `a`'s death, `lifetime.destroy()`, cancelled by `lifetime.discard()` |
+| `@ lifetime.of(x)` | what `x` had at that moment | any part failing, `lifetime.destroy()` |
 
 Any row can be swapped for any other at run time by writing `@` again on
 the live object.

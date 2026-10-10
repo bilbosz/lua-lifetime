@@ -39,7 +39,7 @@ local function _on_logout(self)
     self._user = nil
     if app.is_client then
         -- lua-lifetime: pops the back entry, then destroys the menu screen.
-        destroy(self._period)
+        lifetime.destroy(self._period)
         self._period = nil
         self._user_menu_screen = nil
         app.screen_manager:show(LoginScreen(self._login) @ self)

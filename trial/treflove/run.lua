@@ -167,17 +167,17 @@ local SCENARIOS = {
     {
         -- Test case 2, first run.
         name = "input_first",
-        expected = concat("inputs: {a, b}", "> destroy(a)", "TestInput destroyed (destroy) a", "FormScreen:remove_input(a)", "inputs: {b}, a alive: false, b alive: true", "> cleanup: destroy(form), destroy(b)", "FormScreen:release(destroy)", "TestInput destroyed (destroy) b", END)
+        expected = concat("inputs: {a, b}", "> lifetime.destroy(a)", "TestInput destroyed (destroy) a", "FormScreen:remove_input(a)", "inputs: {b}, a alive: false, b alive: true", "> cleanup: lifetime.destroy(form), lifetime.destroy(b)", "FormScreen:release(destroy)", "TestInput destroyed (destroy) b", END)
     },
     {
         -- Test case 2, second run.
         name = "form_first",
-        expected = concat("hooks on a: 1, on b: 1", "> destroy(form)", "FormScreen:release(destroy)", "inputs: {a, b}, form alive: false", "hooks on a: 0, on b: 0", "> cleanup: destroy(a), destroy(b)", "TestInput destroyed (destroy) a", "TestInput destroyed (destroy) b", END)
+        expected = concat("hooks on a: 1, on b: 1", "> lifetime.destroy(form)", "FormScreen:release(destroy)", "inputs: {a, b}, form alive: false", "hooks on a: 0, on b: 0", "> cleanup: lifetime.destroy(a), lifetime.destroy(b)", "TestInput destroyed (destroy) a", "TestInput destroyed (destroy) b", END)
     },
     {
         -- Test case 2, third run.
         name = "one_cascade",
-        expected = concat("> destroy(period)", "FormScreen:release(anchor)", "TestInput destroyed (anchor) b", "TestInput destroyed (anchor) a", "inputs: {false, false}, form alive: false", END)
+        expected = concat("> lifetime.destroy(period)", "FormScreen:release(anchor)", "TestInput destroyed (anchor) b", "TestInput destroyed (anchor) a", "inputs: {false, false}, form alive: false", END)
     },
     {
         -- Test case 3. Within one collection the collector finalizes newest

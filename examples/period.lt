@@ -14,7 +14,7 @@
 --
 -- From the Treflove comparison (xd/docs/09-lessons-from-treflove.md, idiom
 -- C): a span of time is an empty table with a lifetime. Logging in creates
--- a period anchored to the session; logging out is destroy(period). The
+-- a period anchored to the session; logging out is lifetime.destroy(period). The
 -- back-stack entry and the menu screen are anchored to the period, so
 -- logout pops the one and closes the other without either being tracked,
 -- and a disconnect while logged in takes all of it down in one cascade.
@@ -45,7 +45,7 @@ local function back()
   local top = backstack[#backstack]
   if top then
     local cb = top.cb
-    destroy(top)              -- `top` is a tombstone after this line
+    lifetime.destroy(top)              -- `top` is a tombstone after this line
     cb()
   end
 end
@@ -64,7 +64,7 @@ end
 
 function Session:logout()
   print("logout")
-  destroy(self.period)
+  lifetime.destroy(self.period)
   print("menu alive: " .. tostring(lifetime.alive(self.menu)) .. ", period alive: " .. tostring(lifetime.alive(self.period)))
 end
 
@@ -75,7 +75,7 @@ do
   back()
   --> popped back entry, 0 left     the entry dies, then its callback runs
   --> logout
-  --> close menu (anchor)           destroy(period) takes the menu with it
+  --> close menu (anchor)           lifetime.destroy(period) takes the menu with it
   --> menu alive: false, period alive: false
   session:login("alice")
   --> login alice
