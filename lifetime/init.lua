@@ -2470,8 +2470,11 @@ end
 -- message handler until a throw caught by a protected call resets the
 -- mark: an `xpcall`, or the runtime's `pcall`, made inside the handler
 -- fails at once with `error in error handling` instead of calling its
--- handler. The unwinding runs destructors, which may make such calls (the
--- task file, round 2, F1), so on that host the handler raises one error
+-- handler. The unwinding runs destructors, which may make such calls
+-- (docs/03-runtime.md, "The scope stack and the error path": "the
+-- runtime clears that status with one throw through the original `pcall`
+-- before it unwinds, so a destructor run by the unwinding may use `pcall`
+-- as anywhere else"), so on that host the handler raises one error
 -- through the original `pcall` before it unwinds, and the destructors
 -- run as they would outside a handler. The user's `h` of an `xpcall` has
 -- run by then, under the mark, as under the host's own `xpcall`. Lua 5.1
@@ -2702,8 +2705,11 @@ else
     -- that is not callable, and a call with no arguments at all (whose
     -- argument error the original raises) go to the original `pcall`,
     -- which calls them as Lua does, and the records are unwound when it
-    -- returns, as the catch-site runtime did (the task file, "Spec issues
-    -- found"). A value that is not callable fails before anything could
+    -- returns, as the catch-site runtime did (docs/02-semantics.md,
+    -- "Scopes: `lifetime.scope`", the host limit; docs/03-runtime.md,
+    -- "The scope stack and the error path"; docs/05-decisions.md,
+    -- "Unwinding at the raise point: the Lua 5.1 host limits and cost").
+    -- A value that is not callable fails before anything could
     -- be pushed.
     local unpack = unpack
     local carried_f, carried_1, carried_2, carried_3, carried_rest

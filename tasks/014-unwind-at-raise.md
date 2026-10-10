@@ -1,12 +1,12 @@
 ---
 id: 014
 title: Runtime: unwind scopes at the raise point from a message handler of `pcall` and `xpcall`
-status: in-progress
+status: review
 depends: [012]
 branch: task/014-unwind-at-raise
 pr:
 commits:
-review:
+review: APPROVE (round 2)
 ---
 
 ## Goal
@@ -445,6 +445,35 @@ more arguments is the implementer's.
    the runtime keeps that.
 
 ## Review log
+
+### Round 1 review: REQUEST_CHANGES
+
+Head `91b7921`. Correct on both hosts for every promise of 02 except
+two findings; `examples/unwind.lt` stable under the eager collector on
+both hosts (master fails on 5.1). F1 (blocking): on LuaJIT the first
+protected call inside a destructor run by the handler's unwinding
+returned `error in error handling` and a record it pushed was left
+behind (the host's in-handler status). F2 (blocking): one case was
+JIT-state dependent (4 of 25 LuaJIT runs). F3: C functions and
+callables with arguments on Lua 5.1 unwind at the catch site; settled
+by the spec restatement `spec/unwind-at-raise-hosts` (02, the host
+limit). F4: task prose. F5: the Lua 5.1 cost (`pcall-args` 1.8-2.0,
+`pcall-error` 1.12-1.23, `pcall-empty` 1.10-1.15); the reviewer found
+no cheaper shape; settled by the same spec restatement (03, "Forced,
+and measured"). F6: the first `xpcall` per stack table allocated.
+
+### Round 2 review: APPROVE
+
+Head `10d5c0b`. `make test` 360/360 under both interpreters,
+conformance 75/75, trial matches; `make lint` clean; 50 LuaJIT and 20
+Lua 5.1 unit runs green; bench on `bench-scopes.lua`: Lua 5.1 rows
+inside the recorded bound, LuaJIT at parity, the F1 throw not visible.
+F1 verified by the reviewer's own programs including recursion (a
+destructor's `pcall` whose unwinding runs another destructor using
+`pcall`) and by the three new tests; the throw is not
+program-observable. One non-blocking finding: two comments cited the
+task file where 03 and 05 now hold the sentences; applied by the
+orchestrator in the approval commit after merging master `6cb54e1`.
 
 ### Round 2 (implementer)
 
