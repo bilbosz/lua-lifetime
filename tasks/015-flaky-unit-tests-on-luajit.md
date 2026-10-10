@@ -88,4 +88,35 @@ measured loop stays covered by `bench/bench-scopes.lua`.
 
 ## Spec issues found
 
+1. Clarification, not blocking; no change of semantics. Proxy reuse
+   does **not** break "newest first by creation": in every failing
+   round of the proxy-reuse test the proxies' creation order was
+   x1 < y1 (x3's proxy) < y2 (x4's proxy), and each collection
+   finalized its share newest first. What the test met is a case
+   docs/02-semantics.md, "Reachability is the collector's", leaves
+   implicit: objects dropped at one moment can die in **two**
+   collections. If an incremental cycle is under way at the drop and
+   a collector step runs between the drop and `collectgarbage
+   ("collect")`, the cycle finishes and finalizes the dropped objects
+   it had not yet marked; the call finalizes the rest. Program (the
+   test before task 015, under `collectgarbage("setpause", 10)` and
+   `collectgarbage("setstepmul", 1000)`, LuaJIT; Lua 5.1 can do the same
+   but was not seen to):
+
+   ```lua
+   run_dropped(make)  -- x1, y1, y2 referenced only by make's frame until here
+   test.assert_deep_eq(log, {...})  -- allocates: the running cycle may finish here
+   collectgarbage("collect")
+   -- seen: y1, x1 | y2 and x1 | y2, y1 (two cycles, each newest first)
+   ```
+
+   The existing sentence "The call is a statement of its own, in the
+   frame that dropped the reference" comes close. A sentence after it
+   would say it outright, for example: "Objects dropped together die in
+   the same collection only when no collector step runs between the drop
+   and the call. A test that checks their order releases them by
+   assignments that allocate nothing and calls `collectgarbage
+   ("collect")` next." The test now does exactly this; the doc text is
+   for a `/spec-change` if the human wants it.
+
 ## Review log
