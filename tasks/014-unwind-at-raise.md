@@ -329,4 +329,112 @@ more arguments is the implementer's.
 
 ## Spec issues found
 
+1. **The 5.1 cost bound is not met for the error path and the argument
+   passage (03, "Performance", "Forced, and measured").** Measured with
+   `make bench BASE=master`, two invocations on 2026-10-10 (branch/base,
+   pairings in parentheses; ns per 10 calls): on Lua 5.1
+   `scope/pcall-error` 1.227 (1.337, 1.131), 2072 vs 1689, then 1.165
+   (1.163, 1.167), 2125 vs 1824: `SLOWER` twice, a finding;
+   `scope/pcall-args` 2.008 (2.017, 1.999), 2272 vs 1132, then 1.866
+   (1.907, 1.827), 2267 vs 1215: `SLOWER` twice, a finding;
+   `scope/pcall-empty` 1.018 (0.955, 1.083), 1051 vs 1033, then 1.150
+   (1.142, 1.159), 1117 vs 971: marked once in two, noise by the rule of
+   `bench/README.md`, though an interleaved micro-benchmark puts the
+   success path about 4% above master's; `scope/resume-yield` 1.007 and
+   0.938. LuaJIT: no protected-call row marked (`pcall-empty` 0.891 and
+   0.918, `pcall-error` 1.003 and 0.992, `pcall-args` 0.896 and 0.926,
+   `resume-yield` 1.041 and 0.981).
+   What costs, measured with interleaved micro-benchmarks on Lua 5.1:
+   - `select("#", ...)`, about 25-30 ns per call, on every call: Lua 5.1
+     has no way to tell `pcall(f)` from `pcall(f, nil)` without it (a C
+     call or a table), and test case 5 requires the difference. The
+     stand-in of 03 (`xpcall(f, h)` against `pcall(f)`) did not count
+     arguments.
+   - The handler on the error path: the host calls a message handler from
+     C, a new VM entry, where the catch-site runtime made a Lua-to-Lua
+     tail call (`caught`). This is the mechanism 03 prescribes.
+   - The arguments: Lua 5.1 has no C function that calls a function with
+     arguments under a message handler, so a Lua carrier takes them from
+     upvalue slots and tail-calls `f`; the original `pcall` passed them in
+     C. Clearing the slots (rule 6) is part of it.
+   The mechanism chosen is the cheapest of those measured (a handler per
+   depth cost about 18 ns more on the success path than leaving the depth
+   in the wrapper's frame; a continuation that saves and restores a depth
+   marker cost more than both). Whether the bound should be restated for
+   Lua 5.1, or a different trade made, is the human's.
+
+2. **Lua 5.1: a C function given arguments is unwound at the catch site.**
+   A carrier that tail-calls a C function stays below it (5.1 runs a C
+   function entered by a tail call above its caller's frame), so the C
+   function's messages would name the carrier: its position for
+   `error(m)`, `assert` or any `luaL_error`, and its local in "bad
+   argument #1 to 'f'" (the original gives `'?'`). So a C function, a
+   callable table or userdata given arguments goes to the original
+   `pcall`, and the records it pushed are unwound when the original
+   returns, as before this task. The records concerned are those pushed
+   by Lua callbacks of the C function that raise through it: a `table.sort`
+   comparator, a module chunk under `pcall(require, name)`, a `gsub`
+   replacement function, a `__tostring` under `pcall(tostring, x)`. For
+   those, on Lua 5.1 only, the raise-point guarantee of 02 ("a dependent
+   of an unwound scope is reachable until its own destructor runs") does
+   not hold. LuaJIT passes arguments itself and is exact everywhere. A way
+   out, not taken here: a carrier compiled without line and local
+   information (a binary chunk with the debug sections removed), whose
+   frame gives no position and no name, so C functions could be carried
+   too.
+
+3. **Test case 4's `pcall(error, 42)` expectation contradicts both hosts.**
+   `error(42)` adds the position of level 1 (empty under `pcall`) and in
+   doing so turns the number into the string `"42"`; both originals
+   return a string. The test follows the host (Lua 5.1 manual, §5.1,
+   `error`) and checks `pcall(error, 42, 0)` for a number.
+
+4. **Test case 7 exits only `after`, which cannot find the records left
+   behind.** `after` is entered after the `pcall`, on top of them, and
+   02's fallback is "the next scope exit of the same coroutine that finds
+   it above itself". On LuaJIT, where the handler has no room, the
+   records are below `after` and stay until an enclosing exit or program
+   end. The test encloses the `pcall` in a record `outer` and checks that
+   `after`'s exit leaves them and `outer`'s takes them, innermost first.
+
+5. **Overflow: the handler declines rather than being cut.** 02 and 03 say
+   that when the unwinding itself overflows "the host ends it". An end in
+   the middle of the runtime's own code would lose a popped record or
+   leave dependents marked dying for good, so on an overflow error the
+   handler first checks for room (16 nested calls of a wide frame, in
+   protected mode) and unwinds nothing without it: every record then
+   stays whole for the fallback. Lua 5.1 refills the stack for a handler
+   and unwinds everything there; LuaJIT never has the room. Separately,
+   and not new: an overflow can strike inside a runtime function the
+   program called at the limit (seen in `attach`/`link`), leaving the
+   object unlinked and `busy` at 1 until the next operation; the test
+   reads the greatest `n` from the log for that reason.
+
+6. **A raising user handler is called once.** The original Lua 5.1
+   `xpcall` calls a handler that raises again for every C level (about
+   220 times) before `error in error handling`; the runtime's handler
+   marks the call and re-raises at once, so `h` runs once on both hosts,
+   as LuaJIT's original does. 02 pins the message, not the count.
+
+7. **The user handler runs two frames above the raise point.** "The
+   user's `h` is called in protected mode" puts the runtime's handler and
+   the original `pcall` between `h` and the frames that raised, so
+   `xpcall(f, debug.traceback)` shows two more lines and
+   `debug.traceback(m, 2)` in `h` starts at `pcall`. `lifetime run`'s
+   handler finds the raise point by probing once
+   (`lifetime/cli.lua`, `raise_level`), so its report is unchanged.
+
+8. **Not changed, recorded:** on Lua 5.1 the argument errors of the
+   originals (`pcall()`, `xpcall(f)`) and `error(m, 2)` given to `pcall`
+   carry the wrapper's position, as under the catch-site runtime of task
+   003 (the original is called from the wrapper's frame); LuaJIT gives
+   the caller's. A Lua function carried on Lua 5.1 is entered by a tail
+   call, so `getfenv(2)` in it raises "no function environment for tail
+   call" where the original gives `pcall`'s environment (checked). A
+   memory error does not call a message handler on Lua 5.1 (`ldo.c`
+   throws `LUA_ERRMEM` without one; read, not tested), so its records
+   are left for the fallback. LuaJIT reports an `xpcall` that fails inside a
+   message handler as `error in error handling` (its original does too);
+   the runtime keeps that.
+
 ## Review log
