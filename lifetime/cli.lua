@@ -165,15 +165,44 @@ local function error_message(err)
     return "(error object is a " .. t .. " value)"
 end
 
+-- The level, seen from a message handler given to the runtime's `xpcall`,
+-- of the function that raised: 2 under the host's `xpcall`, more under the
+-- runtime's, which calls the handler in protected mode from a handler of
+-- its own (docs/03-runtime.md, "The scope stack and the error path": "the
+-- user's `h` is called in protected mode"). Found once by raising with
+-- `error` and finding its frame.
+local function raise_level()
+    local found = 2
+    xpcall(function()
+        error("probe", 0)
+    end, function()
+        local level = 2
+        while true do
+            local info = debug.getinfo(level, "f")
+            if not info then
+                break
+            end
+            if info.func == error then
+                found = level
+                break
+            end
+            level = level + 1
+        end
+    end)
+    return found
+end
+
 -- The message handler of `run` for the chunk `main`: the message and a
 -- traceback from the raise point, as the standalone interpreter's
--- (`debug.traceback(message, 2)`), without the frames below the chunk,
--- which are this module's and the runtime's. `debug.traceback` prints
--- one line per stack level and keeps the outermost levels whole when it
--- elides, so dropping one line per level below the chunk's is exact.
+-- (`debug.traceback(message, 2)` in a handler the host calls directly),
+-- without the frames below the chunk, which are this module's and the
+-- runtime's. `debug.traceback` prints one line per stack level and keeps
+-- the outermost levels whole when it elides, so dropping one line per
+-- level below the chunk's is exact.
 local function handler_for(main)
+    local raised = raise_level()
     return function(err)
-        local text = debug.traceback(error_message(err), 2)
+        local text = debug.traceback(error_message(err), raised)
         local level, chunk_level = 2, nil
         while true do
             local info = debug.getinfo(level, "f")
