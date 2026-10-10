@@ -14,7 +14,7 @@ page is corrected.
 | No `<close>`, `goto` only on LuaJIT | Scope exit is generated code ([04-transpiler.md](04-transpiler.md)); the runtime only provides `enter`/`exit` for scope records. |
 | `__gc` on userdata only | A table whose destructor must run when the collector finds it carries a `newproxy(true)` sentinel ("The sentinel"). |
 | No ephemerons | No side table keyed by anchor. Dependents live inside the anchor (decision 3). The only side table is weak-keyed with values that never refer back to the key. |
-| No yield across `pcall` on plain 5.1 | The runtime puts no `pcall` between a block and its body: the error path unwinds at the catch site ("Scope records"), so a scoped block may yield. Destructor bodies are called in protected mode only where 02 says errors are routed. |
+| No yield across `pcall` on plain 5.1 | The runtime puts no `pcall` between a block and its body: the error path unwinds at the raise point, from the message handler of the catching `pcall` or `xpcall` ("Scope records"), so a scoped block may yield. Destructor bodies are called in protected mode only where 02 says errors are routed. |
 | Finalizers run in reverse creation order | The collector's order of 02, "Reachability is the collector's", comes for free. |
 | A finalized object stays in weak tables one more cycle | The cascade unlinks a dying dependent from its anchors' lists explicitly; it never waits for the weak entry to clear. |
 
@@ -222,7 +222,8 @@ or epilogue of their own.
 
 **The scope stack and the error path.** Scope exit on an error is the
 runtime's, not generated code's ([05-decisions.md](05-decisions.md),
-"Scopes unwind at the catch site"). Each coroutine has a **scope stack**,
+"Scopes unwind at the catch site", "Scopes unwind at the raise point").
+Each coroutine has a **scope stack**,
 a table `{n = depth, [1..n] = records}`; `S.stack` is the stack of the
 running coroutine, and the main thread's is the initial one. The block
 prologue `lifetime.enter(line)` creates the record, stores `line` (the
@@ -233,11 +234,44 @@ stack, a catch the runtime could not see left them behind: it unwinds
 them first, innermost first, then proceeds.
 
 When it is first required the runtime replaces four globals, keeping the
-originals as upvalues: `pcall` and `xpcall` read `S.stack.n` before the
-call and, when the call returns `false`, unwind every record above that
-depth, innermost first, with the error counted as propagating (02,
-"Errors in destructors": destructor errors go to `destroyerror`), then
-return what the original returned. `coroutine.resume` swaps `S.stack` to
+originals as upvalues. `pcall` and `xpcall` unwind from a **message
+handler**, at the raise point: `pcall(f, ...)` reads `S.stack.n` and
+calls the original `xpcall` on `f` with a handler of the runtime's;
+`xpcall(f, h)` does the same with a handler that wraps the user's `h`.
+Lua runs a message handler on top of the frames that raised, before
+anything is unwound, so the handler sees the stack as it was at the
+raise: the user's `h`, when there is one, runs first and its result
+replaces the error value; then the runtime unwinds every record above
+the depth it read, innermost first, with the error counted as
+propagating (02, "Errors in destructors": destructor errors go to
+`destroyerror`); then it returns the error value, which the original
+`xpcall` hands back as the second result. The locals of the raising
+frames, where the dependents of those records usually live, are
+reachable throughout, so the collector cannot finalize a dependent
+before the unwinding reaches it; that is what the catch-site mechanism
+this replaces could not promise ([05-decisions.md](05-decisions.md),
+"Scopes unwind at the raise point"). Nothing is compared after the call:
+the protected call returns what the original `xpcall` returned, and an
+error value that is not a string passes through the handler unchanged.
+Lua 5.1's `xpcall` passes no arguments to `f` (LuaJIT's does), so the
+runtime's `pcall` carries `...` to `f` itself; how is the
+implementation's choice, within the bound in "Performance". The
+runtime's handler must never raise: a destructor error is routed by the
+cascade's own protected call, and the user's `h` is called in protected
+mode so that a raise from it still unwinds the records before the
+runtime re-raises it, which gives the host's `error in error handling`
+as a raise from any message handler does. The one error that defeats
+this is a stack overflow: the host runs the handler with little room
+(LuaJIT about a dozen Lua frames, Lua 5.1 about twenty C levels after a
+C-stack overflow and a refilled Lua stack otherwise). A destructor that
+overflows there is
+caught by the cascade's protected call like any destructor error and
+the unwinding goes on; the unwinding code itself overflowing ends the
+handler, the protected call returns `false` with the host's message
+(`error in error handling` on Lua 5.1, `stack overflow` on LuaJIT), and
+the records the handler did not reach stay on the stack for `exit` or
+program end to find, as after a catch the runtime could not see.
+`coroutine.resume` swaps `S.stack` to
 the target coroutine's stack (created on first resume, held in a table
 weak in both keys and values, keyed by coroutine; each record holds its
 stack, so a stack lives exactly while its coroutine is running or has an
@@ -248,11 +282,16 @@ restores it after, which covers the yield
 path without wrapping `coroutine.yield`; when the original returns
 `false` the coroutine is dead and its whole stack is unwound.
 `coroutine.wrap` creates through the original and returns a function
-that resumes the same way and re-raises as Lua's does. The wrappers pass
-varargs through and allocate nothing. Each is a wrapper and its
-continuation, two Lua vararg frames, since a single frame cannot inspect
-the first result without packing the rest; the measured cost is in
-"Performance". Records a hidden catch left behind in a suspended
+that resumes the same way and re-raises as Lua's does. These two need
+no handler: a coroutine that died of an error keeps its frames until it
+is collected, and the wrapper holds the coroutine while it unwinds in
+the resumer's context, so the dependents of its records are reachable
+from the dead stack until their destructors run, exactly what the
+handler gives a `pcall`. The wrappers pass varargs through and allocate
+nothing on the success path. Each of `resume` and the `wrap` function is
+a wrapper and its continuation, two Lua vararg frames, since a single
+frame cannot inspect the first result without packing the rest; the
+measured cost is in "Performance". Records a hidden catch left behind in a suspended
 coroutine with no active record above them are collected with their
 stack and die through their sentinels, not at a later exit. `coroutine.running`, `coroutine.status`,
 `coroutine.create`, `coroutine.yield` and `error` are untouched.
@@ -321,7 +360,8 @@ same work by hand.
 | cascade over `n` objects | `O(n)` plus the holes in the walked ranges; no sort, no allocation except the tombstone's state |
 | `lifetime.dependents(a)` | one numeric loop over `a`'s range and the result array |
 | a block with a scope record | one record (a small table) per entry, one push and one pop; no closure, no `pcall` ("The scope stack and the error path") |
-| `pcall`, `xpcall`, `coroutine.resume`, a `coroutine.wrap` function | one wrapper frame, one field read before and one compare after; no allocation |
+| `pcall`, `xpcall` | one wrapper frame and one field read before the original `xpcall`; the handler runs only on the error path; nothing after the call. On LuaJIT no allocation; on Lua 5.1 whatever carrying the arguments to `f` costs, within the bound below |
+| `coroutine.resume`, a `coroutine.wrap` function | one wrapper frame, one field read before and one compare after; no allocation |
 
 **Forced, and measured.** Two costs follow from the spec and are paid
 only where the spec asks for them:
@@ -343,12 +383,21 @@ only where the spec asks for them:
   5.1 / LuaJIT): a loop body owning one object 27 600 / 4 300, an empty
   `enter`/`exit` 4 500 / 920, a hook on a scope 24 500 / 3 850;
 - the four replacements for `pcall`, `xpcall`, `coroutine.resume` and
-  `coroutine.wrap`, two Lua frames each where the host had a C function;
-  measured (task 003): on Lua 5.1 `pcall` of an empty function 120 vs 53
-  ns, `pcall` with an error 216 vs 123 ns, `resume`/`yield` 176 vs 75 ns;
-  on LuaJIT 2.6 vs 2.1 ns, parity, 64 vs 48 ns. `make bench` marks them
-  `SLOWER` against a base without the runtime; that mark is the design's,
-  not a regression.
+  `coroutine.wrap`, Lua frames where the host had a C function;
+  measured (task 003, the catch-site mechanism): on Lua 5.1 `pcall` of
+  an empty function 120 vs 53 ns, `pcall` with an error 216 vs 123 ns,
+  `resume`/`yield` 176 vs 75 ns; on LuaJIT 2.6 vs 2.1 ns, parity, 64 vs
+  48 ns. `make bench` marks them `SLOWER` against a base without the
+  runtime; that mark is the design's, not a regression. The message
+  handler that moved the unwinding to the raise point costs the
+  difference between the host's `xpcall` and its `pcall`: measured on
+  2026-10-10 with a stand-in (`xpcall(f, h)` with a pass-through handler
+  against `pcall(f)`, 2e6 calls), 53 against 59 ns per protected call on
+  Lua 5.1, within noise of each other, and nothing measurable on LuaJIT
+  (both below the clock's resolution). The bound task 014 is held to:
+  `scope/pcall-empty` and `scope/pcall-error` within the threshold of
+  `bench/README.md` against the catch-site runtime, with the arguments'
+  passage on Lua 5.1 included, and `scope/resume-yield` unchanged.
 
 Rules the implementation follows on hot paths: runtime functions are
 locals of the module, and the generated chunk binds the ones it calls to

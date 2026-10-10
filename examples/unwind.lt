@@ -1,11 +1,11 @@
 -- unwind.lt: the error path. The transpiler emits nothing for it; the
 -- runtime's `pcall`, `xpcall`, `coroutine.resume` and `coroutine.wrap`
--- unwind the scopes of every block between the raise and the catch,
--- innermost first, each in reverse attachment order, before they return
--- (docs/04-transpiler.md, "The error path: unwinding at the catch site";
--- docs/02-semantics.md, "Scopes: `lifetime.scope`", "Coroutines";
--- docs/05-decisions.md, "Scopes unwind at the catch site"). A scoped
--- block may yield on both hosts.
+-- unwind the scopes of every block between the raise and the catch at the
+-- raise point (a message handler; the dead coroutine's frames), innermost
+-- first, each in reverse attachment order, with every dependent reachable
+-- until its destructor runs, then return (docs/04-transpiler.md, "The
+-- error path: unwinding at the raise point"; docs/05-decisions.md, "Scopes
+-- unwind at the raise point"). A scoped block may yield on both hosts.
 
 local Res = {}
 function Res.__destroy(self, reason)
