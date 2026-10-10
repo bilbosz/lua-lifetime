@@ -21,6 +21,12 @@
 --                               anchor, the table dropped at once (the
 --                               anchor's list collects holes and compacts);
 --                               against storing it in a weak-valued array
+--   runtime/attach-function     attach of a fresh function to a long-lived
+--                               anchor, then destroy(function) (task 012:
+--                               its record in the weak-keyed side table,
+--                               its death remembered there); against
+--                               appending it to an array, removing it and
+--                               marking it in a weak-keyed set
 --
 -- The runtime is required lazily inside the benchmarks, so that a base
 -- without these functions reports each benchmark as one it cannot run.
@@ -175,6 +181,29 @@ end, {
         return function()
             n = n + 1
             list[n] = {owner = first_anchor}
+        end
+    end)()
+})
+
+-- runtime/attach-function. A base whose runtime refuses a function
+-- dependent (before task 012) reports it as a benchmark it cannot run.
+local function_anchor = {}
+bench.add("runtime/attach-function", function()
+    local f = function()
+    end
+    lifetime.attach(f, false, function_anchor)
+    lifetime.destroy(f)
+end, {
+    baseline = (function()
+        local list, n, dead = {}, 0, setmetatable({}, {__mode = "k"})
+        return function()
+            local f = function()
+            end
+            n = n + 1
+            list[n] = f
+            list[n] = nil
+            n = n - 1
+            dead[f] = true
         end
     end)()
 })
