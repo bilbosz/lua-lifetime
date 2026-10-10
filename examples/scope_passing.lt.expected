@@ -1,0 +1,4 @@
+1
+2
+false
+false	attempt to call a dead table (counter, died at examples/scope_passing.lt:40, anchor)

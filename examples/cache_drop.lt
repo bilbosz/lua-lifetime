@@ -1,0 +1,73 @@
+-- cache_drop.lt: port of xd/examples/cache_drop.xd. Heading: deviation
+-- (docs/07-conformance.md), with `collectgarbage("collect")` inserted
+-- where `xd` pinned a reachable death to the statement that dropped the
+-- last reference (decision 2 of xd/docs/10-lua-lifetime-decisions.md).
+-- What else differs, and the decisions that cause it:
+--   - decision 10: `__destroy` has no `remaining`, so the entries print
+--     the reason only;
+--   - decision 10: at the session's death the session's destructor runs
+--     first and its entry `c` dies after it; `xd` had `c` first;
+--   - decision 8: `c` stays in the cache as a tombstone, so the last line
+--     prints `false` (`lifetime.alive`) where `xd` printed `nil`.
+-- Spelling: `lifetime.all(session, lifetime.reachable)` is `@ session`,
+-- which carries the `reachable` term implicitly (decision 4), and
+-- `lifetime.scope()` after `@` is `lifetime.scope`. `lifetime.format`
+-- renders the formula as a list (docs/02-semantics.md, "The `lifetime`
+-- table").
+--
+-- `@ session` dying through the drop: the entry dies with its session, or
+-- earlier, when the collector finds that nothing refers to it any more.
+-- (dead_cache.lt shows the other path, the session dying first.)
+
+local Session = {}
+Session.__index = Session
+Session.__tostring = function(self) return self.user end      -- names in lifetime.format
+function Session.__destroy(self, reason)
+  print("session " .. self.user .. " closed (" .. reason .. ")")
+end
+
+local Entry = {}
+Entry.__index = Entry
+function Entry.__destroy(self, reason)
+  print("entry " .. self.key .. " destroyed (" .. reason .. ")")
+end
+
+local cache = {}
+
+local function remember(session, key, value)
+  cache[key] = setmetatable({ key = key, value = value }, Entry)
+               @ session
+end
+
+do
+  local session = setmetatable({ user = "alice" }, Session) @ lifetime.scope
+  remember(session, "a", 1)
+  remember(session, "b", 2)
+  remember(session, "c", 3)
+  print(lifetime.format(lifetime.of(cache.a)))
+  --> (alice, reachable)
+
+  cache.a = nil                 -- the last reference: `a` dies at the next collection
+  collectgarbage("collect")
+  --> entry a destroyed (unreachable)
+  print("evicted a")
+  --> evicted a
+
+  local held = cache.b
+  cache.b = nil                 -- `held` still refers to it: nothing dies
+  collectgarbage("collect")
+  print("evicted b, held " .. held.value)
+  --> evicted b, held 2
+  held = nil                    -- now the last reference goes
+  collectgarbage("collect")
+  --> entry b destroyed (unreachable)
+  print("dropped b")
+  --> dropped b
+end
+-- The session dies with the block: its destructor first, then `c`, still
+-- in the cache, dies with it.
+--> session alice closed (anchor)
+--> entry c destroyed (anchor)
+
+print(cache.a, cache.b, lifetime.alive(cache.c))
+--> nil  nil  false

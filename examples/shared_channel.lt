@@ -1,0 +1,70 @@
+-- shared_channel.lt: port of xd/examples/shared_channel.xd. Heading:
+-- deviation (docs/07-conformance.md). `xd` anchors the channel to
+-- `lifetime.any(producer, consumer)`; decision 7 of
+-- xd/docs/10-lua-lifetime-decisions.md drops `lifetime.any`, and "dies
+-- when the last of a and b dies" becomes "a named token destroyed by a
+-- counting hook on each anchor" (`last_of` below). What differs:
+--   - decision 7: the channel's formula is the token, `(token channel,
+--     reachable)`, before and after the producer dies; there is no
+--     pruned formula whose kind and anchor `xd` printed (`lifetime.kind`
+--     and `lifetime.anchor` are gone with it);
+--   - decision 8: a dead object is a tombstone, so the liveness checks are
+--     `lifetime.alive`, and the dead view prints `false` where `xd`
+--     printed `nil`.
+-- Spelling: `lifetime.all(buf, conn)` is the list `(buf, conn)`,
+-- `lifetime.scope()` after `@` is `lifetime.scope`.
+--
+-- A channel that lives as long as either endpoint.
+
+local Channel = {}
+Channel.__index = Channel
+
+function Channel.new()
+  return setmetatable({ queue = {} }, Channel)
+end
+
+function Channel.__destroy(self)
+  print("channel closed with " .. #self.queue .. " undelivered messages")
+end
+
+function Channel:send(msg)   self.queue[#self.queue + 1] = msg end
+function Channel:recv()      return table.remove(self.queue, 1) end
+
+-- Decision 7's idiom: a token that dies when the last of its anchors dies.
+local function last_of(name, ...)
+  local span = lifetime.token(name)
+  local live = select("#", ...)
+  local function count_down()
+    live = live - 1
+    if live == 0 then destroy(span) end
+  end
+  for i = 1, live do
+    local anchor = select(i, ...)
+    count_down !@ anchor
+  end
+  return span
+end
+
+do
+  local producer = { name = "producer" } @ lifetime.scope
+  local consumer = { name = "consumer" } @ lifetime.scope
+
+  -- Dies when the *last* of the two dies.
+  local ch = Channel.new() @ last_of("channel", producer, consumer)
+
+  ch:send("hello")
+  destroy(producer)                   -- producer is gone, channel survives
+  print(lifetime.alive(ch), ch:recv())   --> true  hello
+  -- The formula names the token, which outlives the producer.
+  print(lifetime.format(lifetime.of(ch)))
+  --> (token channel, reachable)
+end                                   --> channel closed with 0 undelivered messages
+
+-- Compare with the list: a view that must not outlive either side.
+do
+  local buf  = { bytes = 16 } @ lifetime.scope
+  local conn = { peer = "a" }  @ lifetime.scope
+  local view = { off = 0 }     @ (buf, conn)
+  destroy(conn)
+  print(lifetime.alive(buf), lifetime.alive(view))   --> true  false
+end

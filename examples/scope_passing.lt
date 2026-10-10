@@ -1,0 +1,45 @@
+-- scope_passing.lt: port of xd/examples/scope_passing.xd. Heading:
+-- deviation (docs/07-conformance.md). What differs, and the decisions of
+-- xd/docs/10-lua-lifetime-decisions.md that cause it:
+--   - decision 5: a scope is syntax, not a value, so the caller cannot
+--     pass `lifetime.scope()` to `make_counter`. The lua-lifetime spelling
+--     of "letting the caller choose the lifetime" is that the function
+--     returns the counter on the default lifetime and the receiver anchors
+--     it (docs/02-semantics.md, "Scopes: `lifetime.scope`";
+--     docs/05-decisions.md, "`caller` is removed");
+--   - the counter is a table with a `__call` metamethod rather than a
+--     closure: a function cannot be an anchored dependent yet (task 012),
+--     and once it can, a call on a dead function is still not caught
+--     (docs/06-open-questions.md, "Non-table dependents after death");
+--   - decision 8: the escaped counter is a tombstone, not `nil`: the
+--     liveness check is `lifetime.alive`, and calling it raises the dead
+--     metatable's error, which names the object, where it died and why
+--     (docs/02-semantics.md, "Tombstones and `lifetime.alive`").
+--
+-- Letting the caller choose the lifetime: the receiver anchors what the
+-- function returns.
+
+local function make_counter()
+  local state = { n = 0 }
+  return setmetatable(state, {
+    __call = function()
+      state.n = state.n + 1
+      return state.n
+    end,
+    __tostring = function() return "counter" end,
+  })
+end
+
+local escaped
+
+do
+  local tick = make_counter() @ lifetime.scope
+  print(tick())   --> 1
+  print(tick())   --> 2
+  escaped = tick
+end -- the counter dies here; `escaped` holds its tombstone
+
+print(lifetime.alive(escaped))   --> false
+local ok, err = pcall(escaped)
+print(ok, err)
+--> false  attempt to call a dead table (counter, died at examples/scope_passing.lt:40, anchor)

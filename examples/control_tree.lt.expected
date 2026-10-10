@@ -1,0 +1,8 @@
+panel: label button; screen: panel
+panel: button; screen: panel label
+destroy button (unreachable)
+panel: (none)
+destroy screen (anchor)
+destroy label (anchor)
+  rescue refused: attempt to move a dying table
+destroy panel (anchor)

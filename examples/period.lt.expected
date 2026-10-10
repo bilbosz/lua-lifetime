@@ -1,0 +1,11 @@
+login alice
+popped back entry, 0 left
+logout
+close menu (anchor)
+menu alive: false, period alive: false
+login alice
+disconnect while logged in
+session ends (anchor)
+popped back entry, 0 left
+close menu (anchor)
+backstack holds 0

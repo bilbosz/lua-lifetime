@@ -1,0 +1,10 @@
+connection owns 1, session owns 2
+release connection (destroy)
+  session field is session; socket closed
+release session (anchor)
+release data_rp (anchor)
+release login (anchor)
+release logout_rp (anchor)
+release login_rp (anchor)
+conn is dead connection
+sessions table is empty: true

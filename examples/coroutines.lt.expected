@@ -1,0 +1,17 @@
+true	1
+close a step 1 (anchor)
+true	2
+close a step 2 (anchor)
+true	3
+close a step 3 (anchor)
+close a outer (anchor)
+true	done
+dead
+close b step 1 (anchor)
+b suspended in iteration 2
+close b step 2 (unreachable)
+close b outer (unreachable)
+b gone
+w1 dropped, conn open:	true
+close shared conn (anchor)
+w2 dropped, conn open:	false

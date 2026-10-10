@@ -239,7 +239,7 @@ for _, interpreter in ipairs(INTERPRETERS) do
         -- misread: the cascade runs before the message is printed. Both
         -- streams go into one pipe; the report flushes stdout before it
         -- writes, so the pipe's order is the order of events.
-        local out, _, status = shell(interpreter .. " bin/lifetime run examples/uncaught_error.lt 2>&1")
+        local out, _, status = shell(interpreter .. " bin/lifetime run examples/main_scope_error.lt 2>&1")
         test.assert_eq(status, 1)
         test.assert_eq(out, table.concat({
             "calling with\tfirst\tsecond",
@@ -247,11 +247,11 @@ for _, interpreter in ipairs(INTERPRETERS) do
             "destroy inner (anchor)",
             "destroy second (anchor)",
             "destroy first (anchor)",
-            "lifetime: examples/uncaught_error.lt:23: x",
+            "lifetime: examples/main_scope_error.lt:23: x",
             "stack traceback:",
             "\t[C]: in function 'error'",
-            "\texamples/uncaught_error.lt:23: in function 'fail'",
-            "\texamples/uncaught_error.lt:27: in main chunk",
+            "\texamples/main_scope_error.lt:23: in function 'fail'",
+            "\texamples/main_scope_error.lt:27: in main chunk",
             ""
         }, "\n"))
     end)

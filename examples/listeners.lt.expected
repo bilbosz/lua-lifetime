@@ -1,0 +1,13 @@
+input x destroyed (anchor)
+roster[1] alive: false, roster[2] is y, ipairs sees 2
+input y destroyed (unreachable)
+listeners: 3, inputs: 3
+input b destroyed (destroy)
+unlinked b, 2 inputs left
+listeners: 3, inputs: 2, b alive: false
+form destroyed (anchor), 2 inputs still listed
+form went first; nothing to unlink for c
+form went first; nothing to unlink for a
+input c destroyed (unreachable)
+input a destroyed (unreachable)
+listeners: 0

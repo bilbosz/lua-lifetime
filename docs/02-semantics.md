@@ -583,9 +583,15 @@ dead objects are still different, and `t[dead]` still finds the entry.
   runtime made and never kills, so `alive` is `true` for them.
 - A dead function, coroutine or userdata cannot be emptied or given a
   per-instance metatable. The runtime remembers that it died so that
-  `lifetime.alive` reads `false` and `@` refuses it; using it otherwise is
-  not caught. Open: [06-open-questions.md](06-open-questions.md),
-  "Non-table dependents after death".
+  `lifetime.alive` reads `false`, `destroy` and `discard` are no-ops, and
+  `@` raises `attempt to move a dead function (<name>, died at <where>,
+  <reason>)` (with `thread` or `userdata` for the other two);
+  `lifetime.of` and `lifetime.format` raise the same with `index`. Using
+  it otherwise (a call, a resume, a userdata method) is not caught and
+  behaves as in Lua. The dying and destruction errors use the same type
+  names: `attempt to move a dying function`, `attempt to move an anchored
+  function during destruction` ([05-decisions.md](05-decisions.md),
+  "Non-table dependents: remembered after death, weak anchors").
 - Objects that die by `reachable` need no tombstone: by definition nothing
   refers to them.
 
@@ -648,7 +654,12 @@ when that is, except:
   returns, every object that was unreachable before the call has had its
   cascade run, with reason `"unreachable"`. Weak entries that held such an
   object clear one collection later ("Host"), so a test that checks a
-  weak table collects twice.
+  weak table collects twice. The call is a statement of its own, in the
+  frame that dropped the reference: a stack slot of a call still being
+  built counts as a reference on both hosts, so `print(pcall(function()
+  g = nil; collectgarbage("collect") end))` need not collect `g` under
+  LuaJIT, while `g = nil` followed by `collectgarbage("collect")` on its
+  own line does (task 008).
 - Within one collection, objects are finalized **newest first** by
   creation ("Host"), each taking its whole subtree in cascade order; an
   object already destroyed in an earlier walk is skipped. This is the
@@ -666,10 +677,21 @@ when that is, except:
   lock-and-defer machinery (lesson 5 of `xd/docs/09-lessons-from-treflove.md`).
 - Reachability follows ordinary references only. The runtime's own edges
   from an anchor to its dependents are weak and do not count
-  ([03-runtime.md](03-runtime.md)); a dependent's reference to its anchor
-  is strong, as any field would be. A subtree nobody outside holds is
-  therefore an ordinary cycle and dies as a whole when the collector finds
-  its root (decision 3).
+  ([03-runtime.md](03-runtime.md)); a table dependent's reference to its
+  anchor is strong, as any field would be. A subtree nobody outside holds
+  is therefore an ordinary cycle and dies as a whole when the collector
+  finds its root (decision 3). A function, coroutine or userdata
+  dependent does **not** keep its anchor alive: its state lives outside
+  it, in a record that names the anchors weakly, so an anchor that only
+  its non-table dependents refer to is collected, and its cascade kills
+  them with reason `"anchor"` while something may still hold them. The
+  promise of `f @ a` (`f` dies when `a` dies) holds either way; what the
+  table case adds (`a` lives while `f` does) is a side effect of state
+  inside the object, and the hosts give no way to have it without a leak
+  ([05-decisions.md](05-decisions.md), "Non-table dependents: remembered
+  after death, weak anchors"). Such a dependent carries no sentinel
+  either: one the collector finds dies silently, its type's `__destroy`
+  not run, as an unseen table does.
 - `collectgarbage` keeps all of its Lua 5.1 options; nothing is removed.
 
 Everything else stays exact and synchronous: anchored lifetimes, scope

@@ -46,13 +46,6 @@ which could hold the record. *Leaning:* tables and tokens only until a
 real program wants a userdata anchor; LÖVE objects in Treflove are
 dependents.
 
-### Non-table dependents after death
-
-Decision 8 tombstones a table by emptying it and swapping its metatable.
-A dead function, coroutine or userdata cannot be emptied. The runtime
-remembers the death in a weak-keyed set so that `lifetime.alive` and `@`
-see it; calls and other uses are not caught. *Leaning:* accept; document.
-
 ### Teal and `!@`
 
 The hook operator `!@` was chosen partly because Teal is believed not to

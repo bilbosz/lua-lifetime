@@ -1,0 +1,81 @@
+-- workers.lt: port of xd/examples/workers.xd. Heading: deviation
+-- (docs/07-conformance.md). `xd` anchors the channel to
+-- `lifetime.any(table.unpack(workers))`; decision 7 of
+-- xd/docs/10-lua-lifetime-decisions.md drops `lifetime.any`, and "dies
+-- when the last of a and b dies" becomes "a named token destroyed by a
+-- counting hook on each anchor" (`last_of` below), which takes however
+-- many anchors there are, as `any` did. What differs:
+--   - decision 7: the channel's formula is the token, `(token channel,
+--     reachable)`, throughout; there are no operands to drop out and no
+--     node to collapse (`lifetime.kind` and `lifetime.anchor` are gone);
+--     the empty-list check is `lifetime.pin` with nothing to pin, the
+--     error that refuses an empty conjunction here (docs/02-semantics.md,
+--     "The implicit `reachable` term and `lifetime.pin`");
+--   - decision 10: when the block ends, w3's destructor runs first, then
+--     its counting hook, which destroys the channel's token; `xd` closed
+--     the channel first. `__destroy` has no `remaining`;
+--   - decision 5: the scope cannot be stored in `owner`, and
+--     `lifetime.scope` in the loop body is the iteration's, so the workers
+--     are anchored to a token that is anchored to the block;
+--   - decision 8: liveness is `lifetime.alive`.
+-- Spelling: `table.unpack` is Lua 5.1's `unpack`.
+--
+-- A lifetime over a list built at runtime. No fixed formula could name
+-- anchors that do not exist when the code is written; the helper takes
+-- however many there are.
+
+local Worker = {}
+Worker.__index = Worker
+Worker.__tostring = function(self) return "w" .. self.id end    -- names in lifetime.format
+function Worker.new(id) return setmetatable({ id = id }, Worker) end
+function Worker.__destroy(self) print("worker " .. self.id .. " done") end
+
+local Channel = {}
+Channel.__index = Channel
+function Channel.__destroy(self, reason)
+  print("channel closed (" .. reason .. ")")
+end
+
+-- Decision 7's idiom: a token that dies when the last of its anchors dies.
+local function last_of(name, ...)
+  local span = lifetime.token(name)
+  local live = select("#", ...)
+  local function count_down()
+    live = live - 1
+    if live == 0 then destroy(span) end
+  end
+  for i = 1, live do
+    local anchor = select(i, ...)
+    count_down !@ anchor
+  end
+  return span
+end
+
+do
+  local owner = lifetime.token("owner") @ lifetime.scope   -- the do block, not the loop body below
+  local workers = {}
+  for i = 1, 3 do
+    workers[i] = Worker.new(i) @ owner
+  end
+
+  -- Lives while *any* worker lives; the anchors are the three objects.
+  local ch = setmetatable({}, Channel) @ last_of("channel", unpack(workers))
+  print(lifetime.format(lifetime.of(ch)))           --> (token channel, reachable)
+
+  destroy(workers[2])                               --> worker 2 done
+  print(lifetime.alive(ch), lifetime.format(lifetime.of(ch)))
+  --> true  (token channel, reachable)              the token outlives w2
+
+  destroy(workers[1])                               --> worker 1 done
+  print(lifetime.alive(ch))
+  --> true                                          one worker left
+
+  -- An empty conjunction is an error, not an immortal object.
+  print(pcall(lifetime.pin, unpack({})))
+  --> false  bad argument #1 to 'lifetime.pin' (anchor expected, got no value)
+end
+-- The block ends: the owner token's only live dependent is w3. Its
+-- destructor runs, then its counting hook, the last one, destroys the
+-- channel's token, and the channel dies with it.
+--> worker 3 done
+--> channel closed (anchor)

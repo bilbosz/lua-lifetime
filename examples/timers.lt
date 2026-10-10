@@ -1,0 +1,69 @@
+-- timers.lt: port of xd/examples/timers.xd. Heading: rewritten around
+-- `collectgarbage` (docs/07-conformance.md); the .expected is xd's byte
+-- for byte. `collectgarbage("collect")` follows the drop of `a`, whose
+-- death `xd` pinned to that statement (decision 2 of
+-- xd/docs/10-lua-lifetime-decisions.md). One more rewrite, for decision 8:
+-- a dead key does not disappear from the queue, it stays as a tombstone,
+-- so `after` hooks the entry to remove its own key while it is dying
+-- (idiom B of xd/docs/09-lessons-from-treflove.md). Spelling: `@ self`
+-- carries the `reachable` term implicitly (decision 4); the queue refers
+-- to every pending entry, so none dies by the collector. `Hint` is seen by
+-- the runtime because it is an anchor, so the collector runs its
+-- destructor (docs/02-semantics.md, "`__destroy` and reasons", rule 7).
+--
+-- From the Treflove comparison (xd/docs/09-lessons-from-treflove.md, idiom
+-- G): a timer entry is anchored to the object that scheduled it, so the
+-- callback is cancelled with its owner and can never run on a dead self.
+-- The entry's callback mentions its owner, so the entry keeps the owner
+-- reachable while the queue holds it: a fired entry must be destroyed, not
+-- merely dropped from the queue's iteration, or the owner can never become
+-- unreachable.
+
+local queue = {}                -- keyed by entry; a dying entry removes its key
+local now = 0
+
+local function after(seconds, f)
+  local entry = { at = now + seconds, f = f }
+  queue[entry] = true
+  function() queue[entry] = nil end !@ entry
+  return entry
+end
+
+local function tick(seconds)
+  now = now + seconds
+  local due = {}
+  for entry in pairs(queue) do
+    if entry.at <= now then due[#due + 1] = entry end
+  end
+  for i = 1, #due do
+    local f = due[i].f
+    destroy(due[i])             -- out of the queue, and no longer referring to its owner
+    f()
+  end
+end
+
+local Hint = {}
+Hint.__index = Hint
+Hint.__destroy = function(self, reason) print("hint " .. self.name .. " closed (" .. reason .. ")") end
+function Hint:show()
+  print("show " .. self.name)
+  after(2, function() self:hide() end) @ self     -- cancelled with self
+end
+function Hint:hide() print("hide " .. self.name) end
+
+local a = setmetatable({ name = "a" }, Hint)
+local b = setmetatable({ name = "b" }, Hint)
+a:show()
+b:show()
+--> show a
+--> show b
+tick(1)                         -- nothing is due yet
+destroy(b)
+--> hint b closed (destroy)     its timer entry dies in the cascade and leaves the queue
+tick(2)
+--> hide a                      only a's timer is left to fire
+print("pending: " .. tostring(next(queue)))
+--> pending: nil
+a = nil
+collectgarbage("collect")
+--> hint a closed (unreachable)  the fired entry was destroyed, so nothing refers to a
