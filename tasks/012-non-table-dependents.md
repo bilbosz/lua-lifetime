@@ -1,11 +1,11 @@
 ---
 id: 012
 title: Runtime: functions, coroutines and userdata as dependents (the weak-keyed side table)
-status: review
+status: done
 depends: [004]
 branch: task/012-non-table-dependents
 pr: https://github.com/bilbosz/lua-lifetime/pull/37
-commits:
+commits: 1064cd1f62a156bb450e81ccc6a4bafa37b24438
 review: APPROVE (round 3)
 ---
 
