@@ -64,6 +64,17 @@ local function user_keys(t)
     return n
 end
 
+-- Every object of `list` is a tombstone. The cases that use it hold their
+-- dependents in `list` until the cascade: each carries the `reachable`
+-- term, and an unreferenced one may be found by the collector first
+-- (CLAUDE.md, rule 6: "If a test needs a strong reference to keep an
+-- object alive, the test holds it").
+local function assert_all_dead(list)
+    for i, x in ipairs(list) do
+        test.assert_eq(getmetatable(x), "dead", "held dependent " .. i)
+    end
+end
+
 -- Run `fn` with `_G.destroyerror` set to `handler` (nil for the default)
 -- and `io.stderr` replaced by a buffer; returns what was written.
 local function with_handler(handler, fn)
@@ -355,12 +366,15 @@ end)
 test.case("the same example as one cascade: decide first, then newest first, a dependent reached twice dies once", function()
     local log = {}
     local root = {}
+    -- Every dependent carries the `reachable` term: the test holds it
+    -- (CLAUDE.md, rule 6), or the collector could take it first.
     local a = attach(new_logged(log, "a"), false, root)
-    attach(new_logged(log, "b"), false, a)
+    local b = attach(new_logged(log, "b"), false, a)
     local c = attach(new_logged(log, "c"), false, root)
-    attach(new_logged(log, "d"), false, a, c)
+    local d = attach(new_logged(log, "d"), false, a, c)
     destroy(root)
     test.assert_deep_eq(log, {"c (anchor)", "d (anchor)", "a (anchor)", "b (anchor)"})
+    test.assert_eq(getmetatable(b), getmetatable(d))
 end)
 
 test.case("case 2: the body runs before the dependents and sees them alive", function()
@@ -419,12 +433,15 @@ test.case("case 3: destroy by hand inside a body runs the dependent now; the lat
         destroy(self.child)
         log[#log + 1] = "A after destroy(child)"
     end)
-    attach(new_logged(log, "first"), false, A)
+    -- The test holds every dependent with the term (CLAUDE.md, rule 6).
+    local held = {}
+    held.first = attach(new_logged(log, "first"), false, A)
     A.child = attach(new_logged(log, "child"), false, A)
-    attach(new_logged(log, "grandchild"), false, A.child)
-    attach(new_logged(log, "last"), false, A)
+    held.grandchild = attach(new_logged(log, "grandchild"), false, A.child)
+    held.last = attach(new_logged(log, "last"), false, A)
     destroy(A)
     test.assert_deep_eq(log, {"A (destroy)", "child (destroy)", "grandchild (anchor)", "A after destroy(child)", "last (anchor)", "first (anchor)"})
+    assert_all_dead({held.first, held.grandchild, held.last})
 end)
 
 test.case("destroy and discard on a dying object whose destruction has begun, or on a dead one, are no-ops", function()
@@ -434,11 +451,12 @@ test.case("destroy and discard on a dying object whose destruction has begun, or
         destroy(self)
         discard(self)
     end)
-    attach(new_logged(log, "b"), false, a)
+    local b = attach(new_logged(log, "b"), false, a) -- held: rule 6
     destroy(a)
     test.assert_deep_eq(log, {"a (destroy)", "b (anchor)"})
     destroy(a)
     discard(a)
+    destroy(b)
     test.assert_deep_eq(log, {"a (destroy)", "b (anchor)"})
 end)
 
@@ -446,11 +464,12 @@ test.case("a dependent's body may destroy its anchor's other dependents; each di
     local log = {}
     local root = new_logged(log, "root")
     local older = attach(new_logged(log, "older"), false, root)
-    attach(new_logged(log, "newer", function()
+    local newer = attach(new_logged(log, "newer", function()
         destroy(older)
-    end), false, root)
+    end), false, root) -- held: rule 6
     destroy(root)
     test.assert_deep_eq(log, {"root (destroy)", "newer (anchor)", "older (destroy)"})
+    test.assert_eq(getmetatable(newer), "dead")
 end)
 
 test.case("destroy(nil) is a no-op; destroy(5) and discard(true) raise the argument error", function()
@@ -481,9 +500,10 @@ test.case("discard skips the object's own body only", function()
     local log = {}
     local a = new_logged(log, "a")
     local b = attach(new_logged(log, "b"), false, a)
-    attach(new_logged(log, "c"), false, b)
+    local c = attach(new_logged(log, "c"), false, b) -- held: rule 6
     local where = here(); discard(a)
     test.assert_deep_eq(log, {"b (anchor)", "c (anchor)"})
+    test.assert_eq(getmetatable(c), "dead")
     test.assert_eq(getmetatable(a), "dead")
     test.assert_error(function()
         return a.x
@@ -497,8 +517,12 @@ test.case("a cycle of anchors: each object dies once", function()
     attach(x, false, y)
     destroy(x)
     test.assert_deep_eq(log, {"x (destroy)", "y (anchor)"})
-    local self_anchored = attach(new_logged(log, "s"), false, {})
+    -- The first anchor is held until the move: an anchor with the term and
+    -- a dependent is found by the collector like any object (rule 6).
+    local first_anchor = {}
+    local self_anchored = attach(new_logged(log, "s"), false, first_anchor)
     attach(self_anchored, false, self_anchored)
+    test.assert_deep_eq(lifetime.dependents(first_anchor), {})
     destroy(self_anchored)
     test.assert_deep_eq(log, {"x (destroy)", "y (anchor)", "s (destroy)"})
 end)
@@ -540,6 +564,32 @@ test.case("a __newindex on the object does not stop the runtime", function()
     test.assert_deep_eq(lifetime.dependents(a), {x})
     destroy(a)
     test.assert_eq(getmetatable(x), "dead")
+end)
+
+test.case("an __index on anchors and dependents is never consulted by the runtime", function()
+    -- The cascade reads a dependent's record as `dep[STATE]`: the key is
+    -- there, so no metamethod runs (Lua 5.1 reference manual, 2.8).
+    local log = {}
+    local function guarded(name)
+        return setmetatable({}, {
+            __index = function()
+                error("__index consulted")
+            end,
+            __destroy = function(_, reason)
+                log[#log + 1] = name .. " (" .. reason .. ")"
+            end
+        })
+    end
+    local a, b = guarded("a"), guarded("b")
+    local x = attach(guarded("x"), false, a)
+    local y = attach(guarded("y"), false, a, b)
+    attach(x, false, b)
+    attach(x, false, a)
+    destroy(a)
+    test.assert_deep_eq(log, {"a (destroy)", "x (anchor)", "y (anchor)"})
+    destroy(b)
+    test.assert_deep_eq(log, {"a (destroy)", "x (anchor)", "y (anchor)", "b (destroy)"})
+    test.assert_eq(getmetatable(y), "dead")
 end)
 
 test.suite("runtime: tombstones")
@@ -645,8 +695,9 @@ test.case("case 4: the first error is re-raised after the cascade; later ones go
     local root = {}
     local one = attach(raising(log, "one", "one"), false, root)
     local two = attach(raising(log, "two", "two"), false, root)
-    attach(raising(log, "three", "three"), false, root)
-    attach(new_logged(log, "newest"), false, root)
+    -- Held, as every dependent with the term in these cases (rule 6).
+    local three = attach(raising(log, "three", "three"), false, root)
+    local newest = attach(new_logged(log, "newest"), false, root)
     local ok, err
     with_handler(function(obj, e)
         routed[#routed + 1] = {obj, e}
@@ -664,17 +715,19 @@ test.case("case 4: the first error is re-raised after the cascade; later ones go
     test.assert_eq(routed[2][2], "one")
     test.assert_eq(getmetatable(root), "dead")
     test.assert_eq(getmetatable(one), "dead")
+    test.assert_eq(getmetatable(three), getmetatable(newest))
 end)
 
 test.case("the root's own error is the first and is re-raised; the object is dead anyway", function()
     local log = {}
     local root = raising(log, "root", "boom")
-    attach(new_logged(log, "dep"), false, root)
+    local dep = attach(new_logged(log, "dep"), false, root) -- held: rule 6
     local ok, err = pcall(destroy, root)
     test.assert_false(ok)
     test.assert_eq(err, "boom")
     test.assert_deep_eq(log, {"root", "dep (anchor)"})
     test.assert_eq(getmetatable(root), "dead")
+    test.assert_eq(getmetatable(dep), "dead")
 end)
 
 test.case("a destroy inside a body is a cascade of its own: its error raises to that call", function()
@@ -692,8 +745,9 @@ end)
 
 test.case("the default destroyerror writes `destroyerror: <message>` and a traceback to stderr", function()
     local root = {}
-    attach(raising({}, "a", "first"), false, root)
-    attach(raising({}, "b", "second"), false, root)
+    local held = {} -- rule 6
+    held[1] = attach(raising({}, "a", "first"), false, root)
+    held[2] = attach(raising({}, "b", "second"), false, root)
     local ok, err
     local written = with_handler(nil, function()
         ok, err = pcall(destroy, root)
@@ -702,14 +756,16 @@ test.case("the default destroyerror writes `destroyerror: <message>` and a trace
     test.assert_eq(err, "second")
     test.assert_eq(written:sub(1, #"destroyerror: first\n"), "destroyerror: first\n")
     test.assert_true(written:find("stack traceback:", 1, true) ~= nil, written)
+    assert_all_dead(held)
 end)
 
 test.case("a raising handler: both errors go to stderr and the cascade continues", function()
     local log = {}
     local root = {}
-    attach(new_logged(log, "survivor"), false, root)
-    attach(raising(log, "a", "first"), false, root)
-    attach(raising(log, "b", "second"), false, root)
+    local held = {} -- rule 6
+    held[1] = attach(new_logged(log, "survivor"), false, root)
+    held[2] = attach(raising(log, "a", "first"), false, root)
+    held[3] = attach(raising(log, "b", "second"), false, root)
     local ok, err
     local written = with_handler(function()
         error("handler broke", 0)
@@ -720,23 +776,27 @@ test.case("a raising handler: both errors go to stderr and the cascade continues
     test.assert_eq(err, "second")
     test.assert_deep_eq(log, {"b", "a", "survivor (anchor)"})
     test.assert_eq(written, "destroyerror: first\ndestroyerror: error in destroyerror (handler broke)\n")
+    assert_all_dead(held)
 end)
 
 test.case("a destroyerror that is not callable: both errors go to stderr", function()
     local root = {}
-    attach(raising({}, "a", "first"), false, root)
-    attach(raising({}, "b", "second"), false, root)
+    local held = {} -- rule 6
+    held[1] = attach(raising({}, "a", "first"), false, root)
+    held[2] = attach(raising({}, "b", "second"), false, root)
     local written = with_handler(42, function()
         pcall(destroy, root)
     end)
     test.assert_true(written:find("destroyerror: first\ndestroyerror: error in destroyerror (", 1, true) == 1, written)
+    assert_all_dead(held)
 end)
 
 test.case("destroyerror is read raw from _G", function()
     local routed = {}
     local root = {}
-    attach(raising({}, "a", "first"), false, root)
-    attach(raising({}, "b", "second"), false, root)
+    local held = {} -- rule 6
+    held[1] = attach(raising({}, "a", "first"), false, root)
+    held[2] = attach(raising({}, "b", "second"), false, root)
     local saved_mt = getmetatable(_G)
     with_handler(function(_, e)
         routed[#routed + 1] = e
@@ -750,6 +810,7 @@ test.case("destroyerror is read raw from _G", function()
         setmetatable(_G, saved_mt)
     end)
     test.assert_deep_eq(routed, {"first"})
+    assert_all_dead(held)
 end)
 
 test.suite("runtime: lifetime values, of, format, dependents")

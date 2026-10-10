@@ -5,11 +5,9 @@
 -- state closes and Lua finalizes what still has a pending finalizer,
 -- newest first; `lifetime run` has set the exit flag, so the two globals
 -- registered through `@` die with reason "exit". The chunk's return
--- value is ignored and the exit status is 0.
---
--- Waits here for task 004 (the sentinel and `lifetime.set_exiting`); it
--- moves to examples/exit_order.lt once both tasks are on master
--- (tests/test-cli.lua runs it until then).
+-- value is ignored and the exit status is 0. The globals die through
+-- their sentinels (task 004), with "exit" because `lifetime run` calls
+-- `lifetime.set_exiting(true)` (task 007).
 
 local Res = {}
 function Res.__destroy(self, reason)

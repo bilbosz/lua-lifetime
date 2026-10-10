@@ -35,14 +35,18 @@ local function body(self, reason)
 end
 local CHILD_MT = {__destroy = body}
 
--- runtime/attach-destroy-100
+-- runtime/attach-destroy-100. The children are held, as the baseline's
+-- array holds them: a dependent with the `reachable` term that nothing
+-- refers to may be found by the collector first (CLAUDE.md, rule 6; task
+-- 004 gives it a sentinel, so it would then die "unreachable" mid-loop).
 bench.add("runtime/attach-destroy-100", function()
     local attach = lifetime.attach
-    local anchor = {}
-    for _ = 1, N do
-        attach(setmetatable({}, CHILD_MT), false, anchor)
+    local anchor, children = {}, {}
+    for i = 1, N do
+        children[i] = attach(setmetatable({}, CHILD_MT), false, anchor)
     end
     lifetime.destroy(anchor)
+    return children
 end, {
     baseline = function()
         local children = {}
@@ -93,17 +97,23 @@ end, {
     end)()
 })
 
--- runtime/cascade-tree
+-- runtime/cascade-tree. The tree is held, as the baseline's arrays hold
+-- it (see runtime/attach-destroy-100).
 bench.add("runtime/cascade-tree", function()
     local attach = lifetime.attach
     local root = setmetatable({}, CHILD_MT)
+    local held, n = {}, 0
     for _ = 1, 10 do
         local child = attach(setmetatable({}, CHILD_MT), false, root)
+        n = n + 1
+        held[n] = child
         for _ = 1, 10 do
-            attach(setmetatable({}, CHILD_MT), false, child)
+            n = n + 1
+            held[n] = attach(setmetatable({}, CHILD_MT), false, child)
         end
     end
     lifetime.destroy(root)
+    return held
 end, {
     baseline = (function()
         local function close(node)

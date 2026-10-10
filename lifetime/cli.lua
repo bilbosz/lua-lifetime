@@ -267,14 +267,10 @@ local function run_command(argv)
     -- docs/03-runtime.md, "Program end": "`lifetime run` sets an exit
     -- flag after the main chunk has returned and its scope epilogue has
     -- run; from then on the sentinel finalizers that the closing state
-    -- runs report `"exit"`." The runtime function is task 004's; until it
-    -- exists there is no sentinel and nothing to tell. After an uncaught
-    -- error the flag is set too, after the report: the state closes all
-    -- the same (task 007, "Spec issues found").
-    local set_exiting = lifetime.set_exiting
-    if set_exiting then
-        set_exiting(true)
-    end
+    -- runs report `"exit"`." After an uncaught error the flag is set too,
+    -- after the report: the state closes all the same (task 007, "Spec
+    -- issues found").
+    lifetime.set_exiting(true)
     return status
 end
 

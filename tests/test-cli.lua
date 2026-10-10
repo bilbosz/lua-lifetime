@@ -284,20 +284,14 @@ for _, interpreter in ipairs(INTERPRETERS) do
     end)
 
     case("the main scope dies at the chunk's end with reason anchor, the registered globals at exit", function()
-        -- Test case 1 (tests/fixtures/exit_order.lt, which becomes
-        -- examples/exit_order.lt once task 004 is on master). The main
-        -- scope half holds today; the globals die only through task 004's
-        -- sentinel, with reason "exit" once `run` has set the flag through
-        -- `lifetime.set_exiting`.
-        local out, err, status = lifetime(interpreter, "run tests/fixtures/exit_order.lt")
+        -- Test case 1 (examples/exit_order.lt, also run by the conformance
+        -- suite): the main scope dies at the chunk's end, then the globals
+        -- through task 004's sentinels, with reason "exit" because `run`
+        -- has called `lifetime.set_exiting(true)`.
+        local out, err, status = lifetime(interpreter, "run examples/exit_order.lt")
         test.assert_eq(err, "")
         test.assert_eq(status, 0)
-        local expected = read_file("tests/fixtures/exit_order.lt.expected")
-        if require("lifetime").set_exiting then
-            test.assert_eq(out, expected)
-        else
-            test.assert_eq(out, expected:match("^(.-)destroy newer global"))
-        end
+        test.assert_eq(out, read_file("examples/exit_order.lt.expected"))
     end)
 end
 
@@ -367,8 +361,4 @@ for _, interpreter in ipairs(INTERPRETERS) do
         test.assert_eq(status, 0)
         test.assert_eq(out, read_file("examples/plain.lt.expected"))
     end)
-end
-
-if not require("lifetime").set_exiting then
-    print("note: lifetime.set_exiting is missing (task 004 is not merged): 'lifetime command' checks the main-scope half of tests/fixtures/exit_order.lt only")
 end
