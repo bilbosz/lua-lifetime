@@ -1,0 +1,11 @@
+destroyed weak (unreachable)
+strong	nil	1
+destroyed strong (unreachable)
+0
+props of key	1
+destroyed key (anchor)
+destroyed props of key (unreachable)
+0
+1
+destroyed props of k (exit)
+destroyed k (exit)

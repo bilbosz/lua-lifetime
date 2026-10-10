@@ -1,47 +1,15 @@
-return 1, nil
-destroy b (anchor)
-destroy a (anchor)
-returned 2 values:	1	nil
-return b.name, a.name
-destroy b (anchor)
-destroy a (anchor)
-returned 2 values:	b	a
-return select(2, ...)
-destroy b (anchor)
-destroy a (anchor)
-returned 3 values:	y	nil	nil
-return ...
-destroy b (anchor)
-destroy a (anchor)
-returned 3 values:	nil	2	nil
-return
-destroy b (anchor)
-destroy a (anchor)
-returned 0 values:
-falls out of the inner block
-destroy b (anchor)
-falls through the function body
-destroy a (anchor)
-returned 0 values:
-destroy d1 (anchor)
+body 1
 end of iteration 1
-destroy c1 (anchor)
-break
-destroy d2 (anchor)
-destroy c2 (anchor)
-after the for loop
-break from the then block
-destroy e (anchor)
-after the while loop
-end of iteration 1
-destroy g1 (anchor)
-destroy f1 (anchor)
-goto continue
-destroy f2 (anchor)
-end of iteration 3
-destroy g3 (anchor)
-destroy f3 (anchor)
-goto out
-destroy k (anchor)
-destroy h (anchor)
-after goto out
+close iteration 1 (anchor)
+end of iteration 2
+close iteration 2 (anchor)
+close probe x (anchor)
+close probe y (anchor)
+close guard (anchor)
+y
+close attempt 1 (anchor)
+succeeded on attempt 2
+close attempt 2 (anchor)
+close inner (anchor)
+close outer (anchor)
+false	failed

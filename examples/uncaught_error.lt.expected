@@ -1,6 +1,14 @@
-calling with	first	second
-raising in	inner
-destroy inner (anchor)
-destroy second (anchor)
-destroy first (anchor)
-!error: examples/uncaught_error.lt:23: x
+open log
+open tmp 1
+open conn 1
+handled 1
+hook for request 1 (anchor)
+close conn 1 (anchor)
+close tmp 1 (anchor)
+open tmp 2
+open conn 2
+hook for request 2 (anchor)
+close conn 2 (anchor)
+close tmp 2 (anchor)
+close log (exit)
+!error: examples/uncaught_error.lt:17: request 2 failed

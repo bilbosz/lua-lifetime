@@ -1,0 +1,6 @@
+show a
+show b
+hint b closed (destroy)
+hide a
+pending: nil
+hint a closed (unreachable)

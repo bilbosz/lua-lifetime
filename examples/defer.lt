@@ -1,0 +1,78 @@
+-- defer.lt: port of xd/examples/defer.xd. Heading: deviation
+-- (docs/07-conformance.md). Decisions of xd/docs/10-lua-lifetime-decisions.md
+-- that change the output:
+--   - decision 10: a hook on an object runs after that object's
+--     `__destroy`, among its other dependents (part 2, and the program
+--     end, where `keep` now runs after the registry's destructor);
+--   - decision 10 (with decision 7): there is no `remaining` argument, so
+--     the hooks of parts 2 and 3 print the reason only;
+--   - decision 8: a discarded hook is a tombstone, not `nil`, so part 4
+--     prints `dead hook rollback` where `xd` printed `nil`.
+-- Spelling: a bare `defer f` is `f !@ lifetime.scope`, `defer f @ a` is
+-- `f !@ a`, `lifetime.all(a, b)` is the list `(a, b)`, `lifetime.scope()`
+-- after `@` is `lifetime.scope`, and `x ~= nil` as a liveness test is
+-- `lifetime.alive(x)`.
+--
+-- Hooks: functions attached to lifetimes with `!@`.
+
+local Thing = {}
+Thing.__index = Thing
+Thing.__tostring = function(self) return self.id end
+function Thing.new(id) return setmetatable({ id = id }, Thing) end
+function Thing.__destroy(self, reason) print("destroyed " .. self.id .. " (" .. reason .. ")") end
+
+local registry = Thing.new("registry")
+
+-- 1. Scope cleanup, last deferred first run.
+do
+  function() print("first deferred, runs last") end !@ lifetime.scope
+  local t = Thing.new("t") @ lifetime.scope
+  function(reason) print("last deferred, runs first: " .. reason) end !@ lifetime.scope
+end
+--> last deferred, runs first: anchor
+--> destroyed t (anchor)
+--> first deferred, runs last
+
+-- 2. A hook attached to an object runs after the object's own __destroy.
+--    The object is dying, not dead, so the upvalue `conn` still works.
+do
+  local conn = Thing.new("conn") @ lifetime.scope
+  function(reason)
+    print("hook sees " .. conn.id .. " (" .. reason .. ")")
+  end !@ conn
+end
+--> destroyed conn (anchor)
+--> hook sees conn (anchor)
+
+-- 3. A list: runs when *either* side dies. There is no `remaining` to
+--    name the survivor; the hook gets the reason only.
+do
+  local emitter  = Thing.new("emitter")  @ lifetime.scope
+  local listener = Thing.new("listener") @ lifetime.scope
+  function(reason)
+    print("unsubscribed (" .. reason .. ")")
+  end !@ (emitter, listener)
+  destroy(listener)
+  print("emitter still alive:", lifetime.alive(emitter))
+end
+--> destroyed listener (destroy)
+--> unsubscribed (anchor)
+--> emitter still alive:  true
+--> destroyed emitter (anchor)
+
+-- 4. Cancel with discard, move with @. A dead hook is a tombstone.
+do
+  local rollback = function() print("rolled back") end !@ lifetime.scope
+  local keep     = function() print("kept past the block") end !@ lifetime.scope
+  discard(rollback)                       -- never runs; `rollback` is now a tombstone
+  keep @ registry                         -- no longer tied to this block
+  print(rollback, keep ~= nil)            --> dead hook rollback  true
+end
+-- nothing printed at the block exit: rollback was discarded, keep moved away
+
+-- Program end: the registry is the only object with a sentinel left
+-- (docs/03-runtime.md, "The sentinel": a hook pinned by its anchor has
+-- none), so its cascade runs with reason "exit": its destructor first,
+-- then its dependent, the moved hook.
+--> destroyed registry (exit)
+--> kept past the block

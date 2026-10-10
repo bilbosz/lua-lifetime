@@ -1,0 +1,78 @@
+-- generation.lt: port of xd/examples/generation.xd. Heading: deviation
+-- (docs/07-conformance.md), caused by decision 8 of
+-- xd/docs/10-lua-lifetime-decisions.md: a destroyed generation is a
+-- tombstone, not `nil`, so the last line prints `dead token generation`;
+-- and a dead key does not disappear from the timer table by itself, so
+-- `after` hooks the entry to remove its own key while it is dying (idiom
+-- B of xd/docs/09-lessons-from-treflove.md). Spelling and idiom:
+--   - the generation is a token, `lifetime.token("generation") @ self`
+--     (decision 6; docs/02-semantics.md, "Tokens: `lifetime.token`"),
+--     where `xd` used an empty table; that is what gives the tombstone a
+--     name to print;
+--   - what the script makes is pinned to the generation,
+--     `@ lifetime.pin(generation)`: the script drops what it spawns, and
+--     `@ generation` alone would carry the `reachable` term (decision 4)
+--     and let the collector take it; `xd`'s `@ generation` had no such
+--     term.
+--
+-- From the Treflove comparison (xd/docs/09-lessons-from-treflove.md, idioms
+-- D and H): a rebuild is destroy(generation) plus recreate. Everything a
+-- script creates is anchored to its generation, so reloading the script is
+-- one destroy() and the host never has to know what the script made:
+-- lifetime.dependents(generation) is the inventory.
+
+local Token = {}
+Token.__index = Token
+Token.__tostring = function(self) return "token " .. self.name end
+Token.__destroy = function(self, reason) print("despawn " .. self.name .. " (" .. reason .. ")") end
+
+local Timer = {}
+Timer.__index = Timer
+Timer.__tostring = function(self) return "timer at " .. self.at end
+
+local timers = {}                 -- keyed by entry; a dying entry removes its key
+local function count(t) local n = 0 for _ in pairs(t) do n = n + 1 end return n end
+
+local host = {}
+
+function host:load(script)
+  destroy(self.generation)        -- destroy(nil) is a no-op the first time
+  local generation = lifetime.token("generation") @ self
+  self.generation = generation
+  local api = {
+    spawn = function(name)
+      return setmetatable({ name = name }, Token) @ lifetime.pin(generation)
+    end,
+    after = function(seconds, f)
+      local entry = setmetatable({ at = seconds, f = f }, Timer) @ lifetime.pin(generation)
+      timers[entry] = true
+      function() timers[entry] = nil end !@ entry
+      return entry
+    end,
+  }
+  script(api)
+  local names = {}
+  for _, obj in ipairs(lifetime.dependents(generation)) do
+    names[#names + 1] = tostring(obj)
+  end
+  print("generation owns: " .. table.concat(names, ", ") .. "; timers pending: " .. count(timers))
+end
+
+host:load(function(api)
+  api.spawn("goblin")
+  api.spawn("chest")
+  api.after(5, function() print("tick") end)
+end)
+--> generation owns: token goblin, token chest, timer at 5; timers pending: 1
+
+host:load(function(api)
+  api.spawn("dragon")
+end)
+--> despawn chest (anchor)        the old generation dies, newest dependent first
+--> despawn goblin (anchor)
+--> generation owns: token dragon; timers pending: 0
+
+destroy(host.generation)
+--> despawn dragon (anchor)
+print("unloaded; host.generation is " .. tostring(host.generation))
+--> unloaded; host.generation is dead token generation

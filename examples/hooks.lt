@@ -1,0 +1,98 @@
+-- hooks.lt: port of xd/examples/hooks.xd. Heading: deviation
+-- (docs/07-conformance.md). What differs, and the decisions of
+-- xd/docs/10-lua-lifetime-decisions.md that cause it:
+--   - decision 2: a hook on `lifetime.reachable` alone runs when the
+--     collector finds it, not at the end of its statement, so part 1
+--     collects before printing "after" (docs/05-decisions.md, "A hook
+--     anchored to `lifetime.reachable` alone runs when collected");
+--   - decision 10 (with decision 7): hooks get no `remaining`, so parts 1
+--     and 3 print the reason only;
+--   - decision 8: a hook that has run is a tombstone, so part 2 prints
+--     `dead hook h` where `xd` printed `nil`;
+--   - decision 7: there is no `lifetime.any`; part 3 hooks the token of
+--     the decision's idiom (`last_of` below), which a counting hook on
+--     each job destroys when the last one dies.
+-- Spelling: a bare `defer f` is `f !@ lifetime.scope`, `defer f @ a` is
+-- `f !@ a`, `lifetime.scope()` after `@` is `lifetime.scope`.
+--
+-- Hooks beyond defer.lt: a hook on `reachable`, `destroy(h)`, a hook that
+-- runs when the last of two jobs dies, and a rollback hook that an error
+-- sets off.
+
+local Thing = {}
+Thing.__index = Thing
+Thing.__tostring = function(self) return self.id end
+function Thing.new(id) return setmetatable({ id = id }, Thing) end
+
+-- Decision 7's idiom: a token that dies when the last of its anchors dies.
+local function last_of(name, ...)
+  local span = lifetime.token(name)
+  local live = select("#", ...)
+  local function count_down()
+    live = live - 1
+    if live == 0 then destroy(span) end
+  end
+  for i = 1, live do
+    local anchor = select(i, ...)
+    count_down !@ anchor
+  end
+  return span
+end
+
+-- 1. A hook on `reachable` created as a bare statement keeps no reference
+--    to itself, so the collector runs it.
+print("before")
+function(reason)
+  print("hook ran (" .. reason .. ")")
+end !@ lifetime.reachable
+collectgarbage("collect")
+print("after")
+--> before
+--> hook ran (unreachable)
+--> after
+
+-- 2. destroy(h) runs the hook now; it runs at most once.
+do
+  local h = function(reason) print("hook h (" .. reason .. ")") end !@ lifetime.scope
+  destroy(h)
+  print("h is now", h)
+end
+--> hook h (destroy)
+--> h is now  dead hook h
+-- nothing at the block exit: the hook has already run
+
+-- 3. A hook that runs when the last job dies: it hangs on the token that
+--    the jobs' counting hooks destroy.
+do
+  local job1 = Thing.new("job1") @ lifetime.scope
+  local job2 = Thing.new("job2") @ lifetime.scope
+  function(reason)
+    print("all jobs finished (" .. reason .. ")")
+  end !@ last_of("jobs", job1, job2)
+  destroy(job2)
+  print("job2 gone")
+  destroy(job1)
+  print("job1 gone")
+end
+--> job2 gone
+--> all jobs finished (anchor)
+--> job1 gone
+
+-- 4. Commit or roll back: discarded on success, run when an error leaves
+--    the function.
+local function transfer(fail)
+  print("begin")
+  local rollback = function(reason) print("rollback (" .. reason .. ")") end !@ lifetime.scope
+  if fail then error("debit failed", 0) end
+  print("commit")
+  discard(rollback)
+end
+
+print(pcall(transfer, false))
+--> begin
+--> commit
+--> true
+print(pcall(transfer, true))
+--> begin
+--> rollback (anchor)
+--> false  debit failed

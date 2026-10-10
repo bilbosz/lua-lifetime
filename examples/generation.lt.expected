@@ -1,0 +1,6 @@
+generation owns: token goblin, token chest, timer at 5; timers pending: 1
+despawn chest (anchor)
+despawn goblin (anchor)
+generation owns: token dragon; timers pending: 0
+despawn dragon (anchor)
+unloaded; host.generation is dead token generation

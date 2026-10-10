@@ -1,0 +1,105 @@
+-- listeners.lt: port of xd/examples/listeners.xd. Heading: deviation
+-- (docs/07-conformance.md). What differs, and the decisions of
+-- xd/docs/10-lua-lifetime-decisions.md that cause it:
+--   - decision 8: a dead element is a tombstone, not a `nil` hole, so the
+--     array of hazard 2 keeps its length and `ipairs` sees both elements;
+--     the hazard is now a dead element left in the array. A destroyed
+--     listener stays a key of the weak table while a local refers to it;
+--   - decision 2: the deaths `xd` pinned to a statement, and the weak
+--     table's cleanup, happen at `collectgarbage("collect")`, inserted
+--     after each drop; the weak table is counted after a second collect,
+--     since an entry clears one collection after its key is finalized
+--     (docs/02-semantics.md, "Reachability is the collector's");
+--   - decision 10: the hook on `(form, item)` gets no `remaining`, and it
+--     runs after the destructor of whichever side died, so the form's
+--     destructor marks the form `closing` and the hook reads that flag to
+--     tell which side went first; when `b` is destroyed, its destructor
+--     runs before its hook unlinks it;
+--   - inputs that die by the collector are registered with `@
+--     lifetime.reachable` (docs/05-decisions.md, "Registration is `x @
+--     lifetime.reachable`"); `a` and `c` are seen anyway, as anchors.
+-- Spelling: `lifetime.all(form, item)` is the list `(form, item)`,
+-- `defer f @ a` is `f !@ a`, `lifetime.scope()` after `@` is
+-- `lifetime.scope`.
+--
+-- From the Treflove comparison (xd/docs/09-lessons-from-treflove.md, idiom
+-- B and hazard 2). A weak-key listener table cleans itself once a dead
+-- listener is no longer referenced, with no unregister call anywhere. An
+-- array of listeners does not: death leaves a tombstone in it. The fix is
+-- a hook on (form, input) that unlinks the input while it is still dying
+-- and findable by identity, when the input is the side that went first.
+
+local listeners = setmetatable({}, { __mode = "k" })   -- listener -> true
+local function count(t) local n = 0 for _ in pairs(t) do n = n + 1 end return n end
+
+local Input = {}
+Input.__index = Input
+Input.__destroy = function(self, reason) print("input " .. self.name .. " destroyed (" .. reason .. ")") end
+local function input(name) return setmetatable({ name = name }, Input) end
+
+-- Hazard 2: an array with a dead element keeps the tombstone.
+local roster = {}
+do
+  local x = input("x") @ lifetime.scope
+  local y = input("y") @ lifetime.reachable
+  roster[1], roster[2] = x, y
+end
+--> input x destroyed (anchor)
+local seen = 0
+for _ in ipairs(roster) do seen = seen + 1 end
+print("roster[1] alive: " .. tostring(lifetime.alive(roster[1])) .. ", roster[2] is " .. tostring(roster[2] and roster[2].name) .. ", ipairs sees " .. seen)
+--> roster[1] alive: false, roster[2] is y, ipairs sees 2
+roster = nil
+collectgarbage("collect")
+--> input y destroyed (unreachable)
+
+-- Idiom B: a hook unlinks from the array; the weak table needs nothing.
+local Form = {}
+Form.__index = Form
+Form.__destroy = function(self, reason)
+  self.closing = true
+  print("form destroyed (" .. reason .. "), " .. #self.inputs .. " inputs still listed")
+end
+
+local function add_input(form, name)
+  local item = input(name)
+  listeners[item] = true
+  table.insert(form.inputs, item)
+  function(reason)
+    -- Ends when either side dies, after that side's destructor. `form` is
+    -- still usable here even when it is the one dying, and its destructor
+    -- has said so.
+    if not form.closing then
+      for i = #form.inputs, 1, -1 do
+        if form.inputs[i] == item then table.remove(form.inputs, i) end
+      end
+      print("unlinked " .. item.name .. ", " .. #form.inputs .. " inputs left")
+    else
+      print("form went first; nothing to unlink for " .. item.name)
+    end
+  end !@ (form, item)
+  return item
+end
+
+do
+  local form = setmetatable({ inputs = {} }, Form) @ lifetime.scope
+  local a = add_input(form, "a")
+  local b = add_input(form, "b")
+  local c = add_input(form, "c")
+  print("listeners: " .. count(listeners) .. ", inputs: " .. #form.inputs)
+  --> listeners: 3, inputs: 3
+  destroy(b)
+  --> input b destroyed (destroy)       b's destructor first
+  --> unlinked b, 2 inputs left         then its hook, with b dying and findable
+  print("listeners: " .. count(listeners) .. ", inputs: " .. #form.inputs .. ", b alive: " .. tostring(lifetime.alive(b)))
+  --> listeners: 3, inputs: 2, b alive: false
+end
+--> form destroyed (anchor), 2 inputs still listed      the form's destructor first,
+--> form went first; nothing to unlink for c            then its hooks, newest first
+--> form went first; nothing to unlink for a
+collectgarbage("collect")
+--> input c destroyed (unreachable)               nothing refers to the inputs any more
+--> input a destroyed (unreachable)
+collectgarbage("collect")
+print("listeners: " .. count(listeners))
+--> listeners: 0

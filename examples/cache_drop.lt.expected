@@ -1,0 +1,9 @@
+(alice, reachable)
+entry a destroyed (unreachable)
+evicted a
+evicted b, held 2
+entry b destroyed (unreachable)
+dropped b
+session alice closed (anchor)
+entry c destroyed (anchor)
+nil	nil	false

@@ -1,0 +1,70 @@
+-- compose.lt: port of xd/examples/compose.xd. Heading: deviation
+-- (docs/07-conformance.md). What differs, and the decisions of
+-- xd/docs/10-lua-lifetime-decisions.md that cause it:
+--   - decision 10: when the request's scope ends, the request's own
+--     destructor runs before `thing`, its dependent; `xd` had `thing`
+--     first. `__destroy` has no `remaining`;
+--   - decision 11: `lifetime.all(lifetime.of(thing), request)` is the list
+--     `(lifetime.of(thing), request)`, and `lifetime.format` renders the
+--     spliced formula as one flat list with the implicit `reachable` term
+--     (decision 4);
+--   - decision 7: `lifetime.kind` and `lifetime.anchor` are gone; the
+--     snapshot's content is printed with `lifetime.format`, `(scope,
+--     reachable)`;
+--   - decision 4: `parent @ app` would carry the `reachable` term, and
+--     nothing refers to `parent` after its block, so the collector could
+--     take it at any time; `xd`'s `parent @ app` kept it alive while app
+--     lived, which is `parent @ lifetime.pin(app)` here. A pinned
+--     object has no sentinel of its own, so at program end `parent` dies
+--     in `app`'s cascade, after it and with reason `"anchor"`, where `xd`
+--     finalized it first, with `"exit"`.
+-- Spelling: `lifetime.scope()` after `@` is `lifetime.scope`; the local
+-- `token` is renamed `snapshot`, since a token is something else here.
+--
+-- Lifetime values: extend or narrow a lifetime without knowing what it was.
+
+local Thing = {}
+Thing.__index = Thing
+Thing.__tostring = function(self) return self.id end     -- names in lifetime.format
+function Thing.new(id) return setmetatable({ id = id }, Thing) end
+function Thing.__destroy(self, reason)
+  print("destroyed " .. self.id .. " (" .. reason .. ")")
+end
+
+local app = Thing.new("app")
+
+local function handle(request, thing)
+  -- Whatever `thing` had, it must now also die with this request.
+  thing @ (lifetime.of(thing), request)
+  print(lifetime.format(lifetime.of(thing)))
+end
+
+do
+  local request = Thing.new("request") @ lifetime.scope
+  local thing   = Thing.new("thing")   @ app
+  handle(request, thing)
+  --> (app, request, reachable)
+end
+--> destroyed request (anchor)    the scope's only dependent: its body first
+--> destroyed thing (anchor)      then its dependent
+
+-- Lifetime values are ordinary values: pass one as an owner.
+local function make_child(owner, id)
+  return Thing.new(id) @ owner
+end
+
+do
+  local parent   = Thing.new("parent") @ lifetime.scope
+  local snapshot = lifetime.of(parent)         -- snapshot of the structure: this scope
+  local child    = make_child(snapshot, "child")
+  parent @ lifetime.pin(app)                   -- moving parent does not affect the snapshot
+  print(lifetime.format(lifetime.of(child)))
+  --> (scope, reachable)
+end
+--> destroyed child (anchor)      child still dies with the block
+-- parent lives on with app, until the program ends. A pinned object
+-- carries no sentinel (docs/03-runtime.md, "The sentinel"), so only app's
+-- finalizer runs at the program-end sweep: app's destructor, then its
+-- dependent.
+--> destroyed app (exit)
+--> destroyed parent (anchor)

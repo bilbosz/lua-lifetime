@@ -1,0 +1,84 @@
+-- destroy_errors.lt: port of xd/examples/destroy_errors.xd. Heading:
+-- deviation (docs/07-conformance.md). Parts 1 and 2 are unchanged. Two
+-- decisions of xd/docs/10-lua-lifetime-decisions.md change the rest:
+--   - decision 10 (part 3): `destroy(e)` runs `e`'s destructor before its
+--     dependent `f`'s, so `e`'s error is the first of the cascade and
+--     propagates, and `f`'s goes to `destroyerror`; `xd` had it the
+--     other way round;
+--   - decision 2 (part 4): a death by `reachable` is the collector's, so
+--     the drop is followed by `collectgarbage("collect")`, and a
+--     destructor the collector runs has no statement to raise at: its
+--     error goes to `destroyerror` and `collectgarbage` returns
+--     (docs/02-semantics.md, "Errors in destructors and `destroyerror`";
+--     docs/05-decisions.md, "Errors in finalizer-run destructors go to
+--     `destroyerror`"). `g` is registered with `@ lifetime.reachable` so
+--     the runtime sees it (docs/05-decisions.md, "Registration is `x @
+--     lifetime.reachable`").
+-- Spelling: `lifetime.scope()` after `@` is `lifetime.scope`.
+--
+-- Errors in destructors follow the C++ rule: with nothing propagating, the
+-- first error of a cascade is held until the cascade has finished and then
+-- propagates to the statement that caused the death; every error raised
+-- while another is propagating goes to `destroyerror` instead.
+
+local Res = {}
+Res.__index = Res
+function Res.new(name, fails) return setmetatable({ name = name, fails = fails }, Res) end
+function Res.__destroy(self, reason)
+  print("close " .. self.name .. " (" .. reason .. ")")
+  if self.fails then error(self.name .. " failed to close", 0) end
+end
+
+-- Replace the default handler, which writes to stderr, with one that prints.
+-- The object it receives is dying, not dead, so it is still usable.
+function destroyerror(obj, err)
+  print("destroyerror: " .. obj.name .. ": " .. err)
+end
+
+-- 1. A scope exit: the first error is held, the rest of the cascade still
+--    runs, the second error goes to destroyerror, then the first propagates.
+print(pcall(function()
+  local a = Res.new("a", true)  @ lifetime.scope
+  local b = Res.new("b", false) @ lifetime.scope
+  local c = Res.new("c", true)  @ lifetime.scope
+end))
+--> close c (anchor)
+--> close b (anchor)
+--> close a (anchor)
+--> destroyerror: a: a failed to close
+--> false  c failed to close
+
+-- 2. An error already propagating: a destructor error during the unwinding
+--    goes to destroyerror and the original error continues.
+print(pcall(function()
+  local d = Res.new("d", true) @ lifetime.scope
+  error("body failed", 0)
+end))
+--> close d (anchor)
+--> destroyerror: d: d failed to close
+--> false  body failed
+
+-- 3. destroy(): the anchor's destructor first; its error is the first of
+--    the cascade and propagates from the call.
+local e = Res.new("e", true)
+local f = Res.new("f", true) @ e
+print(pcall(destroy, e))
+--> close e (destroy)
+--> close f (anchor)
+--> destroyerror: f: f failed to close
+--> false  e failed to close
+
+-- 4. The collector: the destructor runs inside collectgarbage, and its
+--    error has no statement to propagate to, so collectgarbage returns.
+--    (The collect is a statement of its own, not a call nested in an
+--    expression: LuaJIT keeps the argument slots of a pending outer call
+--    on the stack, and a stale slot there would still refer to `g`.)
+local g = Res.new("g", true) @ lifetime.reachable
+g = nil
+collectgarbage("collect")
+--> close g (unreachable)
+--> destroyerror: g: g failed to close
+print("collectgarbage returned")
+--> collectgarbage returned
+print(g)
+--> nil

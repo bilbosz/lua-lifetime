@@ -1,0 +1,56 @@
+-- dead_reference.lt: port of xd/examples/dead_reference.xd. Heading:
+-- deviation (docs/07-conformance.md), caused by decision 8 of
+-- xd/docs/10-lua-lifetime-decisions.md and docs/05-decisions.md, "The dead
+-- metatable raises": a dead reference is not `nil`. Every slot that held
+-- the object still holds it, as a tombstone; `lifetime.alive` is the
+-- check; and using it raises the dead metatable's error, which names the
+-- object (its `tostring` while alive), where it died and why, instead of
+-- Lua's `nil` error with Lua's variable naming (docs/02-semantics.md,
+-- "Tombstones and `lifetime.alive`"). The objects get a `__tostring` so
+-- the messages print no address. Part 3, a dead function, is not portable
+-- as written: a function cannot be an anchored dependent yet (task 012),
+-- and a call on a dead function is not caught even then
+-- (docs/06-open-questions.md, "Non-table dependents after death"); the
+-- port shows the callable table instead, whose call raises. Spelling:
+-- `lifetime.scope()` after `@` is `lifetime.scope`.
+--
+-- A dead reference is a tombstone: every slot that held the object still
+-- holds it, and using it fails with an error that says what died.
+
+local function named(name, mt)
+  mt = mt or {}
+  mt.__tostring = function() return name end
+  return setmetatable({}, mt)
+end
+
+local t
+do
+  t = named("t") @ lifetime.scope
+end
+print(lifetime.alive(t), tostring(t))
+--> false  dead t
+print(pcall(function() return t.x end))
+--> false  examples/dead_reference.lt:32: attempt to index a dead table (t, died at examples/dead_reference.lt:29, anchor)
+
+-- Every kind of slot: a local, a field, a global, a table key.
+local conn = named("conn") @ lifetime.scope
+local holder = { conn = conn }
+g = conn
+local seen = { [conn] = true }
+destroy(conn)
+print(lifetime.alive(conn), holder.conn == conn, g == conn, next(seen) == conn)
+--> false  true  true  true
+print(pcall(function() local c = conn; return c.peer end))
+--> false  examples/dead_reference.lt:43: attempt to index a dead table (conn, died at examples/dead_reference.lt:40, destroy)
+print(pcall(function() return holder.conn.peer end))
+--> false  examples/dead_reference.lt:45: attempt to index a dead table (conn, died at examples/dead_reference.lt:40, destroy)
+print(pcall(function() g.peer = 1 end))
+--> false  examples/dead_reference.lt:47: attempt to assign to a dead table (conn, died at examples/dead_reference.lt:40, destroy)
+
+-- A dead callable table raises when called. (Not as a tail call, `return
+-- f()`, which would leave Lua no caller's line to put in front of the
+-- message.)
+local f = named("f", { __call = function() return 1 end }) @ lifetime.scope
+destroy(f)
+print(pcall(function() local v = f(); return v end))
+--> false  examples/dead_reference.lt:55: attempt to call a dead table (f, died at examples/dead_reference.lt:54, destroy)

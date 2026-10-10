@@ -1,0 +1,78 @@
+-- release_chain.lt: port of xd/examples/release_chain.xd. Heading:
+-- deviation (docs/07-conformance.md). What differs, and the decisions of
+-- xd/docs/10-lua-lifetime-decisions.md that cause it:
+--   - decision 10: one destroy() runs the chain in C++ order, each
+--     object's own destructor before its dependents, most recently
+--     anchored first; `xd` ran dependents before anchors. Inside
+--     `Connection:release` the session is still alive, so a nested
+--     `self.session:release()` would now work (lesson 4 of
+--     xd/docs/09-lessons-from-treflove.md, reversed);
+--   - decision 8: the destroyed connection is a tombstone, `dead
+--     connection`, not `nil`;
+--   - decision 2: the weak-key table loses its entry when the collector
+--     finds the key unreferenced, not in the statement that destroyed it,
+--     so the program drops `conn` and collects twice (the entry of a
+--     collected key clears one collection later, docs/02-semantics.md,
+--     "Reachability is the collector's").
+--
+-- From the Treflove comparison (xd/docs/09-lessons-from-treflove.md,
+-- idiom A): a release() chain five levels deep, a register/unregister pair
+-- and a per-connection table emptied by hand all become anchors written at
+-- the construction site.
+
+local function class(name)
+  local c = {}
+  c.__index = c
+  c.__tostring = function(self) return self.name or name end
+  c.__destroy = function(self, reason)
+    print("release " .. tostring(self) .. " (" .. reason .. ")")
+    if self.release then self:release() end
+  end
+  return c
+end
+
+local Connection = class("connection")
+function Connection:release()
+  -- The body runs before the dependents die, so the session is still
+  -- here: the nested `self.session:release()` of a hand-written chain is
+  -- merely unnecessary.
+  print("  session field is " .. tostring(self.session) .. "; socket closed")
+end
+
+local Session = class("session")
+local Login = class("login")
+local Rp = class("rp")
+
+local sessions = setmetatable({}, { __mode = "k" })   -- connection -> session
+
+local function open(conn)
+  local session = setmetatable({ connection = conn }, Session) @ conn
+  conn.session = session
+  session.login = setmetatable({}, Login) @ session
+  session.login.login_rp  = setmetatable({ name = "login_rp" }, Rp) @ session.login
+  session.login.logout_rp = setmetatable({ name = "logout_rp" }, Rp) @ session.login
+  session.data_rp = setmetatable({ name = "data_rp" }, Rp) @ session
+  sessions[conn] = session
+end
+
+local conn = setmetatable({}, Connection)
+open(conn)
+print("connection owns " .. #lifetime.dependents(conn) .. ", session owns " .. #lifetime.dependents(conn.session))
+--> connection owns 1, session owns 2
+
+destroy(conn)
+--> release connection (destroy)   the anchor's own body first
+-->   session field is session; socket closed
+--> release session (anchor)       then its dependent, body first
+--> release data_rp (anchor)        the session's dependents, most recently anchored first
+--> release login (anchor)
+--> release logout_rp (anchor)     then the login's, newest first
+--> release login_rp (anchor)
+
+print("conn is " .. tostring(conn))
+--> conn is dead connection
+conn = nil
+collectgarbage("collect")
+collectgarbage("collect")
+print("sessions table is empty: " .. tostring(next(sessions) == nil))
+--> sessions table is empty: true

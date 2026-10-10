@@ -1,0 +1,12 @@
+last deferred, runs first: anchor
+destroyed t (anchor)
+first deferred, runs last
+destroyed conn (anchor)
+hook sees conn (anchor)
+destroyed listener (destroy)
+unsubscribed (anchor)
+emitter still alive:	true
+destroyed emitter (anchor)
+dead hook rollback	true
+destroyed registry (exit)
+kept past the block

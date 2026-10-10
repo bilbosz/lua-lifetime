@@ -1,0 +1,36 @@
+-- dead_cache.lt: port of xd/examples/dead_cache.xd. Heading: deviation
+-- (docs/07-conformance.md), caused by decision 8 of
+-- xd/docs/10-lua-lifetime-decisions.md: when the session dies its entry
+-- dies with it, but `cache[key]` does not become `nil`; it holds a
+-- tombstone, which `lookup` tests with `lifetime.alive` instead of `if
+-- entry then` (docs/02-semantics.md, "Tombstones and `lifetime.alive`").
+-- The output of `xd` is kept, and one line is added to show the tombstone
+-- still in the cache. Spelling: `lifetime.all(session, lifetime.reachable)`
+-- is `@ session`, which carries the `reachable` term implicitly (decision
+-- 4), and `lifetime.scope()` after `@` is `lifetime.scope`.
+--
+-- A cache whose entries die with the session they belong to,
+-- without the session ever knowing the cache exists.
+
+local cache = {}
+
+local function remember(session, key, value)
+  -- Dies with the session (immediately), or earlier if the cache drops it.
+  -- When it dies, `cache[key]` holds its tombstone.
+  cache[key] = { value = value } @ session
+end
+
+local function lookup(key)
+  local entry = cache[key]        -- a tombstone once the session is gone
+  if lifetime.alive(entry) then return entry.value end
+  return nil
+end
+
+do
+  local session = { user = "alice" } @ lifetime.scope
+  remember(session, "greeting", "hello alice")
+  print(lookup("greeting"))   --> hello alice
+end -- session dies, so the cache entry dies with it
+
+print(lookup("greeting"))     --> nil
+print(cache.greeting ~= nil, lifetime.alive(cache.greeting))   --> true  false

@@ -1,0 +1,39 @@
+-- main_scope_error.lt: an uncaught error under `lifetime run`. The command
+-- calls the main chunk through the runtime's `pcall`, so the error unwinds
+-- every scope left open, innermost first and the main scope last, each in
+-- reverse attachment order, and only then is it reported as `lifetime:
+-- <message>` with a traceback on standard error, exit status 1
+-- (docs/04-transpiler.md, "The command", "The error path: unwinding at the
+-- catch site"; docs/02-semantics.md, "Program end").
+
+local Res = {}
+function Res.__destroy(self, reason)
+    print("destroy " .. self.name .. " (" .. reason .. ")")
+end
+local function res(name)
+    return setmetatable({name = name}, Res)
+end
+
+local first = res("first") @ lifetime.scope
+local second = res("second") @ lifetime.scope
+
+local function fail()
+    local inner = res("inner") @ lifetime.scope
+    print("raising in", inner.name)
+    error("x")
+end
+
+print("calling with", first.name, second.name)
+fail()
+print("not reached")
+--> calling with	first	second
+--> raising in	inner
+--> destroy inner (anchor)
+--> destroy second (anchor)
+--> destroy first (anchor)
+-- and then, on standard error: lifetime: examples/main_scope_error.lt:23: x
+
+-- Named uncaught_error.lt until task 008 gave that name to the port of
+-- xd/examples/uncaught_error.xd (docs/07-conformance.md). This file is
+-- task 007's test case 2, and tests/test-cli.lua runs it for the order of
+-- the cascade and the report on a merged stream.

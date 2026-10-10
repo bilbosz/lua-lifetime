@@ -1,0 +1,81 @@
+-- pinned_parent.lt: port of xd/examples/pinned_parent.xd. Heading:
+-- deviation (docs/07-conformance.md). `xd` kept this file as the baseline
+-- of hazard 1 (xd/docs/09-lessons-from-treflove.md): a dependent that
+-- refers back to its anchor, or a hook whose function mentions it, pinned
+-- the anchor, so cases 1 and 2 never died by reachability. Decision 3 of
+-- xd/docs/10-lua-lifetime-decisions.md keeps dependents inside the anchor,
+-- so each case is an ordinary cycle that the collector frees once nothing
+-- outside refers to it (proposal A of the lessons, "adopted, for free"),
+-- and decision 4 gives `@ parent` the implicit `reachable` term, so cases
+-- 1 and 3 are now the same program. The messages the program prints say
+-- what now happens. Other differences:
+--   - decision 2: every death by reachability happens at
+--     `collectgarbage("collect")`, inserted after each drop; within one
+--     collection the newest sentinel is finalized first, so the child (or
+--     the hook's owner) goes before what it refers to, each with
+--     `"unreachable"`;
+--   - decision 10: in case 2 the object's destructor runs before its
+--     hook; in case 4 the parent's destructor runs before the child's;
+--   - nothing is left for the program-end sweep.
+-- Spelling: `lifetime.all(parent, lifetime.reachable)` is `@ parent`,
+-- `defer f @ self` is `f !@ self`, `lifetime.scope()` after `@` is
+-- `lifetime.scope`.
+
+local Node = {}
+Node.__index = Node
+Node.__destroy = function(self, reason) print(self.name .. " destroyed (" .. reason .. ")") end
+local function node(name) return setmetatable({ name = name }, Node) end
+
+-- 1. child @ parent, with the back-reference every tree has.
+do
+  local parent = node("parent1")
+  local child = node("child1") @ parent
+  child.parent = parent
+  parent.child = child
+  parent, child = nil, nil
+  collectgarbage("collect")
+  --> child1 destroyed (unreachable)
+  --> parent1 destroyed (unreachable)
+  print("case 1: both dropped, both destroyed")
+end
+
+-- 2. A cleanup hook whose function mentions its owner.
+local function make(name)
+  local self = node(name)
+  function() print("hook for " .. self.name .. " ran") end !@ self
+  return self
+end
+do
+  local obj = make("obj")
+  obj = nil
+  collectgarbage("collect")
+  --> obj destroyed (unreachable)
+  --> hook for obj ran
+  print("case 2: obj dropped, obj and its hook destroyed")
+end
+
+-- 3. What `xd` needed as a workaround is case 1 again: the child keeps a
+-- reachability term, so the pair dies together, newest first.
+do
+  local parent = node("parent2")
+  local child = node("child2") @ parent
+  child.parent = parent
+  parent.child = child
+  parent, child = nil, nil
+  collectgarbage("collect")
+  --> child2 destroyed (unreachable)
+  --> parent2 destroyed (unreachable)
+  print("case 3: both dropped, both destroyed")
+end
+
+-- 4. An explicit lifetime at the root of the tree.
+do
+  local parent = node("parent3") @ lifetime.scope
+  local child = node("child3") @ parent
+  child.parent = parent
+  parent.child = child
+end
+--> parent3 destroyed (anchor)
+--> child3 destroyed (anchor)
+
+print("end of program; nothing is left alive")

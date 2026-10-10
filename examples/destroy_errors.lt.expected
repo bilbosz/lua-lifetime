@@ -1,0 +1,16 @@
+close c (anchor)
+close b (anchor)
+close a (anchor)
+destroyerror: a: a failed to close
+false	c failed to close
+close d (anchor)
+destroyerror: d: d failed to close
+false	body failed
+close e (destroy)
+close f (anchor)
+destroyerror: f: f failed to close
+false	e failed to close
+close g (unreachable)
+destroyerror: g: g failed to close
+collectgarbage returned
+nil

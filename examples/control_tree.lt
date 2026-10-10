@@ -1,0 +1,90 @@
+-- control_tree.lt: port of xd/examples/control_tree.xd. Heading: deviation
+-- (docs/07-conformance.md), with `collectgarbage("collect")` inserted
+-- where `xd` pinned the detached button's death to the statement that
+-- dropped it (decision 2 of xd/docs/10-lua-lifetime-decisions.md). What
+-- else differs: decision 10 runs a parent's destructor before its
+-- children's, so the screen goes first, then its children newest first
+-- (the label, then the panel); `xd` destroyed children before parents.
+-- Spelling: `lifetime.all(parent, lifetime.reachable)` is `@ parent`,
+-- which carries the `reachable` term implicitly (decision 4), and
+-- `lifetime.scope()` after `@` is `lifetime.scope`.
+--
+-- From the Treflove comparison (xd/docs/09-lessons-from-treflove.md, idiom
+-- E): a control tree where set_parent is a move. A child cannot outlive its
+-- parent, a parent's destructor runs while its children are still there,
+-- and a detached control goes back to the collector. Children keep the
+-- reachability term, so their back-reference does not pin the parent. A
+-- dying control cannot be moved, not even to rescue it from inside a
+-- destructor (docs/02-semantics.md, "Acquiring a lifetime: the `@`
+-- operator", step 3): destructors clean up, they do not reorganise
+-- ownership.
+
+local Control = {}
+Control.__index = Control
+function Control.__destroy(self, reason)
+  print("destroy " .. self.name .. " (" .. reason .. ")")
+  if self.on_destroy then self:on_destroy() end
+  if self.parent then self.parent:remove_child(self) end   -- dying, not dead: identity intact
+end
+
+local function control(name)
+  return setmetatable({ name = name, children = {} }, Control)
+end
+
+function Control:remove_child(child)
+  for i = #self.children, 1, -1 do
+    if self.children[i] == child then table.remove(self.children, i) end
+  end
+end
+
+function Control:set_parent(parent)
+  if self.parent then self.parent:remove_child(self) end
+  self.parent = parent
+  if parent then
+    table.insert(parent.children, self)
+    self @ parent                      -- dies with the parent, or sooner if dropped
+  else
+    self @ lifetime.reachable          -- detached: back on the collector
+  end
+end
+
+local function names(t)
+  local out = {}
+  for _, c in ipairs(t) do out[#out + 1] = c.name end
+  return #out == 0 and "(none)" or table.concat(out, " ")
+end
+
+local keep = {}                     -- a live anchor outside every cascade below
+
+do
+  local screen = control("screen") @ lifetime.scope
+  local panel = control("panel")
+  panel:set_parent(screen)
+  local label = control("label")
+  label:set_parent(panel)
+  local button = control("button")
+  button:set_parent(panel)
+  print("panel: " .. names(panel.children) .. "; screen: " .. names(screen.children))
+  --> panel: label button; screen: panel
+
+  label:set_parent(screen)          -- a move: the label is now owned by the screen
+  print("panel: " .. names(panel.children) .. "; screen: " .. names(screen.children))
+  --> panel: button; screen: panel label
+
+  button:set_parent(nil)            -- detached, and this local is the last reference
+  button = nil
+  collectgarbage("collect")
+  --> destroy button (unreachable)
+  print("panel: " .. names(panel.children))
+  --> panel: (none)
+
+  -- A dying control cannot be rescued by moving it onto a live anchor.
+  label.on_destroy = function(self)
+    local ok, err = pcall(function() self @ keep end)
+    print("  rescue refused: " .. err:match("attempt to move a dying %a+"))
+  end
+end
+--> destroy screen (anchor)         the parent's destructor first
+--> destroy label (anchor)          then the screen's children, most recently attached first
+-->   rescue refused: attempt to move a dying table
+--> destroy panel (anchor)

@@ -1,0 +1,54 @@
+-- move.lt: port of xd/examples/move.xd. Heading: deviation
+-- (docs/07-conformance.md), with `collectgarbage("collect")` inserted
+-- where `xd` pinned the root's death to the statement that dropped it
+-- (decision 2 of xd/docs/10-lua-lifetime-decisions.md). What else differs,
+-- and the decisions that cause it:
+--   - decision 10: when the provisional scope ends, the root's destructor
+--     runs before its child's; `xd` had the child first;
+--   - decision 2: when the collector finds the released subtree, the
+--     child has a sentinel of its own (it has a `__destroy`), armed after
+--     the root's, so the host finalizes it first, with reason
+--     `"unreachable"`, and the root's cascade then skips it
+--     (docs/02-semantics.md, "Reachability is the collector's": "Ownership
+--     order holds for every death the program causes; the collector's
+--     deaths follow its order"); `xd` had the child die `"anchor"` in the
+--     root's cascade;
+--   - decision 4: `lifetime.format` renders the formulas with the implicit
+--     `reachable` term, `(registry, reachable)` and `(root, reachable)`.
+-- Spelling: `lifetime.scope()` after `@` is `lifetime.scope`.
+--
+-- Moving an object, and its whole ownership subtree, between lifetimes.
+
+local Node = {}
+Node.__index = Node
+Node.__tostring = function(self) return self.id end
+function Node.new(id) return setmetatable({ id = id }, Node) end
+function Node.__destroy(self, reason) print("destroyed " .. self.id .. " (" .. reason .. ")") end
+
+local registry = Node.new("registry")
+
+local function build(ok)
+  local root  = Node.new("root")  @ lifetime.scope     -- provisional
+  local child = Node.new("child") @ root               -- owned by root, wherever root goes
+  if not ok then return nil end                        -- scope exit: root, then child
+  root @ registry                                      -- commit: move the subtree
+  print(lifetime.format(lifetime.of(root)), lifetime.format(lifetime.of(child)))
+  return root
+end
+
+build(false)
+--> destroyed root (anchor)
+--> destroyed child (anchor)
+
+local r = build(true)
+--> (registry, reachable)  (root, reachable)
+-- nothing destroyed: root now belongs to the registry
+
+r @ lifetime.reachable   -- release it: now only `r` keeps it alive
+r = nil                  -- ... and this statement drops that
+collectgarbage("collect")
+--> destroyed child (unreachable)    the collector's order: newest sentinel first
+--> destroyed root (unreachable)
+
+-- Program end: the registry is the newest object still alive.
+--> destroyed registry (exit)

@@ -1,0 +1,14 @@
+before
+hook ran (unreachable)
+after
+hook h (destroy)
+h is now	dead hook h
+job2 gone
+all jobs finished (anchor)
+job1 gone
+begin
+commit
+true
+begin
+rollback (anchor)
+false	debit failed
