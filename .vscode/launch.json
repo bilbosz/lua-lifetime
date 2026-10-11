@@ -1,0 +1,34 @@
+{
+    // Run and debug a lua-lifetime program from the editor
+    // (editor/README.md, "Running and debugging"). Needs the "Local Lua
+    // Debugger" extension (tomblind.local-lua-debugger-vscode). Open a
+    // .lt file, such as one of examples/, and press F5: the file runs as
+    // `lifetime run` runs it, under the chunk name the conformance runner
+    // uses (examples/NAME.lt), and breakpoints set in the .lt file stop
+    // there, since the emitter keeps every statement on its source line.
+    //
+    // .vscode/launch.lua starts the debugger and then the command; it
+    // says why bin/lifetime cannot be the program. "breakInCoroutines"
+    // stays false for the reason given there.
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "lifetime run: current file (LuaJIT)",
+            "type": "lua-local",
+            "request": "launch",
+            "program": { "command": "luajit" },
+            "args": [".vscode/launch.lua", "${relativeFile}"],
+            "cwd": "${workspaceFolder}",
+            "breakInCoroutines": false
+        },
+        {
+            "name": "lifetime run: current file (Lua 5.1)",
+            "type": "lua-local",
+            "request": "launch",
+            "program": { "command": "lua5.1" },
+            "args": [".vscode/launch.lua", "${relativeFile}"],
+            "cwd": "${workspaceFolder}",
+            "breakInCoroutines": false
+        }
+    ]
+}

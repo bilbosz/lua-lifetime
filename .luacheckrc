@@ -32,6 +32,12 @@ files["bin/lifetime"] = {
     read_globals = {"arg"}
 }
 
+files[".vscode/launch.lua"] = {
+    -- The editor's launcher (editor/README.md): it rewrites the arg the
+    -- interpreter set into the one bin/lifetime expects.
+    globals = {"arg"}
+}
+
 files["editor/luals/plugin.lua"] = {
     -- The language server's plugin (editor/README.md): OnSetText is the
     -- global the server looks up; log is the server's logger.

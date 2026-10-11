@@ -8,6 +8,7 @@ not install it, and `bin/lifetime` never reads it.
 | --- | --- |
 | `luals/plugin.lua` | A plugin for the Lua language server (LuaLS, the `sumneko.lua` extension of VS Code). It rewrites a `.lt` file into plain Lua of the same shape before the server parses it, so that `.lt` files get completion, hover, go to definition and diagnostics. The rewrite is for analysis only and is never run. |
 | `luals/check.lua` | Runs the rewrite over `.lt` files and checks that each result compiles. `make luals-check`, part of `make test`, runs it over every `.lt` file of the repository. |
+| `../.vscode/launch.json`, `../.vscode/launch.lua` | Run and debug configurations for VS Code with the "Local Lua Debugger" extension (`tomblind.local-lua-debugger-vscode`), and the script they run. |
 
 ## The language server plugin
 
@@ -40,7 +41,31 @@ under the server's Lua 5.4; `check.lua` runs under Lua 5.1 and LuaJIT,
 and under the server's own interpreter when run by hand
 (`<extension>/server/bin/lua-language-server editor/luals/check.lua FILE...`).
 
+## Running and debugging
+
+`.vscode/launch.json` has one configuration per interpreter, "lifetime
+run: current file (LuaJIT)" and "(Lua 5.1)". With a `.lt` file open,
+F5 runs it as `lifetime run` does, from the repository root, under the
+chunk name the conformance runner uses (`examples/NAME.lt`), so the
+debug console shows the output of `NAME.lt.expected`. A breakpoint set
+in the `.lt` file stops there, in a coroutine too: the emitter keeps
+every statement on its source line, and `.lt` is associated with Lua,
+which is what lets the editor set it. The locals shown are the generated
+chunk's, so a scope record (`__s1`) appears among them. A file under
+`lifetime/` takes breakpoints the same way, and a transpiled `.lua` file
+runs like its source.
+
+The configurations run `.vscode/launch.lua`, not `bin/lifetime`. The
+debugger replaces `error`, `assert`, `debug.traceback` and
+`coroutine.wrap` with functions that stop at every raise and raise the
+value again as a string, which neither the transpiler nor the runtime
+survives; the script starts the debugger, puts the host's functions
+back and then runs the command. Two things follow: the debugger does
+not stop on an error, caught or uncaught (an uncaught one is reported
+with its traceback, as `lifetime run` reports it), and
+`"breakInCoroutines"` must stay `false`.
+
 ## Not here yet
 
-A grammar for `.lt` that highlights `@` and `!@`, and the debugger
-configuration, need a VS Code extension of their own.
+A grammar for `.lt` that highlights `@` and `!@` needs a VS Code
+extension of its own.
