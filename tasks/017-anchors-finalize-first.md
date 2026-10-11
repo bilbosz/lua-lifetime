@@ -1,11 +1,11 @@
 ---
 id: 017
 title: Runtime: keep each anchor's sentinel newer than its dependents' so a collected subtree dies in ownership order
-status: review
+status: done
 depends: []
 branch: task/017-anchors-finalize-first
 pr: https://github.com/bilbosz/lua-lifetime/pull/48
-commits:
+commits: d5aa543c72dcae44a664e54c67cd4997095ba553
 review: APPROVE (round 2)
 ---
 
