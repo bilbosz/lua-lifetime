@@ -3,8 +3,8 @@
 -- "Host"). `luarocks make lua-lifetime-dev-1.rockspec` installs the modules
 -- and the command `lifetime` (bin/lifetime; task 007).
 -- No license is declared yet: the human decides (xd has none either).
--- The teal-lifetime rockspec is a later addition to this repository
--- (docs/01-overview.md, "Rocks").
+-- teal-lifetime-dev-1.rockspec, the Teal front end, depends on this rock
+-- (docs/01-overview.md, "Rocks"; task 018).
 rockspec_format = "3.0"
 package = "lua-lifetime"
 version = "dev-1"

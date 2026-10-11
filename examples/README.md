@@ -43,3 +43,18 @@ command").
 Every example must pass; there is no expected-failure marker. The examples
 ported from `xd/examples/` and how each relates to its original are
 recorded in `docs/07-conformance.md`.
+
+## The Teal examples
+
+`teal/NAME.tlt` is a program in Teal with lifetime syntax
+(`docs/04-transpiler.md`, "The Teal front end"), `teal/NAME.tlt.expected`
+its exact standard output under the same contract. Each is transpiled
+to `build/examples/teal/NAME.tl` and runs with `lifetime run
+examples/teal/NAME.tlt`, which compiles the Teal with the `tl` module,
+under the chunk name `examples/teal/NAME.tlt`, so a position reads
+`examples/teal/NAME.tlt:LINE:`. The runner runs them under every
+interpreter on which `require("tl")` works; with `tl` on no interpreter
+they are skipped with a note, since `tl` is the `teal-lifetime` rock's
+dependency, not this repository's. Most are the Lua examples of the same
+name in Teal, with the same output; `generics.tlt` is the grammar Teal
+adds.

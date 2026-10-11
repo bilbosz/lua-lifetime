@@ -81,9 +81,14 @@ human.
 - `lua-lifetime`, this repository, module `lifetime`. Rockspec summary:
   *Ownership and destructors for Lua.* Targets Lua 5.1 and LuaJIT
   ([02-semantics.md](02-semantics.md), "Host").
-- `teal-lifetime`, later, from the same repository: a second rockspec that
-  depends on `lua-lifetime` for the runtime and on `tl`, with a Teal front
-  end and Teal output; the transpiler core and the CLI are shared, and
-  its lexer reads `!@` before Teal's postfix `!`
+- `teal-lifetime`, from the same repository (task 018): a second
+  rockspec, `teal-lifetime-dev-1.rockspec`, that depends on
+  `lua-lifetime` for the runtime and on `tl`, with a Teal front end and
+  Teal output; the transpiler core and the CLI are shared, and its lexer
+  reads `!@` before Teal's postfix `!`
   ([05-decisions.md](05-decisions.md), "`!@` survives Teal's macro
-  operator"). Not created yet.
+  operator"). Rockspec summary: *Ownership and destructors for Teal.* It
+  installs the dialect module `lifetime.teal` and the declaration file
+  `lifetime/init.d.tl`; source files are `.tlt`, and `lifetime build
+  FILE.tlt -o OUT.tl` and `lifetime run FILE.tlt` are the command's
+  ([04-transpiler.md](04-transpiler.md), "The Teal front end").

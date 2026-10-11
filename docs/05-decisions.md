@@ -893,3 +893,52 @@ rejected `@@` for. Nothing changes in code, examples or expected output;
 `tests/test-parser.lua` already pins the adjacency rule.
 → [02-semantics.md](02-semantics.md), "Hooks: the `!@` operator";
 [01-overview.md](01-overview.md), "Rocks"
+
+## The Teal source extension is `.tlt`
+
+"The source file extension is `.lt`" above reasoned from Teal's `.tl`:
+a two-letter extension works for a language that compiles to Lua, and
+`.lt` reads as "Lua, lifetimes". The Teal front end (task 018) needs an
+extension of its own, since a `.tlt` file is not valid Teal and `.tl`
+would mislead `tl`, editors and the `tl` package loader, and since the
+command picks the front end by the extension. Decided: `.tlt`, "Teal,
+lifetimes", the same construction as `.lt`; the output is `.tl`.
+Rejected: `.lt` for both with a `--teal` option (the command and the
+conformance runner would need the option everywhere), `.tl.lt`
+(two-level extensions are not what `tl`'s path search or editors key
+on), `.teal` (it is not Teal).
+→ [04-transpiler.md](04-transpiler.md), "The Teal front end";
+`lifetime/cli.lua`, `lang_of`
+
+## The Teal front end is a dialect of the shared transpiler
+
+[01-overview.md](01-overview.md), "Rocks": "the transpiler core and the
+CLI are shared". Decided how: the lexer, the parser and the emitter take
+a *dialect*, an object that supplies Teal's operator tables and the
+hooks the parser calls where Teal syntax can start (after a local's name,
+a parameter, a function's `)`, after `local`, at `global`, on `as` and
+`is`, at `!`), and everything Teal adds to Lua is kept as the tokens it
+was (a Raw node with lines) and written back unchanged; the transpiler
+never interprets a type, `tl` does on the output. The dialect lives in
+one module, `lifetime.teal`, which the `teal-lifetime` rock installs, and
+the core requires it only for a `.tlt` file. Reasons: one grammar for
+the extension, one emitter for the blocks and the epilogues, one set of
+error shapes; Lua pays nothing (the hooks are a nil upvalue tested at a
+dozen points, none in a per-token loop; `build/teal-5000` against
+`build/extension-5000` measures the Teal cost); and `tl` stays the
+authority on Teal's types. Rejected: a second parser for Teal (two
+copies of the extension's grammar to keep in step), rewriting the Teal
+AST of `tl` itself (ties the front end to `tl`'s internals, which move
+between releases, and `tl` drops the positions a generated chunk needs),
+and type erasure before the Lua stages (the output must be Teal).
+
+Two rows of the generated code differ from the Lua path's because Teal
+assigns `any` to no declared type and infers no type variable from
+`{any}`: the packing helpers are typed in the header, and a packed
+`return` casts the unpacked values to the enclosing function's declared
+return types (`as (T1, …, Tn)`); a function that declares none or ends
+them with `...` gets no cast and `tl` reports the mismatch, as it does
+for any `any...` return. The alternative, a runtime `pack` of its own,
+would change the Lua path's shape for a Teal need and was rejected.
+→ [04-transpiler.md](04-transpiler.md), "The Teal front end";
+`lifetime/teal.lua`, `lifetime/init.d.tl`
