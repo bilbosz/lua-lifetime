@@ -4,7 +4,7 @@ title: Runtime: keep each anchor's sentinel newer than its dependents' so a coll
 status: review
 depends: []
 branch: task/017-anchors-finalize-first
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/48
 commits:
 review: APPROVE (round 2)
 ---
