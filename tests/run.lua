@@ -23,6 +23,7 @@ local TEST_MODULES = {
     "tests.test-parser",
     "tests.test-emit",
     "tests.test-cli",
+    "tests.test-teal",
     "tests.test-bench"
 }
 
@@ -39,8 +40,9 @@ if what == "unit" or what == "all" then
 end
 
 if what == "conformance" or what == "all" then
-    local interpreters = require("tests.conformance").run(test)
+    local interpreters, teal_interpreters = require("tests.conformance").run(test)
     print("conformance interpreters: " .. (#interpreters > 0 and table.concat(interpreters, ", ") or "none"))
+    print("conformance interpreters with tl (the Teal examples): " .. (#teal_interpreters > 0 and table.concat(teal_interpreters, ", ") or "none"))
 end
 
 local failed = test.report()

@@ -338,16 +338,39 @@ test.case("lua-lifetime-dev-1.rockspec installs every module and the command", f
     test.assert_eq(spec.build.type, "builtin")
     test.assert_deep_eq(spec.build.install.bin, {lifetime = "bin/lifetime"})
     -- Every lifetime/*.lua file is a module of the rock under its require
-    -- name, and every module's file exists.
+    -- name, and every module's file exists; lifetime/teal.lua is the
+    -- teal-lifetime rock's (task 018; below).
     local expected = {}
     local p = assert(io.popen("ls -1 lifetime/*.lua"))
     for path in p:lines() do
         local stem = path:match("^lifetime/(.+)%.lua$")
-        expected[stem == "init" and "lifetime" or "lifetime." .. stem] = path
+        if stem ~= "teal" then
+            expected[stem == "init" and "lifetime" or "lifetime." .. stem] = path
+        end
     end
     p:close()
     test.assert_deep_eq(spec.build.modules, expected)
     test.assert_true(read_file("bin/lifetime") ~= nil)
+end)
+
+test.case("teal-lifetime-dev-1.rockspec depends on lua-lifetime and tl and installs the front end", function()
+    -- docs/01-overview.md, "Rocks": "a second rockspec that depends on
+    -- `lua-lifetime` for the runtime and on `tl`, with a Teal front end
+    -- and Teal output; the transpiler core and the CLI are shared".
+    local spec = load_rockspec("teal-lifetime-dev-1.rockspec")
+    test.assert_eq(spec.package, "teal-lifetime")
+    test.assert_eq(spec.version, "dev-1")
+    test.assert_eq(spec.description.summary, "Ownership and destructors for Teal.")
+    test.assert_deep_eq(spec.dependencies, {"lua >= 5.1, < 5.2", "lua-lifetime", "tl >= 0.24.0"})
+    test.assert_eq(spec.build.type, "builtin")
+    test.assert_deep_eq(spec.build.modules, {["lifetime.teal"] = "lifetime/teal.lua"})
+    -- The declaration file goes next to the runtime, where tl's `?/init.lua`
+    -- lookup finds it as lifetime/init.d.tl.
+    test.assert_deep_eq(spec.build.install.lua, {lifetime = "lifetime/init.d.tl"})
+    test.assert_eq(spec.build.install.bin, nil)
+    for _, file in ipairs({"lifetime/teal.lua", "lifetime/init.d.tl"}) do
+        test.assert_true(read_file(file) ~= nil, file)
+    end
 end)
 
 for _, interpreter in ipairs(INTERPRETERS) do

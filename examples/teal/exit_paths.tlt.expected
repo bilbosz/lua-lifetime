@@ -1,0 +1,37 @@
+return 1, nil
+destroy b (anchor)
+destroy a (anchor)
+returned 2 values:	1	nil
+return b.name, a.name
+destroy b (anchor)
+destroy a (anchor)
+returned 2 values:	b	a
+return select(2, ...)
+destroy b (anchor)
+destroy a (anchor)
+returned 3 values:	y	nil	nil
+return ...
+destroy b (anchor)
+destroy a (anchor)
+returned 3 values:	nil	2	nil
+return
+destroy b (anchor)
+destroy a (anchor)
+returned 0 values:
+falls out of the inner block
+destroy b (anchor)
+falls through the function body
+destroy a (anchor)
+returned 0 values:
+destroy c (anchor)
+returned 2 values:	c	2
+destroy d1 (anchor)
+end of iteration 1
+destroy c1 (anchor)
+break
+destroy d2 (anchor)
+destroy c2 (anchor)
+after the for loop
+break from the then block
+destroy e (anchor)
+after the while loop

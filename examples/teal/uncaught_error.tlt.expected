@@ -1,0 +1,15 @@
+open log
+open tmp 1
+open conn 1
+handled 1	conn 1
+hook for request 1 (anchor)
+close conn 1 (anchor)
+tmp 1
+close tmp 1 (anchor)
+open tmp 2
+open conn 2
+hook for request 2 (anchor)
+close conn 2 (anchor)
+close tmp 2 (anchor)
+close log (exit)
+!error: examples/teal/uncaught_error.tlt:20: request 2 failed
