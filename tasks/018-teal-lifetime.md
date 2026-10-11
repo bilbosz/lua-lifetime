@@ -4,7 +4,7 @@ title: teal-lifetime: the Teal front end, Teal output, the `lifetime` declaratio
 status: review
 depends: [007]
 branch: task/018-teal-lifetime
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/53
 commits:
 review: APPROVE (round 2)
 ---
