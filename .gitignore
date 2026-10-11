@@ -3,3 +3,5 @@ build/
 # luarocks --tree
 .lua_modules/
 *.rock
+# Scratch output, e.g. examples transpiled by hand.
+tmp/
