@@ -5,12 +5,13 @@
 --     coroutine dies when the collector finds it, so each drop is followed
 --     by `collectgarbage("collect")`. Lua 5.1 has no `coroutine.close`:
 --     the runtime destroys the suspended coroutine's scope records from
---     their sentinels, innermost first, and an object that has a sentinel
---     of its own (it has a `__destroy`) was armed after its scope's record
---     and is finalized first, with reason `"unreachable"`
---     (docs/02-semantics.md, "Coroutines" and "Reachability is the
---     collector's"; docs/03-runtime.md, "The scope stack and the error
---     path");
+--     their sentinels, innermost first; each record's sentinel is kept
+--     newer than those of the objects it anchors, so its cascade takes
+--     them with reason `"anchor"`, as `xd` printed (docs/02-semantics.md,
+--     "Coroutines" and "Reachability is the collector's"; docs/03-runtime.md,
+--     "The scope stack and the error path", "The sentinel", "Anchors
+--     first"; docs/05-decisions.md, "Anchors are finalized before their
+--     dependents");
 --   - only tables and tokens can be anchors (docs/02-semantics.md,
 --     "Vocabulary"; docs/06-open-questions.md, "Non-table anchors"), so
 --     part 2 has no hook on the coroutine `b`, and part 3 cannot anchor to
@@ -65,8 +66,8 @@ print("b suspended in iteration 2")
 --> b suspended in iteration 2
 b = nil
 collectgarbage("collect")
---> close b step 2 (unreachable)
---> close b outer (unreachable)
+--> close b step 2 (anchor)
+--> close b outer (anchor)
 print("b gone")
 --> b gone
 

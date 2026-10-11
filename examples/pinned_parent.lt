@@ -11,11 +11,15 @@
 -- what now happens. Other differences:
 --   - decision 2: every death by reachability happens at
 --     `collectgarbage("collect")`, inserted after each drop; within one
---     collection the newest sentinel is finalized first, so the child (or
---     the hook's owner) goes before what it refers to, each with
---     `"unreachable"`;
---   - decision 10: in case 2 the object's destructor runs before its
---     hook; in case 4 the parent's destructor runs before the child's;
+--     collection an anchor is finalized before its dependents, so a
+--     collected pair dies as one cascade from the parent, the parent with
+--     `"unreachable"` and the child with `"anchor"` (docs/02-semantics.md,
+--     "Reachability is the collector's"; docs/05-decisions.md, "Anchors
+--     are finalized before their dependents"), where `xd` had the child
+--     first, each with `"unreachable"`;
+--   - decision 10: the owner's destructor runs before its dependents':
+--     the parent's before the child's in cases 1, 3 and 4, the object's
+--     before its hook in case 2;
 --   - nothing is left for the program-end sweep.
 -- Spelling: `lifetime.all(parent, lifetime.reachable)` is `@ parent`,
 -- `defer f @ self` is `f !@ self`, `lifetime.scope()` after `@` is
@@ -34,8 +38,8 @@ do
   parent.child = child
   parent, child = nil, nil
   collectgarbage("collect")
-  --> child1 destroyed (unreachable)
   --> parent1 destroyed (unreachable)
+  --> child1 destroyed (anchor)
   print("case 1: both dropped, both destroyed")
 end
 
@@ -55,7 +59,7 @@ do
 end
 
 -- 3. What `xd` needed as a workaround is case 1 again: the child keeps a
--- reachability term, so the pair dies together, newest first.
+-- reachability term, so the pair dies together, the parent first.
 do
   local parent = node("parent2")
   local child = node("child2") @ parent
@@ -63,8 +67,8 @@ do
   parent.child = child
   parent, child = nil, nil
   collectgarbage("collect")
-  --> child2 destroyed (unreachable)
   --> parent2 destroyed (unreachable)
+  --> child2 destroyed (anchor)
   print("case 3: both dropped, both destroyed")
 end
 

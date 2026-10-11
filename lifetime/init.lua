@@ -163,15 +163,23 @@ local unwind
 -- order they were made, and the next owner takes the one in slot
 -- `armed_n + 1` where it lies, without a write to `armed` or to its
 -- `slot`. Fresh proxies are made only when that slot keeps none, which is
--- when none is kept at all. A cascade tombstones its objects newest
--- first, so a scope exit or a `destroy` gives back every proxy its
--- objects had, and the next ones reuse them: a loop body that owns
--- objects allocates no proxy after its first iterations. A proxy disarmed
--- below the last slot leaves a hole and loses its `__gc`, so the
--- collector frees it without a finalizer call; slots at or below
--- `armed_n` are armed or holes, and the holes are stepped over only when
--- the proxy below them is disarmed (`drop_sentinel`), off the common
--- path.
+-- when none is kept at all.
+--
+-- A proxy disarmed below the last slot stays in its slot too, kept
+-- (`kept[slot]`, its `armed` entry unchanged): a slot at or below
+-- `armed_n` is armed, kept, or a hole (`armed[slot] == nil`, a proxy the
+-- collector took). When the proxy in the last slot is disarmed, `armed_n`
+-- steps down over every slot below it that is not armed, and the kept
+-- proxies above the new `armed_n` move down over the holes among them,
+-- in order, so that they fill the slots from `armed_n + 1` again
+-- (`drop_sentinel`). A cascade tombstones an owner after its dependents
+-- (docs/02-semantics.md, "Cascading death"), and anchors first makes an
+-- owner's proxy newer than its dependents' ("Anchors first", `climb`), so
+-- a cascade disarms the older proxies first: they wait as kept slots
+-- until the newest is disarmed, and a scope exit or a `destroy` still
+-- gives back every proxy its objects had, which the next ones reuse: a
+-- loop body that owns objects allocates no proxy after its first
+-- iterations.
 --
 -- `armed` is weak-valued: it keeps no proxy alive, and a proxy the
 -- collector has scheduled for finalization is cleared from it (a
@@ -208,41 +216,385 @@ local function new_sentinel(owner)
     return mt
 end
 
--- Disarm the sentinel of an owner that died by a cascade. The common case
--- (the last slot, its proxy not taken by the collector) is inlined where
--- a cascade tombstones an object. Below the last slot the proxy leaves a
--- hole, unless every slot above it up to `armed_n` is a hole already: it
--- is then the newest armed proxy, so the kept proxies move down over the
--- holes to just above it and it is kept as if it were in the last slot.
--- A proxy the collector has taken (`armed` no longer refers to it) is
--- never kept.
+-- Disarm the sentinel of an owner that died by a cascade or dropped the
+-- term. The common case (the last slot, its proxy not taken by the
+-- collector, an armed slot below it) is inlined where a cascade
+-- tombstones an object. The proxy is kept in its slot ("Sentinels"
+-- above). If every slot from it up to `armed_n` is now unarmed, `armed_n`
+-- steps down below it and below every unarmed slot under it; when that
+-- passes a hole, the kept proxies above the new `armed_n` move down over
+-- the holes, in order, so that a fresh proxy is only ever made above all
+-- of them. A proxy the collector has taken (`armed` no longer refers to
+-- it) is never kept: it loses its `__gc` and its slot stays a hole.
+--
+-- `settle(slot)` is the part after the proxy of `slot` was kept, which
+-- the inlined common case calls when the slot just below is kept too or
+-- the last slot is not armed.
+local function settle(slot)
+    local top, hole = armed_n, false
+    while top > slot do
+        if armed[top] == nil then
+            hole = true
+        elseif kept[top] == nil then
+            -- An armed proxy above: this one waits in its slot.
+            return
+        end
+        top = top - 1
+    end
+    local n = slot - 1
+    while n > 0 do
+        if armed[n] == nil then
+            hole = true
+        elseif kept[n] == nil then
+            break
+        end
+        n = n - 1
+    end
+    if hole then
+        -- Every slot above `n` is kept or a hole, up to the end of the
+        -- kept run above the old `armed_n`.
+        local to, from, last = n + 1, n + 1, armed_n
+        while from <= last or kept[from] ~= nil do
+            local k = kept[from]
+            if k ~= nil then
+                if from ~= to then
+                    kept[from] = nil
+                    armed[from] = nil
+                    kept[to] = k
+                    armed[to] = k.proxy
+                    k.slot = to
+                end
+                to = to + 1
+            end
+            from = from + 1
+        end
+    end
+    armed_n = n
+end
+
 local function drop_sentinel(mt)
     mt.owner = nil
     local slot = mt.slot
-    if armed[slot] == mt.proxy then
-        local top = armed_n
-        while top > slot and armed[top] == nil do
-            top = top - 1
+    if armed[slot] ~= mt.proxy then
+        mt.__gc = nil
+        return
+    end
+    kept[slot] = mt
+    settle(slot)
+end
+
+-- docs/03-runtime.md, "The sentinel", "Anchors first": "after every link,
+-- if the dependent's proxy is newer than an anchor's, the two records
+-- exchange proxies (two record writes and two `owner` writes, no
+-- allocation), and the exchange climbs through that anchor's own anchors
+-- while the proxy it now holds is newer than theirs. The invariant 'an
+-- anchor's proxy is newer than every dependent's' then holds along every
+-- ownership path". The host finalizes the newest proxy first
+-- (docs/02-semantics.md, "Host") and a proxy's age is its slot, so the
+-- invariant is what makes "an anchor is finalized before its dependents"
+-- ("Reachability is the collector's") true. It is a max-heap order over
+-- the ownership graph: an exchange across an edge whose two ends are out
+-- of order puts them in order, and four functions restore it after a
+-- link. `climb` moves a proxy up, `sift` moves one down, `reorder` does
+-- both for a linked object that holds a proxy, `reorder_below` for one
+-- that does not.
+--
+-- A record holds its proxy in `reachable` (an object), or in `sentinel`
+-- (a scope record: "A scope record's sentinel (`sentinel`) is ordered the
+-- same way"). A record without one (`true`, `false`, a main-thread scope
+-- record's missing field) is transparent (task 017, round 2): a pinned
+-- object or token (`@ lifetime.pin(b)`), a hook, a table with nothing to
+-- run. The order holds between proxies only, along paths through
+-- transparent records, so the climb compares a dependent with the
+-- anchors of a transparent anchor (`climb_through`), and the descent with
+-- the dependents of a transparent dependent (`newest_below`).
+--
+-- "The climb marks the records it has visited with the phase counter the
+-- cascade uses, so a cycle of anchors ends it": `id` is 0 until the climb
+-- first goes on above an anchor, which takes a fresh id from
+-- `phase_counter` and marks `obj`; every anchor it goes on above is
+-- marked before it does. The mark is `deps.mark`, on the anchor side of a
+-- record, which every record a climb can reach again has (it is somebody's
+-- anchor), so the record's own `phase_id` stays the phase guard's. A
+-- marked anchor is not exchanged with again, so on a cycle the proxies
+-- keep the order the climb left them in and the host picks the root. An
+-- anchor without anchors of its own is on no cycle and is not marked. A
+-- transparent record is passed through at most once on each path
+-- (`deps.path`, set while the walk is below or above it), which ends a
+-- cycle of transparent records.
+--
+-- A proxy the collector has taken (`armed` no longer refers to it: its
+-- `__gc` is pending, for an owner a finalizer or a destructor made
+-- reachable again) is never exchanged: its pending finalizer must find
+-- its own owner. `mt` is never one: a caller passes a proxy it armed in
+-- the same operation or checks it first.
+--
+-- All four are called inside the `busy` region of the operation that
+-- linked, so no finalizer runs in between, and allocate nothing.
+--
+-- `climb(obj, st, mt, id)`: `obj` (record `st`) holds the proxy `mt`,
+-- which may be newer than its anchors'; its anchors are compared in
+-- formula order. Every anchor it exchanges with gets a newer proxy than
+-- it had, so its own dependents stay older than it; only `obj` may end
+-- with an older one. The last anchor's climb is a tail call, so a chain
+-- of single anchors climbs in constant stack.
+local climb_through
+
+local function climb(obj, st, mt, id)
+    local last = 2 * st.n - 1
+    for j = 1, last, 2 do
+        local a = st[j]
+        local ast = a[STATE]
+        local amt = ast.reachable
+        if amt == nil then
+            amt = ast.sentinel
         end
-        if top == slot then
-            local from, to = armed_n + 1, slot + 1
-            local k = from ~= to and kept[from]
-            while k do
-                kept[from] = nil
-                armed[from] = nil
-                kept[to] = k
-                armed[to] = k.proxy
-                k.slot = to
-                from, to = from + 1, to + 1
-                k = kept[from]
+        if amt ~= true and amt then
+            if amt.slot < mt.slot and armed[amt.slot] == amt.proxy then
+                local deps = ast.deps
+                if id == 0 or deps.mark ~= id then
+                    st.reachable = amt
+                    amt.owner = obj
+                    mt.owner = a
+                    local n = ast.n
+                    if n == nil then
+                        -- A scope record: no anchors above it.
+                        ast.sentinel = mt
+                    else
+                        ast.reachable = mt
+                        if n > 0 then
+                            if id == 0 then
+                                id = phase_counter + 1
+                                phase_counter = id
+                                local own = st.deps
+                                if own then
+                                    own.mark = id
+                                end
+                            end
+                            deps.mark = id
+                            if j == last then
+                                return climb(a, ast, mt, id)
+                            end
+                            climb(a, ast, mt, id)
+                        end
+                    end
+                    mt = amt
+                end
             end
-            kept[slot] = mt
-            armed_n = slot - 1
+        else
+            local n = ast.n
+            if n ~= nil and n > 0 then
+                id = climb_through(obj, st, ast, id)
+                mt = st.reachable
+            end
+        end
+    end
+end
+
+-- `climb` for the anchors of `tst`, a transparent anchor (or an anchor of
+-- one) of `obj`: they are `obj`'s anchors for the order. Returns the id,
+-- which an exchange here may have taken.
+climb_through = function(obj, st, tst, id)
+    local tdeps = tst.deps
+    if tdeps.path then
+        return id
+    end
+    tdeps.path = true
+    for j = 1, 2 * tst.n - 1, 2 do
+        local mt = st.reachable
+        local b = tst[j]
+        local bst = b[STATE]
+        local bmt = bst.reachable
+        if bmt == nil then
+            bmt = bst.sentinel
+        end
+        if bmt ~= true and bmt then
+            if bmt.slot < mt.slot and armed[bmt.slot] == bmt.proxy then
+                local deps = bst.deps
+                if id == 0 or deps.mark ~= id then
+                    st.reachable = bmt
+                    bmt.owner = obj
+                    mt.owner = b
+                    local n = bst.n
+                    if n == nil then
+                        bst.sentinel = mt
+                    else
+                        bst.reachable = mt
+                        if n > 0 then
+                            if id == 0 then
+                                id = phase_counter + 1
+                                phase_counter = id
+                                local own = st.deps
+                                if own then
+                                    own.mark = id
+                                end
+                            end
+                            deps.mark = id
+                            climb(b, bst, mt, id)
+                        end
+                    end
+                end
+            end
+        else
+            local n = bst.n
+            if n ~= nil and n > 0 then
+                id = climb_through(obj, st, bst, id)
+            end
+        end
+    end
+    tdeps.path = false
+    return id
+end
+
+-- The dependent with the newest proxy below the record `tst`, looking
+-- through transparent dependents to theirs: the dependents list walked as
+-- the cascade walks it, `deps` and `strong` merged, holes skipped;
+-- dependents that are dying or dead (a cascade is taking them) and
+-- function, coroutine and userdata dependents (no proxy, never anchors)
+-- skipped. Returns the dependent, its record and its proxy, or the
+-- `best` ones given.
+local function newest_below(tst, best, best_st, best_mt)
+    local deps = tst.deps
+    if not deps or deps.path then
+        return best, best_st, best_mt
+    end
+    deps.path = true
+    local strong, other = tst.strong, deps.other
+    for i = deps.seq - 1, deps.lo, -1 do
+        local d = deps[i]
+        if d == nil and strong then
+            d = strong[i]
+        end
+        if d ~= nil then
+            local dst = other and side[d] or d[STATE]
+            if not dst.phase and not dst.side then
+                local dmt = dst.reachable
+                if dmt ~= true and dmt then
+                    if (not best_mt or dmt.slot > best_mt.slot) and armed[dmt.slot] == dmt.proxy then
+                        best, best_st, best_mt = d, dst, dmt
+                    end
+                elseif dst.deps then
+                    best, best_st, best_mt = newest_below(dst, best, best_st, best_mt)
+                end
+            end
+        end
+    end
+    deps.path = false
+    return best, best_st, best_mt
+end
+
+-- `sift(obj, st)`: `obj` holds a proxy `c` that may be older than some of
+-- its dependents' (an exchange in `climb` gave it an anchor's). While a
+-- dependent below holds a newer proxy than `c`, the newest of them
+-- exchanges with the record that holds `c`, and the descent goes on from
+-- it, carrying `c` down. Each record on the path takes the newest proxy
+-- below it, which is older than its own was (its dependents were older
+-- than it), so its anchors stay newer; the last takes `c`. The descent
+-- goes strictly down ownership edges; a fresh mark from `phase_counter`
+-- on every record it passes ends it on a cycle.
+local function sift(obj, st)
+    local c = st.reachable
+    local d, dst, dmt = newest_below(st, nil, nil, nil)
+    if not d or dmt.slot < c.slot then
+        return
+    end
+    local id = phase_counter + 1
+    phase_counter = id
+    st.deps.mark = id
+    local x, xst = obj, st
+    repeat
+        local ddeps = dst.deps
+        if ddeps then
+            if ddeps.mark == id then
+                return
+            end
+            ddeps.mark = id
+        end
+        xst.reachable = dmt
+        dmt.owner = x
+        dst.reachable = c
+        c.owner = d
+        x, xst = d, dst
+        d, dst, dmt = newest_below(xst, nil, nil, nil)
+    until not d or dmt.slot < c.slot
+end
+
+-- `reorder(obj, st)`: `obj`, which holds a proxy the collector has not
+-- taken, got new anchors (or a new proxy). The climb restores the order
+-- above it; if that left `obj` an older proxy and `obj` has dependents,
+-- the descent restores it below, which gives `obj` back a newer proxy
+-- (the newest below it), which its anchors are compared with again. On
+-- an acyclic graph every exchange puts an anchor-dependent pair in order
+-- and puts out of order no pair that was in order between records not
+-- on the edge, so the number of pairs out of order falls each time and
+-- the loop ends with none; the proxy `obj` gets back from below falls
+-- each round (each dependent below gives one up once), and a round in
+-- which it does not, which only a cycle through `obj` allows, ends it.
+local function reorder(obj, st)
+    local mt = st.reachable
+    climb(obj, st, mt, 0)
+    local holds = st.reachable
+    if holds == mt or not st.deps then
+        return
+    end
+    local top = mt.slot
+    while true do
+        sift(obj, st)
+        local now = st.reachable
+        if now == holds then
             return
         end
-        armed[slot] = nil
+        local slot = now.slot
+        if slot >= top then
+            return
+        end
+        top = slot
+        climb(obj, st, now, 0)
+        holds = st.reachable
+        if holds == now then
+            return
+        end
     end
-    mt.__gc = nil
+end
+
+-- `reorder_below(tst)`: `tst`, a transparent object, got new anchors, so
+-- its dependents with proxies (and those below its transparent
+-- dependents) have new anchors for the order: each is reordered. A fresh
+-- mark on every transparent record passed ends a cycle of them (only
+-- records with proxies are marked by the climb and the descent, so the
+-- mark stays while the walk is below).
+local function reorder_below(tst, id)
+    local deps = tst.deps
+    if not deps then
+        return
+    end
+    if id == 0 then
+        id = phase_counter + 1
+        phase_counter = id
+    elseif deps.mark == id then
+        return
+    end
+    deps.mark = id
+    local strong, other = tst.strong, deps.other
+    for i = deps.seq - 1, deps.lo, -1 do
+        local d = deps[i]
+        if d == nil and strong then
+            d = strong[i]
+        end
+        if d ~= nil then
+            local dst = other and side[d] or d[STATE]
+            if not dst.phase and not dst.side then
+                local dmt = dst.reachable
+                if dmt ~= true and dmt then
+                    if armed[dmt.slot] == dmt.proxy then
+                        reorder(d, dst)
+                    end
+                elseif dst.deps then
+                    reorder_below(dst, id)
+                end
+            end
+        end
+    end
 end
 
 -- docs/02-semantics.md, "Reachability is the collector's": "A destructor
@@ -708,12 +1060,19 @@ local function link(anchor, ast, obj, pinned)
         if deps then
             spare_deps = false
         else
-            deps = setmetatable({seq = 1, lo = 1, limit = MIN_LIMIT}, WEAK_VALUES)
+            deps = setmetatable({seq = 1, lo = 1, limit = MIN_LIMIT, mark = 0, path = false}, WEAK_VALUES)
         end
         ast.deps = deps
         local term = ast.reachable
         if term == true then
-            ast.reachable = new_sentinel(anchor)
+            -- The new proxy is the newest: newer than the dependent's, but
+            -- also than those of the anchor's own anchors, which it climbs
+            -- past ("Anchors first", `climb`).
+            local mt = new_sentinel(anchor)
+            ast.reachable = mt
+            if ast.n > 0 then
+                climb(anchor, ast, mt, 0)
+            end
         elseif term == nil and ast.stack ~= main_stack then
             ast.sentinel = new_sentinel(anchor)
         end
@@ -1102,14 +1461,28 @@ local function destroy_object(obj, st, reason, where, skip_body)
     -- collection (docs/03-runtime.md, "The sentinel": the finalizer skips
     -- an object already dead).
     if term ~= true and term then
-        -- `drop_sentinel`, its common case (the last slot) inlined.
+        -- `drop_sentinel`, inlined with its two common cases: the last
+        -- slot with no kept slot below it (`armed_n` steps down by one),
+        -- and a slot below an armed last slot (the proxy waits in its
+        -- slot): a cascade disarms its owners' older dependents first
+        -- ("Anchors first"). The last slot is armed or a hole, never kept
+        -- (`settle` steps `armed_n` down to an armed slot).
         local slot = term.slot
-        if slot == armed_n and armed[slot] == term.proxy then
-            term.owner = nil
+        term.owner = nil
+        if armed[slot] == term.proxy then
             kept[slot] = term
-            armed_n = slot - 1
+            local top = armed_n
+            if slot == top then
+                if kept[slot - 1] == nil then
+                    armed_n = slot - 1
+                else
+                    settle(slot)
+                end
+            elseif armed[top] == nil then
+                settle(slot)
+            end
         else
-            drop_sentinel(term)
+            term.__gc = nil
         end
         st.reachable = true
     end
@@ -1511,6 +1884,31 @@ local function attach_general(fname, obj, pin, count, ...)
     local reachable = term and not pin
     local old = 2 * st.n
     local had = st.reachable
+
+    -- Step 5, the sentinel (docs/03-runtime.md, "The sentinel"), before
+    -- the links for anything but a hook, so that an anchor armed by one
+    -- of them (`link`) gets the newer proxy ("Anchors first"). A move that
+    -- keeps the term keeps the sentinel; one that drops the term drops
+    -- it; a pinned object carries none. A hook is armed after the links,
+    -- below: whether it carries one depends on how many anchors it got.
+    local hook = st.fn ~= nil
+    if not hook then
+        if reachable then
+            if had == true or had == false then
+                if st.deps or has_destroy(debug_getmetatable(obj)) then
+                    st.reachable = new_sentinel(obj)
+                else
+                    st.reachable = true
+                end
+            end
+        else
+            if had ~= true and had then
+                drop_sentinel(had)
+            end
+            st.reachable = false
+        end
+    end
+
     for j = 1, old, 2 do
         unlink(st[j][STATE], st[j + 1], not had)
     end
@@ -1528,30 +1926,36 @@ local function attach_general(fname, obj, pin, count, ...)
     local n = (k - 1) / 2
     st.n = n
 
-    -- The sentinel, after the anchors got theirs, so that it is the newest
-    -- (docs/03-runtime.md, "The sentinel"). A hook whose formula is the
-    -- term alone (`f !@ lifetime.reachable`) carries one and runs when
-    -- collected (docs/05-decisions.md, "A hook anchored to
-    -- `lifetime.reachable` alone runs when collected"); every other hook
-    -- and every pinned object carries none. A move that keeps the term
-    -- keeps the sentinel; one that drops the term drops it.
-    local hook = st.fn ~= nil
-    if hook and n == 0 then
-        reachable = true
-    end
-    if reachable then
-        if had == true or had == false then
-            if hook or st.deps or has_destroy(debug_getmetatable(obj)) then
+    if hook then
+        -- A hook whose formula is the term alone (`f !@
+        -- lifetime.reachable`) carries a sentinel and runs when collected
+        -- (docs/05-decisions.md, "A hook anchored to `lifetime.reachable`
+        -- alone runs when collected"); every other hook carries none. It
+        -- has no anchors then, so nothing to order.
+        if n == 0 then
+            if had == true or had == false then
                 st.reachable = new_sentinel(obj)
-            else
-                st.reachable = true
             end
+        else
+            if had ~= true and had then
+                drop_sentinel(had)
+            end
+            st.reachable = false
         end
-    else
-        if had ~= true and had then
-            drop_sentinel(had)
+    elseif n > 0 then
+        -- "Anchors first", over every anchor of the new formula (the list
+        -- form and lifetime values spliced into it included), and below
+        -- the object when it has dependents. An object without a proxy
+        -- (pinned, or nothing to run) is transparent: its dependents got
+        -- its new anchors.
+        local smt = st.reachable
+        if smt ~= true and smt then
+            if armed[smt.slot] == smt.proxy then
+                reorder(obj, st)
+            end
+        elseif st.deps then
+            reorder_below(st, 0)
         end
-        st.reachable = false
     end
     busy = 0
     if busy == 0 and queue_tail ~= 0 then
@@ -1604,10 +2008,67 @@ function lifetime.attach(obj, pin, ...)
                         reason = false
                     }
                     rawset(obj, STATE, st)
+                    -- The sentinel (pinned: no term, no sentinel), and
+                    -- "Anchors first" (docs/03-runtime.md, "The
+                    -- sentinel"). The object's proxy is the newest one
+                    -- (`new_sentinel`, its common case, a kept proxy,
+                    -- inlined). The object is new, so no cycle of anchors
+                    -- passes through it; `climb`'s first step is inlined,
+                    -- and the anchor's own anchors are `climb`'s.
+                    local deps = ast.deps
+                    local smt = false
+                    if not pin and mt ~= nil and rawget(mt, "__destroy") ~= nil then
+                        local n = armed_n + 1
+                        smt = kept[n]
+                        if smt then
+                            kept[n] = nil
+                            armed_n = n
+                        else
+                            smt = new_sentinel(obj)
+                        end
+                        -- An anchor that has its list has had its proxy, if
+                        -- any, since before this one, so it is older: the
+                        -- anchor takes the new proxy and the object the
+                        -- anchor's (the exchange, without arming the object
+                        -- first). One without its list gets it at this link
+                        -- (`link`), after the object's, unless it had one
+                        -- already: compared below.
+                        local amt = deps and ast.reachable
+                        if amt == nil then
+                            amt = ast.sentinel
+                        end
+                        if amt ~= true and amt and armed[amt.slot] == amt.proxy then
+                            smt.owner = a
+                            amt.owner = obj
+                            st.reachable = amt
+                            n = ast.n
+                            if n == nil then
+                                ast.sentinel = smt
+                            else
+                                ast.reachable = smt
+                                if n > 0 then
+                                    climb(a, ast, smt, 0)
+                                end
+                            end
+                            smt = false
+                        else
+                            smt.owner = obj
+                            st.reachable = smt
+                            if deps then
+                                -- An anchor with its list and no proxy: only
+                                -- one with anchors of its own (a pinned
+                                -- one) leaves anything to compare; a scope
+                                -- record has none.
+                                local an = ast.n
+                                if an == nil or an == 0 then
+                                    smt = false
+                                end
+                            end
+                        end
+                    end
                     -- `link`, its common case inlined: an unpinned link
                     -- to an anchor that has its list (outside any destroy
                     -- phase, so compaction may run).
-                    local deps = ast.deps
                     if deps and not pin then
                         local s = deps.seq
                         if s - deps.lo >= deps.limit then
@@ -1619,18 +2080,35 @@ function lifetime.attach(obj, pin, ...)
                     else
                         st[2] = link(a, ast, obj, pin)
                     end
-                    -- Pinned: no term, no sentinel.
-                    if not pin and mt ~= nil and rawget(mt, "__destroy") ~= nil then
-                        -- `new_sentinel`, its common case (a kept proxy) inlined.
-                        local n = armed_n + 1
-                        local smt = kept[n]
-                        if smt then
-                            kept[n] = nil
-                            armed_n = n
-                            smt.owner = obj
-                            st.reachable = smt
+                    -- Not exchanged above: the anchor's first link (one
+                    -- comparison, an exchange only when it had its proxy
+                    -- already), or an anchor without a proxy, transparent
+                    -- for the order, whose own anchors are compared.
+                    if smt then
+                        local amt = ast.reachable
+                        if amt == nil then
+                            amt = ast.sentinel
+                        end
+                        if amt ~= true and amt then
+                            if amt.slot < smt.slot and armed[amt.slot] == amt.proxy then
+                                st.reachable = amt
+                                amt.owner = obj
+                                smt.owner = a
+                                local n = ast.n
+                                if n == nil then
+                                    ast.sentinel = smt
+                                else
+                                    ast.reachable = smt
+                                    if n > 0 then
+                                        climb(a, ast, smt, 0)
+                                    end
+                                end
+                            end
                         else
-                            st.reachable = new_sentinel(obj)
+                            local n = ast.n
+                            if n ~= nil and n > 0 then
+                                climb(obj, st, smt, 0)
+                            end
                         end
                     end
                     busy = 0
@@ -1647,6 +2125,26 @@ function lifetime.attach(obj, pin, ...)
                 unlink(st[1][STATE], st[2], false)
                 st[1] = a
                 st[2] = link(a, ast, obj, false)
+                -- "Anchors first", as for a new object. The record is read
+                -- after the link: a cycle of anchors lets the climb of an
+                -- anchor armed by it reach this object.
+                local smt = st.reachable
+                if smt ~= true then
+                    local amt = ast.reachable
+                    if amt == nil then
+                        amt = ast.sentinel
+                    end
+                    if amt ~= true and amt then
+                        if amt.slot < smt.slot and armed[smt.slot] == smt.proxy then
+                            reorder(obj, st)
+                        end
+                    else
+                        local n = ast.n
+                        if n ~= nil and n > 0 and armed[smt.slot] == smt.proxy then
+                            reorder(obj, st)
+                        end
+                    end
+                end
                 busy = 0
                 if busy == 0 and queue_tail ~= 0 then
                     drain()

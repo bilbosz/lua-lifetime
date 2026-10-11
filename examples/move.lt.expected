@@ -1,6 +1,6 @@
 destroyed root (anchor)
 destroyed child (anchor)
 (registry, reachable)	(root, reachable)
-destroyed child (unreachable)
 destroyed root (unreachable)
+destroyed child (anchor)
 destroyed registry (exit)

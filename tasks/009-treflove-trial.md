@@ -112,6 +112,12 @@ first numbers from a real program.
    decision should recommend registering, registering after `init`, or
    leaving arming lazy, and whether "What a destructor may assume" should
    name the exception. The trial asserts both runs.
+   **Settled** by `docs/05-decisions.md`, "Anchors are finalized before
+   their dependents" (2026-10-10): the runtime keeps every anchor's
+   sentinel newer than its dependents', so a collected subtree dies in
+   ownership order whether or not the class library registers. Task 017
+   implemented it; the trial's registered and unregistered runs of test
+   case 3 now print the same log.
 2. **A hook on `(a, b)` cannot tell that the other anchor is dying.**
    Idiom B's hook learns that the form went first only from a flag the
    form's `release()` sets; when the cascade reaches an input before the

@@ -109,7 +109,7 @@ Each edit carries a `-- lua-lifetime:` comment in the file.
   either makes the runtime see it. `utils/class.lt` keeps the line, as the
   decision says a class library does; `variants/unregistered/utils/class.lt`
   is the same file without it, the trial runs test case 3 with both, and
-  the two differ (see "A collected session"). The merged index needed
+  since task 017 the two agree (see "A collected session"). The merged index needed
   nothing: `table.merge` copies class tables, which the runtime never
   sees.
 - **`table.to_string`**: nothing. It puts a key of type `table` in its
@@ -227,41 +227,6 @@ collection takes all of it:
 
 ```
 > collectgarbage("collect")
-DownloadMissingAssetsRp:release(unreachable)
-  Connection:unregister_request_handler(DownloadMissingAssetsRp)
-DownloadAssetRp:release(unreachable)
-  Connection:unregister_request_handler(DownloadAssetRp)
-UploadAssetRp:release(unreachable)
-  Connection:unregister_request_handler(UploadAssetRp)
-GameDataRp:release(unreachable)
-  Connection:unregister_request_handler(GameDataRp)
-LogoutRp:release(unreachable)
-  Connection:unregister_request_handler(LogoutRp)
-LoginRp:release(unreachable)
-  Connection:unregister_request_handler(LoginRp)
-Login:release(unreachable)
-destroyerror: trial/treflove/login/login.lt:50: attempt to index a dead table (table: 0x?, died at collector, unreachable)
-Session destroyed (unreachable)
-Connection:release(unreachable)
-> collectgarbage("collect")
-per-session entries left: 0, in channel released: true
-```
-
-The order is the collector's ("Reachability is the collector's": newest
-first by creation, each object with a sentinel of its own dying first,
-with `"unreachable"`). `class()` registers every instance before its
-`init`, so the sentinels are armed in the constructors' order, parents
-before children, and every procedure dies before its login, the login
-before the session. Every `stop()` ran. `Login:release`'s nested call
-then meets a tombstone, and the error goes to `destroyerror` because a
-finalizer has no statement to raise at. The second collection clears the
-weak per-session entries.
-
-The same scenario with `variants/unregistered/utils/class.lt`, the class
-library without the registration line:
-
-```
-> collectgarbage("collect")
 Connection:release(unreachable)
 Session destroyed (anchor)
 DownloadMissingAssetsRp:release(anchor)
@@ -271,15 +236,31 @@ DownloadMissingAssetsRp:release(anchor)
 per-session entries left: 0, in channel released: true
 ```
 
-Without registration an instance is armed at its first `@`: a procedure
-at its own `@ self`, an anchor at its first link. The tree is built
-bottom up, so the login is armed after its procedures, the session after
-its login, and the connection, first seen at `Session(connection) @
-connection`, last of all. Its finalizer runs first, and its cascade takes
-the whole subtree in ownership order with `"anchor"`, as `destroy` would;
-the later finalizers find their objects dead. The nested `release()`
-works again. Registering in the constructor is what turned the collected
-order upside down.
+Within one collection an anchor is finalized before its dependents
+(`docs/02-semantics.md`, "Reachability is the collector's";
+`docs/05-decisions.md`, "Anchors are finalized before their
+dependents"), so the subtree dies as one cascade from its root: the
+connection with `"unreachable"`, everything below it with `"anchor"`, in
+the teardown's order, as `destroy` would run it; the later finalizers
+find their objects dead. Every `stop()` ran, and `Login:release`'s nested
+calls reach live procedures. The second collection clears the weak
+per-session entries.
+
+The log is the same with `variants/unregistered/utils/class.lt`, the
+class library without the registration line, and the trial runs both.
+They got there differently. Without registration an instance is armed
+at its first `@`: a procedure at its own `@ self`, an anchor at its first
+link, and the connection, first seen at `Session(connection) @
+connection`, last of all, so its proxy is the newest already. With
+registration every instance is armed in its constructor, parents before
+children, and the runtime exchanges an anchor's proxy with a newer
+dependent's at each `@`, climbing through the anchor's own anchors
+(`docs/03-runtime.md`, "The sentinel", "Anchors first"), so the
+connection's proxy ends up the newest too. Before task 017 the runtime
+did not exchange, the registered run finalized every procedure first,
+with `"unreachable"`, and `Login:release`'s nested call met a tombstone
+and went to `destroyerror`; registering in the constructor turned the
+collected order upside down. That is no longer the case.
 
 ## Findings
 
@@ -296,16 +277,16 @@ and by claim of the note.
 3. **Lesson 3 holds unchanged**: one `__destroy` per merged-index
    metatable. `FormScreen` (`Screen` + `KeyboardEventListener`) gets one
    `release()`; the `Input` mixin gets a hook in its `init` instead.
-4. **Lesson 4 reverses for every death the program causes**, and for a
-   collected subtree it depends on registration. Under `destroy`,
-   `Login:release`'s nested calls reach live procedures and are redundant
-   (test case 1). When the collector takes the whole subtree and the
-   class library registers in its constructor, the procedures are
-   finalized first and the nested call meets a tombstone (test case 3);
-   the error names the line and the death, as lesson 4's "the error must
-   name the field" asked, but it is an error. Without registration the
-   same collection runs in ownership order and the nested call works. See
-   "Spec issues found" in the task file.
+4. **Lesson 4 reverses**, for every death the program causes and for a
+   collected subtree alike. Under `destroy`, `Login:release`'s nested
+   calls reach live procedures and are redundant (test case 1). When the
+   collector takes the whole subtree, it runs in ownership order whether
+   or not the class library registers in its constructor, and the nested
+   call works (test case 3). The trial first found the registered run
+   finalizing the procedures first, the nested call meeting a tombstone
+   and going to `destroyerror` (task 009, "Spec issues found", item 1);
+   `docs/05-decisions.md`, "Anchors are finalized before their
+   dependents", settled it and task 017 implemented it.
 5. **Lesson 5 holds**: a destructor run by the collector runs at an
    allocation point. The trial's harness meets it directly: a server app
    the benchmark first forgot to keep took its connections to the
