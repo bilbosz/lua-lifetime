@@ -46,14 +46,6 @@ which could hold the record. *Leaning:* tables and tokens only until a
 real program wants a userdata anchor; LÖVE objects in Treflove are
 dependents.
 
-### Teal and `!@`
-
-The hook operator `!@` was chosen partly because Teal is believed not to
-use `!`. The session that chose it could not reach Teal's sources to
-confirm. Before `teal-lifetime` starts, check Teal's lexer for `!` and record the
-answer here; if Teal uses it, the Teal front end needs another spelling or
-Teal needs to give it up.
-
 ### How an embedding host announces program end
 
 The CLI sets the exit flag so that finalizers at state close report

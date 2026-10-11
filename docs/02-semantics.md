@@ -389,7 +389,11 @@ unsubscribe !@ (emitter, listener)                     -- runs when either dies
   expression needs parentheses at statement start, as for `@`.
 - `!@` is one token: `!` immediately followed by `@`. A lone `!` is a
   syntax error, and `a != b` reads `unexpected symbol near '!' (use '~='
-  for inequality)`.
+  for inequality)`. The adjacency is load-bearing for the Teal front
+  end: Teal uses a bare postfix `!` for macro calls, and `!` followed by
+  `@` is the one sequence Teal cannot contain
+  ([05-decisions.md](05-decisions.md), "`!@` survives Teal's macro
+  operator").
 - A hook is a dependent of its anchors, so it runs exactly where an object
   anchored to the same formula would be destroyed, and it is always pinned
   ("The implicit `reachable` term"), whether or not anything holds it. A
