@@ -1953,7 +1953,7 @@ test.case("random graphs in random order, with moves, pins and lists: the order 
         local log = {}
         local held = {} -- luacheck: ignore 241
         local N = 20
-        local nodes, anchors_of, pinned, logged = {}, {}, {}, {}
+        local nodes, anchors_of, logged = {}, {}, {}
         -- Is `j` below `i` (or `i` itself) in the model?
         local function below(i, j)
             if i == j then
@@ -1999,7 +1999,7 @@ test.case("random graphs in random order, with moves, pins and lists: the order 
             if #args > 0 then
                 attach(nodes[i], false, unpack(args))
             end
-            anchors_of[i], pinned[i] = list, pin_it
+            anchors_of[i] = list
         end
         local function make()
             for step = 1, 3 * N do
