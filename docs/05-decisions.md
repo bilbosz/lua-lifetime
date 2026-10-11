@@ -124,12 +124,13 @@ Two things change with the spelling:
   `@`"). A postfix operator at the lowest precedence applies to the whole
   expression on its left anyway: `a or b !@ s` hooks `a or b`.
 
-Why `!@`: `!` is unused by Lua 5.1 to 5.4 and LuaJIT and is believed
-unused by Teal ([06-open-questions.md](06-open-questions.md), "Teal and
-`!@`"), so the two-character token collides with nothing; the `@` keeps
-the lifetime vocabulary on one character; and the `!` marks the
-difference from `@`, so a hook does not read as anchoring the function.
-A C programmer's `a != b` gets a targeted error that suggests `~=`.
+Why `!@`: `!` is unused by Lua 5.1 to 5.4 and LuaJIT, and `@` is unused
+by all of them and by Teal, so the two-character token collides with
+nothing (Teal's own bare `!` is kept apart by the adjacency rule, "`!@`
+survives Teal's macro operator" below); the `@` keeps the lifetime
+vocabulary on one character; and the `!` marks the difference from `@`,
+so a hook does not read as anchoring the function. A C programmer's
+`a != b` gets a targeted error that suggests `~=`.
 
 Considered and rejected, in this order:
 
@@ -855,3 +856,40 @@ carries it back to `xd`.
 → [02-semantics.md](02-semantics.md), "Reachability is the collector's",
 "Host"; [03-runtime.md](03-runtime.md), "The sentinel", "Anchors first";
 task 017
+
+## `!@` survives Teal's macro operator
+
+Decided by the human on 2026-10-11, on the evidence the open question
+"Teal and `!@`" asked for. "Hooks are made with the operator `!@`"
+rested on the belief that Teal does not use `!`. Checked against Teal's
+development branch (`0.25.0-alpha+dev`, commit `c6b986e` of 2026-10-08,
+`teal/lexer.tl` line 216 and `teal/reader.tl` line 1299): Teal lexes `!`
+as an operator and uses it as a postfix macro call, `foo!(a, b)`,
+`foo!"string"`, `foo!{ key = "value" }`, and in the declaration `local
+macro name!(...)`. The released Teal 0.24.8 (2025-10-13) has no `!`
+operator. Teal does not use `@`: its lexer reports every character it
+does not know as a syntax error, and `@` is one of them. Teal's `?`, `$`
+and backtick appear in positions lua-lifetime never touches.
+
+Decided: the spelling stays. The sequence `!@` cannot occur in a Teal
+program, because `@` is not a Teal character, and a bare `!` cannot
+occur in a lua-lifetime program, because `!@` is one token and a lone
+`!` is a syntax error ([02-semantics.md](02-semantics.md), "Hooks: the
+`!@` operator"). One lexer rule therefore separates the two: `!`
+immediately followed by `@` is `!@`; any other `!` is Teal's. That rule
+is the contract with `teal-lifetime`, whose lexer reads `!@` before
+Teal's `!`. The adjacency rule, until now a convenience that gave `a !=
+b` its error text, is load-bearing and is not to be relaxed into `f ! @
+a`. The remaining cost is cosmetic: a Teal reader may first read `f !@
+x` as a macro call.
+
+Rejected: respelling. Every other two-character token ending in `@`
+either starts with a character that already carries a meaning in Lua
+5.3+, LuaJIT or Teal (`~`, `&`, `|`; Teal's `?` for optional arguments,
+`$` for macro splices, backtick for quotes), or reads as something else
+(`#` as length, `=` as assignment, `<` and `>` as comparison), or is one
+keystroke from `@` (`@@`, `@!`), the fault the original decision
+rejected `@@` for. Nothing changes in code, examples or expected output;
+`tests/test-parser.lua` already pins the adjacency rule.
+→ [02-semantics.md](02-semantics.md), "Hooks: the `!@` operator";
+[01-overview.md](01-overview.md), "Rocks"

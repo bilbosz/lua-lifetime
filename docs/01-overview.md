@@ -83,5 +83,7 @@ human.
   ([02-semantics.md](02-semantics.md), "Host").
 - `teal-lifetime`, later, from the same repository: a second rockspec that
   depends on `lua-lifetime` for the runtime and on `tl`, with a Teal front
-  end and Teal output; the transpiler core and the CLI are shared. Not
-  created yet.
+  end and Teal output; the transpiler core and the CLI are shared, and
+  its lexer reads `!@` before Teal's postfix `!`
+  ([05-decisions.md](05-decisions.md), "`!@` survives Teal's macro
+  operator"). Not created yet.
