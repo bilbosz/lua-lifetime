@@ -59,5 +59,6 @@ during implementation and review.
 | 015 | Make the unit tests that fail now and then under LuaJIT deterministic without weakening what they assert | 012 |
 | 016 | Emitter: drop the `destroy`/`discard` builtin binding; `lifetime.destroy` and `lifetime.discard` are the only spelling | |
 | 017 | Runtime: keep each anchor's sentinel newer than its dependents' so a collected subtree dies in ownership order | |
+| 018 | teal-lifetime: the Teal front end, Teal output, the `lifetime` declaration file and the second rockspec | 007 |
 
 Keep this table in sync when adding tasks.
