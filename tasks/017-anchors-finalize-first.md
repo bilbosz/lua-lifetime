@@ -1,12 +1,12 @@
 ---
 id: 017
 title: Runtime: keep each anchor's sentinel newer than its dependents' so a collected subtree dies in ownership order
-status: in-progress
+status: review
 depends: []
 branch: task/017-anchors-finalize-first
 pr:
 commits:
-review:
+review: APPROVE (round 2)
 ---
 
 ## Goal
@@ -300,3 +300,33 @@ cycle of pinned anchors, random graphs in random order with moves,
 pins and lists checked after every operation). Case 5's two-cycle now
 leaves the other proxy order: the descent exchanges back, and on a
 cycle the host picks the root.
+
+### Round 2 review: APPROVE
+
+Head `4124140`. `make test` 386/386 under `lua5.1` and `luajit`,
+conformance 75/75, trial 8/8 (also under `lua5.1` by hand, where the
+"collected" and "collected, unregistered" logs are identical); `make
+lint` clean; 30 LuaJIT and 10 Lua 5.1 unit runs green; eager-collector
+unit suite 386/386 on both hosts (through `LUA_INIT`). The reviewer
+read the climb, sift and alternation against their claims, hand-traced
+the demo tree and a hook on the descent path, and ran a model-checked
+fuzz (invariant on every ownership path after every operation, death
+log against an exact simulation; diamonds, chains moved both ways,
+pins between registered layers, tokens, cycles; 300 + 450 random
+rounds, 0 failures on both hosts, eager collector or not). Rule 6
+holds; the cascade order inside one cascade is unchanged; the only
+`.expected` diffs are reasons and the root-first order in `move`,
+`pinned_parent` and `coroutines`. Bench: LuaJIT nothing marked
+(`attach-first` 0.88-0.90, `move` 0.96, `anchor-100` 1.06-1.07); Lua
+5.1 `cascade-tree` 1.14-1.18 and the new `register-tree` 1.11-1.21
+cross-process (1.65-1.75 in-process) marked, reported as the design's
+cost and recorded in 03 by the orchestrator's follow-up spec commit.
+
+- F1 (non-blocking): a `DEBUG017` environment switch left in the
+  random-graph test. Removed by the orchestrator in the approval commit.
+- Orchestrator rulings: the `coroutines.lt` `.expected` change and the
+  pool change are accepted; the two-object cycle's root is the host's
+  pick; 03's text (sift, alternation, see-through records, the mark in
+  `deps.mark`, the corrected cost bound) and the Performance numbers are
+  the orchestrator's spec commit after the merge.
+- Follow-up noted: `make test` runs the trial under `luajit` only.

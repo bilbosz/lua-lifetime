@@ -2055,16 +2055,6 @@ test.case("random graphs in random order, with moves, pins and lists: the order 
             test.assert_eq(at[name], nil, "round " .. round .. ": " .. name .. " died once")
             at[name], reason[name] = index, why
         end
-        if os.getenv("DEBUG017") then
-            for i = 1, count do
-                local a = {}
-                for _, j in ipairs(anchors_of[i]) do
-                    a[#a + 1] = "n" .. j
-                end
-                print(round, "n" .. i, logged[i] and "logged" or "plain", pinned[i] and "pinned" or "", table.concat(a, ","), reason["n" .. i])
-            end
-            print(table.concat(log, " | "))
-        end
         for i = 1, count do
             local name = "n" .. i
             -- A registered object with no anchor is a root; any other dies
