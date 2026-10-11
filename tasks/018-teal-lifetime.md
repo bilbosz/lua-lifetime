@@ -186,4 +186,30 @@ same locals; `tl`'s compat preamble for `table.unpack` is one line.
 
 ## Spec issues found
 
+1. **`any` in Teal and the packed `return`.** Nothing in `docs/` could
+   say it, since it is Teal's rule: `any` is assignable to no declared
+   type, a type variable is not inferred from `{any}`, and a function
+   with no return annotation infers no returns from an `any...` return.
+   So the Lua shape of 04, "Blocks" (`__lt_pack`/`__lt_unpack`) cannot
+   type-check as it is. Implemented: typed helpers in the header and a
+   cast of the unpacked values to the function's declared return types;
+   no cast when the function declares none or ends them with `...`, and
+   `tl` then reports the `any...` as it reports `return select(…)` in
+   plain Teal. Recorded in 04, "The Teal front end", and 05, "The Teal
+   front end is a dialect of the shared transpiler". The Lua path's shape
+   is unchanged.
+2. **`lifetime.format` of a dead token.** 02, "The `lifetime` table",
+   says `format` renders "a token or a hook" and that "a dead anchor in a
+   snapshot renders as `dead <name>`", and "Tokens" says the tombstone's
+   message uses the same text as `tostring`. `lifetime.format(tok)` on a
+   token that has died raises `attempt to index a dead table (token pool,
+   died at …)` while `tostring(tok)` gives `dead token pool`. Not this
+   task's (the runtime is out of scope); `examples/teal/generics.tlt`
+   uses `tostring`. Whether `format` should render a dead object like
+   `tostring` does is for the human.
+3. **Teal's `where` clause and macroexp bodies are expressions**, so the
+   grammar of 04 lets them contain `@`; the emitter expands it there like
+   anywhere else and `tl` judges the result. Nothing in `docs/` forbids
+   it; nothing recommends it.
+
 ## Review log
