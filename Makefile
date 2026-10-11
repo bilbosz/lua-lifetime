@@ -85,7 +85,7 @@ luals-check:
 	@$(FIRST) editor/luals/check.lua $(LT_FILES)
 
 lint:
-	luacheck lifetime tests bench bin/lifetime trial/treflove/run.lua trial/treflove/harness.lua trial/treflove/stubs editor
+	luacheck lifetime tests bench bin/lifetime trial/treflove/run.lua trial/treflove/harness.lua trial/treflove/stubs editor .vscode/launch.lua
 
 bench:
 	@if [ -z "$(INTERPRETERS)" ]; then \
