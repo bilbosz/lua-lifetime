@@ -31,6 +31,15 @@
 --                           again; the baseline is `loadstring` of the
 --                           same file with the anchor left out, so the
 --                           ratio reads against build/generated-5000's
+--   build/teal-5000         `cli.build` with the Teal front end (task
+--                           018, lifetime/teal.lua) on a generated
+--                           5 000-line `.tlt` file: the groups of
+--                           build/extension-5000 with types on most
+--                           lines, a record, an enum, `as` and `is`;
+--                           the baseline is `loadstring` of the same
+--                           program as plain Lua, types and extension
+--                           left out. A base without the front end
+--                           cannot run it.
 --
 -- Input files are read relative to the current directory, so under `make
 -- bench BASE=<ref>` the base's transpiler gets the same text as the
@@ -163,6 +172,35 @@ local function add_extension_build(name, source, chunkname, plain)
     })
 end
 add_extension_build("build/extension-5000", extended_5000, "extension-5000.lt", plain_5000)
+
+-- A Teal chunk of exactly `lines` lines (a multiple of 10) in groups of
+-- ten lines, typed and using the extension on most lines; with `teal`
+-- false the same program as plain Lua (types and extension left out).
+local function generate_teal(lines, teal)
+    assert(lines % 10 == 0, "generate_teal: lines must be a multiple of 10")
+    local function t(text)
+        return teal and text or ""
+    end
+    local out = {}
+    for k = 1, lines / 10 do
+        out[#out + 1] = table.concat({
+            string.format("do -- group %d", k),
+            teal and string.format("    local record Owner%d id: integer list: {{integer}} closed: string child: Owner%d end", k, k) or string.format("    local Owner%d = {}", k),
+            string.format("    local owner%s = {id = %d, list = {}}%s", t(": Owner" .. k), k, t(" as Owner" .. k)),
+            "    local a, b" .. t(": {integer}, {string: string}") .. " = {1, 2}" .. t(" @ lifetime.scope") .. ", {name = \"b\"}" .. t(" @ (owner, lifetime.scope)"),
+            "    local h = function(reason" .. t(": lifetime.Reason") .. ") owner.closed = reason end" .. t(" !@ owner"),
+            teal and string.format("    function() print(%d) end !@ lifetime.scope", k) or string.format("    local _ = function() print(%d) end", k),
+            "    for i = 1, 3 do local x" .. t(": {integer}") .. " = {i}" .. t(" @ (a, b)") .. "; owner.list[i] = x end",
+            "    local c = owner.list[1] or a" .. t(" @ a @ b"),
+            "    local n" .. t(": integer") .. " = #c + (owner.id" .. t(" as integer") .. ")" .. t(" // 1") .. "; owner.child = owner" .. t(" @ lifetime.pin(owner, a)") .. "; local _ = n" .. t(" is integer") .. ", h",
+            "end"
+        }, "\n")
+    end
+    return table.concat(out, "\n") .. "\n"
+end
+local plain_teal_5000 = generate_teal(5000, false)
+assert(loadstring(plain_teal_5000, "=teal-5000.tlt"))
+add_extension_build("build/teal-5000", generate_teal(5000, true), "teal-5000.tlt", plain_teal_5000)
 local generated_5000 = generate_plain_lua(5000)
 assert(loadstring(generated_5000 .. "local last = {}\n", "=scope-at-end-5000.lt"))
 add_extension_build("build/scope-at-end-5000", generated_5000 .. "local last = {} @ lifetime.scope\n", "scope-at-end-5000.lt", generated_5000 .. "local last = {}\n")
