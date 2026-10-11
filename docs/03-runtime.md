@@ -206,7 +206,14 @@ the proxy's metatable in its `reachable` field (a scope record in
 reused for a later owner, never twice for the same object and never while
 its finalizer is pending, so the position of each proxy, and with it the
 host's finalization order, is the order of the `@`s that armed them
-(a fresh `newproxy` per object costs 400 to 600 ns more).
+(a fresh `newproxy` per object costs 400 to 600 ns more). A proxy
+disarmed below the last slot stays kept in its slot too (task 017: a
+cascade now disarms the older proxies first, so throwing those away
+made every destroy allocate afresh); the last slot steps down over
+every unarmed slot when it is disarmed, kept proxies move down over the
+holes the collector leaves, and a fresh proxy is made only above every
+kept one, so a kept proxy handed out is still newer than every armed
+one.
 
 **Anchors first.** A proxy's position is its age, and the host finalizes
 the newest first, so left alone a child registered after its parent
@@ -217,18 +224,42 @@ reassigns them: after every link, if the dependent's proxy is newer than
 an anchor's, the two records exchange proxies (two record writes and two
 `owner` writes, no allocation), and the exchange climbs through that
 anchor's own anchors while the proxy it now holds is newer than theirs.
-The invariant "an anchor's proxy is newer than every dependent's" then
-holds along every ownership path, and the host's order is the cascade
-order (02, "Reachability is the collector's"). A scope record's
-sentinel (`sentinel`) is ordered the same way against the records' and
-objects' it anchors, so a collected suspended coroutine's records die
-innermost first with their dependents in cascade order. The climb marks
-the records it has visited with the phase counter the cascade uses, so a
-cycle of anchors ends it: the cycle's proxies keep their order and the
-host picks the root. Cost: one comparison per link in the common case
-(a lazily armed anchor's proxy is made at its first link and is already
-the newer one), and one exchange per ancestor whose proxy is older when
-both sides were armed before the link; measured in "Performance"
+The invariant "an anchor's proxy is newer than every dependent's" is a
+max-heap order over the ownership graph with the slot as the key, and
+it holds along every ownership path, so the host's order is the cascade
+order (02, "Reachability is the collector's"). Restoring it after a
+link takes two passes at the linked object, as a heap does (task 017):
+the **climb** (sift-up) above, which only ever gives ancestors newer
+proxies, so their edges downward never break; and the **sift**
+(sift-down) from the dependent, which after an exchange holds the
+anchor's old, older proxy: among the dependents below it that carry a
+proxy (its `deps` and `strong` ranges walked newest first as the
+cascade does, dying, dead and non-table dependents skipped), the newest
+takes the carried proxy and gives up its own, and the sift continues
+from it; every record on that path keeps a proxy no newer than it had,
+so its other anchors stay newer, and the carried proxy moves strictly
+down. The linked object can be left out of order on an edge the other
+pass did not look at (a list form with a dependent below, for example),
+so the two alternate at it until neither changes its proxy; the proxy
+the sift hands back gets strictly older each round. A record without a
+proxy (pinned, term-less, a hook, a scope record on the main thread) is
+transparent in both directions: the climb compares with its anchors,
+the sift looks through it to its dependents, and an object a move
+leaves without a proxy has each of its proxied dependents reordered
+under its new anchors. A scope record's sentinel (`sentinel`) is ordered
+the same way against the records' and objects' it anchors, so a
+collected suspended coroutine's records die innermost first with their
+dependents in cascade order. Each pass marks the records it visits in
+their dependents list (`deps.mark`, a fresh number from the cascade's
+phase counter; `deps.path` while passing through a transparent record),
+never in the record's own phase id, which "No moves during destruction"
+reads; a cycle of anchors therefore ends a pass, the cycle's proxies
+keep their order and the host picks the root. Every exchange checks the
+proxy is still armed: one whose finalizer is pending is never handed to
+another owner. Cost: one comparison per link when the anchor's proxy is
+made at this link (it is then the newest); otherwise one exchange per
+ancestor whose proxy is older and per record on the sift's path, each
+four writes and no allocation; measured in "Performance"
 (`sentinel/register-tree`). A finalizer
 that fires inside a runtime operation is queued and run when the
 operation ends; a foreign `__gc` that raises through such an operation
@@ -421,7 +452,21 @@ only where the spec asks for them:
   runtime without sentinels; `make bench` marks the LuaJIT rows `SLOWER`
   against such a base, and that mark is the design's. A collection that
   runs 100 cascades costs 10x (Lua 5.1) and 5x (LuaJIT) a silent one;
-  `lifetime.alive` is 111 ns per call on Lua 5.1 and 3 ns on LuaJIT;
+  `lifetime.alive` is 111 ns per call on Lua 5.1 and 3 ns on LuaJIT.
+  The anchors-first exchanges ("The sentinel", task 017) cost per link,
+  in a registered tree of depth 3 where each link climbs to the root,
+  about 230 to 510 ns on Lua 5.1 and 7 to 25 ns on LuaJIT; against a
+  runtime without them (`make bench BASE=master` on the task's merge,
+  two invocations by the implementer and one by the reviewer), LuaJIT
+  stays within the threshold on every row (`runtime/attach-first` 0.88
+  to 1.0, `runtime/move` 0.96 to 1.0, `sentinel/anchor-100` 1.0 to 1.07,
+  `sentinel/register-tree` 0.95 to 1.0), while Lua 5.1 reads
+  `runtime/cascade-tree` 1.09 to 1.26 and `sentinel/register-tree` 1.11
+  to 1.21, the two rows whose every link exchanges; registering every
+  object at construction and then linking costs the tree 1.65 to 1.75 on
+  Lua 5.1 and 1.04 to 1.09 on LuaJIT against linking without prior
+  registration (`sentinel/register-tree` in-process). Those Lua 5.1
+  marks are the design's, not a regression;
 - the scope record and its push and pop, per entry into a block that
   anchors to `lifetime.scope`. Nothing the transpiler emits creates a
   closure or a `pcall`, so a loop whose body owns something stays
