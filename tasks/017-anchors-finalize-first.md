@@ -162,6 +162,37 @@ the former. Report absolute numbers for both hosts.
    dependents list per level, which 03's cost bound does not include.
    Not implemented: the mechanism and its cost are the design's
    (03), and the task specifies the climb. For the human.
+   **Implemented in round 2** (the orchestrator's ruling: 02 and 03
+   promise the order on every path). `sift` in `lifetime/init.lua`:
+   while a dependent below the record that holds the old proxy holds a
+   newer one, the newest of them (looking through transparent
+   dependents) exchanges with it and the descent goes on from it.
+   `reorder` runs the climb, then the descent when the climb changed the
+   object's proxy and the object has dependents, then the climb again
+   when the descent gave the object a newer proxy, until neither changes
+   it. Why it ends with the order restored, on an acyclic graph: an
+   exchange across an out-of-order anchor-dependent pair `(u, v)` puts
+   that pair in order and changes no other pair's order unfavourably
+   (for a record `w` above `v` only, `v`'s proxy fell; for `w` below `u`
+   only, `u`'s rose; for `w` between them the two pairs `(u, w)` and
+   `(w, v)` lose as many inversions as they gain or more), so the number
+   of out-of-order pairs falls with every exchange and the walks stop
+   with none left on the paths they walked. Every record the descent
+   passes takes the newest proxy below it, older than its own was, so
+   its other anchors stay newer; every anchor the climb exchanges with
+   takes a newer proxy than its own was, so its other dependents stay
+   older; only the linked object can end out of order with an edge the
+   walk in the other direction did not look at, which is why `reorder`
+   alternates. The orchestrator's sketch skipped the second climb; it is
+   needed when the object has more than one new anchor: with `a`, `b`,
+   `m` registered in that order and `d @ m`, `m @ (a, b)` climbs past
+   `a` only, the descent gives `m` the proxy of `d`, which is newer than
+   `b`'s, and only a second climb puts `b` above `m` (test "a list form
+   with a dependent below"). The proxy the descent gives back falls each
+   round (each dependent gives one up once), so a round where it does
+   not, which only a cycle through the object allows, ends the loop; on
+   cycles the climb's marks, a fresh mark on every record the descent
+   passes, and `deps.path` on transparent records end the walks.
 2. **A pinned anchor between two proxies is not climbed through.** A
    record without a proxy is not compared (the acceptance criteria:
    "if the dependent carries a sentinel and an anchor's sentinel is
@@ -173,6 +204,14 @@ the former. Report absolute numbers for both hosts.
    with the pinned anchor's anchors') would fix it at the price of a
    walk through every pinned ancestor on each link. Not implemented,
    for the same reason as item 1.
+   **Implemented in round 2.** A record without a proxy (pinned, a
+   hook, a table with the term and nothing to run, a main-thread scope
+   record) is transparent: the climb compares the dependent with its
+   anchors, transitively (`climb_through`), the descent looks through it
+   to its dependents (`newest_below`), and an object a move leaves
+   without a proxy reorders the dependents below it (`reorder_below`),
+   whose anchors for the order are now its new ones. The reproduction
+   now collects `b (unreachable), a (anchor), x (anchor)`.
 3. **`examples/coroutines.lt` changes too.** The decision's
    consequences name `move.lt` and `pinned_parent.lt` only, and the
    dispatch said "No other `.expected` changes", but 03, "The scope
@@ -232,6 +271,32 @@ the former. Report absolute numbers for both hosts.
    `sentinel/register-tree` 1.15 to 1.22 against a base that does not
    exchange. 03, "The sentinel", refers to "Performance" for the
    measurement, which a spec commit should add; the handoff of this task
-   has the numbers.
+   has the numbers. Round 2 (the descent and transparent anchors, two
+   more invocations): LuaJIT unchanged, within the threshold everywhere;
+   Lua 5.1 `runtime/cascade-tree` 1.20 to 1.26 in one invocation
+   (marked) and 1.09 to 1.11 in the other, `sentinel/anchor-100` 1.02 to
+   1.16 (not marked), `sentinel/register-tree` 1.14 to 1.28 (marked in
+   both, against a base that does not exchange). Per link of the tree
+   benchmark (110 links, every one an exchange and most a climb of two
+   levels), the exchanges cost about 230 to 510 ns on Lua 5.1 and 7 to
+   25 ns on LuaJIT; registration with its exchanges, against the same
+   tree without (`sentinel/register-tree`, in process), 1.69 to 1.75 on
+   Lua 5.1 and 1.05 to 1.08 on LuaJIT.
 
 ## Review log
+
+### Round 2 (implementer)
+
+Orchestrator rulings on round 1 (`43b5053`): the `coroutines.lt`
+change, the third flipped test, the pool change and `deps.mark` are
+accepted; spec issues 1 and 2 are to be implemented in this task. Done
+in `cfa0c47`: the descent (`sift`, `reorder`) and transparent anchors
+(`climb_through`, `newest_below`, `reorder_below`), with a second suite
+of tests in `tests/test-sentinel.lua` (the reproductions of items 1 and
+2, a chain of three, several dependents, Treflove's session dropped
+while its connection lives, a pinned dependent on the descent path, an
+object pinned by a move, a list form that needs the second climb, a
+cycle of pinned anchors, random graphs in random order with moves,
+pins and lists checked after every operation). Case 5's two-cycle now
+leaves the other proxy order: the descent exchanges back, and on a
+cycle the host picks the root.
