@@ -31,3 +31,10 @@ files["bin/lifetime"] = {
     -- The command script: arg is set by the interpreter.
     read_globals = {"arg"}
 }
+
+files["editor/luals/plugin.lua"] = {
+    -- The language server's plugin (editor/README.md): OnSetText is the
+    -- global the server looks up; log is the server's logger.
+    globals = {"OnSetText"},
+    read_globals = {"log"}
+}

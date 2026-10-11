@@ -8,8 +8,13 @@
 # PATH, and is skipped with a message otherwise.
 #
 # `make lint` runs luacheck over the runtime, the transpiler, the tests,
-# the benchmarks, the command and the trial's own Lua files (not the
-# copies of Treflove's code; config in .luacheckrc).
+# the benchmarks, the command, the trial's own Lua files (not the
+# copies of Treflove's code; config in .luacheckrc) and the editor support.
+#
+# `make luals-check` (part of `make test`) runs the language server
+# plugin's rewrite (editor/luals/plugin.lua) over every `.lt` file and
+# checks that each result is valid Lua (editor/luals/check.lua), under
+# the first interpreter found.
 #
 # `make bench` (task 010; CLAUDE.md, rule 5) runs bench/run.lua under every
 # interpreter found and writes build/bench-<interpreter>.txt, one line per
@@ -45,9 +50,11 @@ BASE_DIR ?= $(BASE_WORKTREE)
 BENCH_FILES ?=
 BENCH_OUT ?= build
 
-.PHONY: test unit conformance trial lint bench clean
+LT_FILES := $(shell find examples tests/fixtures trial -name '*.lt' | sort)
 
-test: unit conformance trial
+.PHONY: test unit conformance trial luals-check lint bench clean
+
+test: unit conformance trial luals-check
 
 unit:
 	@if [ -z "$(INTERPRETERS)" ]; then \
@@ -71,8 +78,14 @@ trial:
 		echo "== Treflove trial skipped: luajit not found on PATH (trial/treflove/run.lua runs under luajit)"; \
 	fi
 
+luals-check:
+	@if [ -z "$(FIRST)" ]; then \
+		echo "make: neither lua5.1 nor luajit found on PATH" >&2; exit 1; fi
+	@echo "== language server plugin rewrite of every .lt file (editor/luals/check.lua under $(FIRST))"
+	@$(FIRST) editor/luals/check.lua $(LT_FILES)
+
 lint:
-	luacheck lifetime tests bench bin/lifetime trial/treflove/run.lua trial/treflove/harness.lua trial/treflove/stubs
+	luacheck lifetime tests bench bin/lifetime trial/treflove/run.lua trial/treflove/harness.lua trial/treflove/stubs editor
 
 bench:
 	@if [ -z "$(INTERPRETERS)" ]; then \

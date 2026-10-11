@@ -1,0 +1,31 @@
+{
+    // lua-lifetime source (.lt) is Lua plus `@` and `!@`
+    // (docs/04-transpiler.md). It is highlighted as Lua; the language
+    // server reads it through the plugin below. bin/lifetime is a Lua
+    // script with no extension.
+    "files.associations": {
+        "*.lt": "lua",
+        "*.lt.expected": "plaintext",
+        "**/bin/lifetime": "lua"
+    },
+
+    // sumneko.lua (lua-language-server), matching .luacheckrc: Lua 5.1 is
+    // the target, `jit` is read where LuaJIT provides it.
+    "Lua.runtime.version": "Lua 5.1",
+    "Lua.diagnostics.globals": ["jit"],
+
+    // Every entry point prepends "./?.lua;./?/init.lua" to package.path
+    // from the repository root (tests/run.lua, bench/run.lua,
+    // bin/lifetime), so `require("lifetime.cli")` is lifetime/cli.lua.
+    "Lua.runtime.path": ["?.lua", "?/init.lua"],
+    "Lua.runtime.pathStrict": false,
+
+    // The server cannot parse `@`. editor/luals/plugin.lua rewrites a .lt
+    // file into plain Lua of the same shape before the server parses it
+    // (editor/README.md), so .lt files get the same analysis as .lua
+    // files. The extension asks once whether to trust the plugin.
+    "Lua.runtime.plugin": "editor/luals/plugin.lua",
+
+    // No third-party library detection prompts (there are no dependencies).
+    "Lua.workspace.checkThirdParty": false
+}
