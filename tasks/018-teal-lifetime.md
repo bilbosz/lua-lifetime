@@ -1,12 +1,12 @@
 ---
 id: 018
 title: teal-lifetime: the Teal front end, Teal output, the `lifetime` declaration file and the second rockspec
-status: in-progress
+status: review
 depends: [007]
 branch: task/018-teal-lifetime
 pr:
 commits:
-review:
+review: APPROVE (round 2)
 ---
 
 ## Goal
@@ -242,3 +242,16 @@ with the branch's and master's `lifetime/`. Traced: test case 6 (`f !@ a`,
   `cli.lang_of` is the one place.
 - `bench/README.md` row for `build/teal-5000` added; its cost is about
   1.5x `build/extension-5000` (the handoff said 1.3x).
+
+### Round 2: APPROVE
+
+Suite on `6f7c124`: unit 422/422 under lua5.1 and luajit, conformance
+89/89 (tl on both), the new `luarocks make` case ran (luarocks 3.8.0 on
+PATH), trial and luals-check green, lint clean (48 files). `make bench
+BASE=origin/master BENCH_FILES=bench/bench-build.lua`: no SLOWER mark
+under either interpreter in three invocations; the 48 `.lt` files build
+byte-identically with the branch's and master's `lifetime/`. Traced: F1's
+fix on `Box<Box<integer>>`, `Box<Box<Box<integer>>>`, `{string:
+Box<{Box<integer>}>}` and a return list `: Box<Box<integer>>, integer`,
+written back and accepted by tl. Every round-1 finding verified fixed; no
+new finding. For the human: spec issues 2 and 3 above.
