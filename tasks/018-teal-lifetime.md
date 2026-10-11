@@ -213,3 +213,32 @@ same locals; `tl`'s compat preamble for `table.unpack` is one line.
    it; nothing recommends it.
 
 ## Review log
+
+### Round 1: REQUEST_CHANGES
+
+Suite on `26e317a`: unit 421/421 under lua5.1 and luajit, conformance
+89/89 (tl on both interpreters), trial and luals-check green, lint clean
+(48 files). `make bench BASE=origin/master BENCH_FILES=bench/bench-build.lua`:
+no SLOWER mark under either interpreter; the 48 `.lt` files build the same
+with the branch's and master's `lifetime/`. Traced: test case 6 (`f !@ a`,
+`m!(a) !@ s`, `m!@ s`), matches.
+
+- F1 (blocking): `Box<Box<integer>>` rejected, `'>' expected near '>>'`:
+  the lexer reads `>>` as one token and `anglebracket_list` wanted `>`.
+  Fixed as tl does: the inner list takes one `>` of the token and leaves
+  the other for the list around it; `TEAL_FORMS` line 42 and
+  `generics.tlt` carry nested generics.
+- F2 (blocking): the rockspec's `install.lua` key `lifetime` put
+  `init.d.tl` at `share/lua/5.1/init.d.tl` (luarocks drops a module
+  name's last component for the directory), where tl cannot find it.
+  Fixed: key `lifetime.init`; the layout simulation in the tests follows
+  luarocks's rule, and where luarocks is on PATH the test runs `luarocks
+  make --deps-mode=none --tree` on the rockspec and checks the two files.
+- F3 (non-blocking): with several tl errors `run` prefixed only the first
+  line with `lifetime: `. Fixed: every line; 04 says so.
+- F4 (non-blocking): the column of a tl error is the generated Teal's.
+  Documented in 04, "The command" bullet of the Teal section.
+- F5 (non-blocking): `teal.EXTENSION`/`teal.is_source` unused. Removed;
+  `cli.lang_of` is the one place.
+- `bench/README.md` row for `build/teal-5000` added; its cost is about
+  1.5x `build/extension-5000` (the handoff said 1.3x).

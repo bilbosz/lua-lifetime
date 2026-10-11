@@ -36,9 +36,11 @@ build = {
     },
     install = {
         lua = {
-            -- Copied as lifetime/init.d.tl: a string key is a module path
-            -- (the directory), and a file that is not .lua keeps its name.
-            ["lifetime"] = "lifetime/init.d.tl"
+            -- Copied to share/lua/5.1/lifetime/init.d.tl: luarocks takes a
+            -- string key as a module name whose directory the file goes
+            -- into (the last component is dropped), and a file that is not
+            -- .lua keeps its name.
+            ["lifetime.init"] = "lifetime/init.d.tl"
         }
     }
 }

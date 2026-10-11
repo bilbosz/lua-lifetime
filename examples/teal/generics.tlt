@@ -53,9 +53,23 @@ global function describe(value: Named | string): string
 end
 
 local pool = lifetime.token("pool")
-local figures = fill(pool, function(i: integer): Figure
+local figures: {Figure} = fill(pool, function(i: integer): Figure
    return Figure.new("f" .. i, i % 2 == 0 and "square" or "circle", i * 10)
 end, 3)
+-- A nested generic type ends in `>>`, which the lexer reads as one token
+-- and the parser splits between the two lists, as tl does.
+local by_shape: {Shape: {Figure}} = {}
+local record Pair<A, B>
+   first: A
+   second: B
+end
+local indexed: Pair<Shape, Pair<integer, Figure>> = {first = figures[1].shape, second = {first = 1, second = figures[1]}}
+for _, f in ipairs(figures) do
+   by_shape[f.shape] = by_shape[f.shape] or {}
+   table.insert(by_shape[f.shape], f)
+end
+print(#by_shape.circle, #by_shape.square, indexed.second.second.name)
+--> 2	1	f1
 --> made 3 with probe probe
 --> filled (anchor)
 --> destroy probe (anchor)

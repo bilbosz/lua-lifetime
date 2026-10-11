@@ -110,10 +110,11 @@ local TEAL_FORMS = table.concat({
     "local z = (x is number) and 3 & 1 | 2 ~ 4 << 1 >> 1 or ~x", -- 39 is, bitwise operators
     "local w, v = f(1, 2) as (integer, string)", -- 40 tuple cast
     "local t = {name: string = 'n', [1] = 2, 3}", -- 41 typed table field
-    "for k, val in pairs(t as {string: any}) do print(k, val) end", -- 42
-    "print(m!(1, 2), m!'s', m!{1})", -- 43 Teal's macro call
-    "m!(x)", -- 44 a macro call as a statement
-    "return x", -- 45
+    "local nested, deep: Box<Box<integer>>, {string: Map<string, {Box<Box<Named>>}>} = nil, nil", -- 42 nested generics, `>>` closing two lists
+    "for k, val in pairs(t as {string: any}) do print(k, val) end", -- 43
+    "print(m!(1, 2), m!'s', m!{1})", -- 44 Teal's macro call
+    "m!(x)", -- 45 a macro call as a statement
+    "return x", -- 46
     ""
 }, "\n")
 
@@ -147,7 +148,7 @@ test.suite("teal parser")
 test.case("every Teal form parses, statement by statement", function()
     local chunk = parse(TEAL_FORMS)
     test.assert_deep_eq(tags(chunk), {
-        "Local", "Local", "LocalFunction", "Local", "Global", "GlobalFunction", "Teal", "Teal", "Teal", "Teal", "Teal", "Teal", "Teal", "Teal", "Teal", "Local", "Local", "Local", "Local",
+        "Local", "Local", "LocalFunction", "Local", "Global", "GlobalFunction", "Teal", "Teal", "Teal", "Teal", "Teal", "Teal", "Teal", "Teal", "Teal", "Local", "Local", "Local", "Local", "Local",
         "GenericFor", "CallStat", "CallStat", "Return"
     })
     -- The typed pieces hang on the nodes the Lua grammar has.
@@ -189,12 +190,19 @@ test.case("every Teal form parses, statement by statement", function()
     test.assert_eq(wv.tag, "As")
     test.assert_eq(wv.arity, 2)
     test.assert_eq(chunk[19].exprs[1].fields[1].type[2].text, "string")
-    local m = chunk[21].call.args[1]
+    -- `>>` closes two lists: the inner takes one `>`, the outer the other.
+    local nested = chunk[20].types
+    local text = {}
+    for i = 1, nested.n do
+        text[i] = nested[i].text
+    end
+    test.assert_eq(table.concat(text, " "), ": Box < Box < integer > > , { string : Map < string , { Box < Box < Named > > } > }")
+    local m = chunk[22].call.args[1]
     test.assert_eq(m.tag, "Macro")
     test.assert_eq(m.func.name, "m")
     test.assert_eq(#m.args, 2)
-    test.assert_true(chunk[21].call.args[2].sugar)
-    test.assert_eq(chunk[22].call.tag, "Macro")
+    test.assert_true(chunk[22].call.args[2].sugar)
+    test.assert_eq(chunk[23].call.tag, "Macro")
     -- The where clause and the macroexp bodies are expressions inside the
     -- kept tokens.
     local box = chunk[9].raw
@@ -530,6 +538,15 @@ for _, interpreter in ipairs(TL_INTERPRETERS) do
         test.assert_eq(out, "")
         test.assert_eq(err, "lifetime: " .. path .. ":2:19: in local declaration: y: got integer, expected string\n")
         test.assert_eq(status, 1)
+        -- Several errors: one `lifetime: ` per line.
+        write_file(path, "local x: integer = \"a\" @ lifetime.scope\nlocal y: string = 1\n")
+        out, err, status = lifetime(interpreter, "run " .. path)
+        test.assert_eq(out, "")
+        test.assert_eq(status, 1)
+        test.assert_eq(select(2, err:gsub("\nlifetime: ", "")), 1, err)
+        test.assert_true(err:find("^lifetime: " .. path:gsub("%p", "%%%0") .. ":1:%d+: ") ~= nil, err)
+        test.assert_true(err:find("\nlifetime: " .. path:gsub("%p", "%%%0") .. ":2:19: in local declaration: y: got integer, expected string\n$") ~= nil, err)
+        write_file(path, "local x: integer = 1 @ lifetime.scope\nlocal y: string = x\n")
         -- `build -o OUT.lua` reports the same, bare.
         out, err, status = lifetime(interpreter, "build " .. path .. " -o " .. SCRATCH .. "/type-error.lua")
         test.assert_eq(out, "")
@@ -589,9 +606,13 @@ for _, interpreter in ipairs(TL_INTERPRETERS) do
                 write_file(target, read_file(file))
             end
             for name, file in pairs(env.build.install and env.build.install.lua or {}) do
-                -- luarocks: a string key is the directory, a file that is
-                -- not .lua keeps its name.
-                write_file(share .. "/" .. name:gsub("%.", "/") .. "/" .. file:match("[^/]+$"), read_file(file))
+                -- luarocks (build.lua, install_to; path.module_to_path): a
+                -- string key is a module name, the file goes into that
+                -- module's directory (the key without its last component,
+                -- dots to slashes), and a file that is not .lua keeps its
+                -- name.
+                local directory = name:match("^(.*)%.[^.]*$") or ""
+                write_file(share .. "/" .. directory:gsub("%.", "/") .. "/" .. file:match("[^/]+$"), read_file(file))
             end
         end
         write_file(rock_bin .. "/lifetime", read_file("bin/lifetime"))
@@ -602,4 +623,26 @@ for _, interpreter in ipairs(TL_INTERPRETERS) do
         test.assert_eq(status, 0)
         test.assert_eq(out, read_file("examples/teal/connection.tlt.expected"))
     end)
+end
+
+-- `luarocks make` of the second rockspec, where luarocks is installed:
+-- the layout it gives (task 018's acceptance criterion, as task 007's
+-- test could not check with no luarocks on its machine). Only the
+-- dependencies need the network; `--deps-mode=none` skips them.
+local HAS_LUAROCKS = select(3, shell("command -v luarocks")) == 0
+
+if HAS_LUAROCKS then
+    test.case("luarocks make teal-lifetime-dev-1.rockspec installs the front end next to the runtime", function()
+        local tree = os.tmpname()
+        os.remove(tree)
+        local out, err, status = shell("luarocks --lua-version 5.1 make --deps-mode=none --tree " .. quote(tree) .. " teal-lifetime-dev-1.rockspec")
+        local share = tree .. "/share/lua/5.1"
+        local teal_module, declaration = read_file(share .. "/lifetime/teal.lua"), read_file(share .. "/lifetime/init.d.tl")
+        os.execute("rm -rf " .. quote(tree))
+        test.assert_eq(status, 0, out .. err)
+        test.assert_eq(teal_module, read_file("lifetime/teal.lua"))
+        test.assert_eq(declaration, read_file("lifetime/init.d.tl"))
+    end)
+else
+    print("note: the luarocks make test is skipped: luarocks is not on PATH")
 end

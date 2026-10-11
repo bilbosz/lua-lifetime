@@ -366,7 +366,7 @@ test.case("teal-lifetime-dev-1.rockspec depends on lua-lifetime and tl and insta
     test.assert_deep_eq(spec.build.modules, {["lifetime.teal"] = "lifetime/teal.lua"})
     -- The declaration file goes next to the runtime, where tl's `?/init.lua`
     -- lookup finds it as lifetime/init.d.tl.
-    test.assert_deep_eq(spec.build.install.lua, {lifetime = "lifetime/init.d.tl"})
+    test.assert_deep_eq(spec.build.install.lua, {["lifetime.init"] = "lifetime/init.d.tl"})
     test.assert_eq(spec.build.install.bin, nil)
     for _, file in ipairs({"lifetime/teal.lua", "lifetime/init.d.tl"}) do
         test.assert_true(read_file(file) ~= nil, file)

@@ -316,9 +316,13 @@ measure).
   command" says, installing `tl.loader()` so that the program can require
   plain `.tl` modules. A syntax error of the extension is reported as
   above, `FILE:LINE: <message>`; a Teal error as `tl` reports it,
-  `FILE:LINE:COL: <message>`, one line per error, exit status 1. A
-  `.tlt` file without the `teal-lifetime` rock installed, or `run`
-  without the `tl` module, is reported as `lifetime: <what is missing>`.
+  `FILE:LINE:COL: <message>`, one line per error (each behind
+  `lifetime: ` under `run`), exit status 1. The line is the `.tlt` file's;
+  the column is the generated Teal's, which differs from the source's on
+  the lines the emitter rewrote (line 1, which carries the header, and
+  every line with `@`, `!@` or a packed `return`). A `.tlt` file without
+  the `teal-lifetime` rock installed, or `run` without the `tl` module,
+  is reported as `lifetime: <what is missing>`.
 - **Not kept.** Comments, so a `--#pragma` line is dropped (set pragmas
   in `tlconfig.lua` or on the `tl` command); and Teal's macro
   *declarations* (`local macro name!(…)` with backtick quotes and `$`

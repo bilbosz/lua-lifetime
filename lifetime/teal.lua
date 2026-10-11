@@ -31,19 +31,14 @@
 --                           errors, one `FILE:LINE:COL: message` per line
 --   teal.install_loader()   `tl.loader()`, once, so that a running program
 --                           can require plain `.tl` modules as under `tl run`
---   teal.EXTENSION          ".tlt"
---   teal.is_source(path)    does `path` end with teal.EXTENSION?
+--
+-- The source extension, `.tlt` (docs/05-decisions.md, "The Teal source
+-- extension is `.tlt`"), is the command's business (lifetime/cli.lua,
+-- `lang_of`): the core picks the front end without requiring it.
 
 local teal = {}
 
 local sub, format, concat = string.sub, string.format, table.concat
-
--- docs/05-decisions.md, "The Teal source extension is `.tlt`".
-teal.EXTENSION = ".tlt"
-
-function teal.is_source(path)
-    return sub(path, -#teal.EXTENSION) == teal.EXTENSION
-end
 
 ------------------------------------------------------------------------
 -- Operators
@@ -205,13 +200,22 @@ function dialect.new(P)
 
     local parse_type
 
-    -- '<' item {',' item} '>' (tl.tl, parse_anglebracket_list).
+    -- '<' item {',' item} '>' (tl.tl, parse_anglebracket_list). The lexer
+    -- reads `>>` as one token, so `Box<Box<integer>>` ends in `>>`: as tl
+    -- does, the inner list takes one `>` of it and leaves the other for
+    -- the list around it, by rewriting the token in place.
     local function anglebracket_list(raw, item)
         expect(raw, "<")
         item(raw)
         while is(",") do
             take(raw)
             item(raw)
+        end
+        local t = current()
+        if t.value == ">>" and t.type == "symbol" then
+            push_token(raw, ">", t.line)
+            t.value = ">"
+            return
         end
         expect(raw, ">")
     end

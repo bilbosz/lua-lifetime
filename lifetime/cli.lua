@@ -312,7 +312,8 @@ local function run_command(argv)
         local teal = assert(teal_front_end(file, "run"))
         generated, message = teal.compile(generated, file)
         if not generated then
-            return report(message)
+            -- One `lifetime: ` per error line.
+            return report((message:gsub("\n", "\nlifetime: ")))
         end
         local ok, loader_error = teal.install_loader(file)
         if not ok then
