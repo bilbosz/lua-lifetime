@@ -40,6 +40,19 @@
 --                           program as plain Lua, types and extension
 --                           left out. A base without the front end
 --                           cannot run it.
+--   build/teal-fields-5000  `cli.build` with the Teal front end on 5 000
+--                           lines of table constructors with typed fields
+--                           (`{n: integer = 1, …}`), the constructor's
+--                           speculative type read that commits (task 020);
+--                           the baseline is `loadstring` of the same
+--                           constructors untyped
+--   build/teal-method-items-5000
+--                           the same on 5 000 lines of constructors whose
+--                           items start with `Name ':'` and are method
+--                           calls (`{r:get(), …}`), the speculative read
+--                           that backtracks (task 020); the source is
+--                           plain Lua, the baseline its `loadstring`. A
+--                           base before task 020 cannot run it.
 --
 -- Input files are read relative to the current directory, so under `make
 -- bench BASE=<ref>` the base's transpiler gets the same text as the
@@ -201,6 +214,28 @@ end
 local plain_teal_5000 = generate_teal(5000, false)
 assert(loadstring(plain_teal_5000, "=teal-5000.tlt"))
 add_extension_build("build/teal-5000", generate_teal(5000, true), "teal-5000.tlt", plain_teal_5000)
+-- Task 020: the constructor's `Name ':'` items in the Teal dialect, one
+-- constructor per line, three such items in each.
+local function generate_items(lines, format_line)
+    local out = {}
+    for k = 1, lines do
+        out[k] = format_line(k)
+    end
+    return table.concat(out, "\n") .. "\n"
+end
+local typed_fields_5000 = generate_items(5000, function(k)
+    return string.format("t%d = {n: integer = %d, s: {string} = {\"x\"}, f: function(): integer = function(): integer return %d end, r = %d}", k, k, k, k)
+end)
+local untyped_fields_5000 = generate_items(5000, function(k)
+    return string.format("t%d = {n = %d, s = {\"x\"}, f = function() return %d end, r = %d}", k, k, k, k)
+end)
+assert(loadstring(untyped_fields_5000, "=teal-fields-5000.tlt"))
+add_extension_build("build/teal-fields-5000", typed_fields_5000, "teal-fields-5000.tlt", untyped_fields_5000)
+local method_items_5000 = generate_items(5000, function(k)
+    return string.format("t%d = {r:get(), %d, s:put(%d), x = r:get \"y\"}", k, k, k)
+end)
+assert(loadstring(method_items_5000, "=teal-method-items-5000.tlt"))
+add_extension_build("build/teal-method-items-5000", method_items_5000, "teal-method-items-5000.tlt", method_items_5000)
 local generated_5000 = generate_plain_lua(5000)
 assert(loadstring(generated_5000 .. "local last = {}\n", "=scope-at-end-5000.lt"))
 add_extension_build("build/scope-at-end-5000", generated_5000 .. "local last = {} @ lifetime.scope\n", "scope-at-end-5000.lt", generated_5000 .. "local last = {}\n")
