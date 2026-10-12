@@ -57,4 +57,5 @@ interpreter on which `require("tl")` works; with `tl` on no interpreter
 they are skipped with a note, since `tl` is the `teal-lifetime` rock's
 dependency, not this repository's. Most are the Lua examples of the same
 name in Teal, with the same output; `generics.tlt` is the grammar Teal
-adds.
+adds, and `typed_reason.tlt` a destructor and a function typed with
+`lifetime.Reason` (task 019).
