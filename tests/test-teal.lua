@@ -361,6 +361,97 @@ test.case("the `lifetime.scope` inside a where clause or a cast counts for its b
     test.assert_true(output:find("(__lt_attach({}, false, __s1)) as R", 1, true) ~= nil, output)
 end)
 
+-- docs/04-transpiler.md, "The generated chunk header" and "The Teal front
+-- end", "Types pass through": a type that names `lifetime` names it for
+-- the header (task 019); "does not name `lifetime`" is not "as a value".
+local HEADER_ONLY = "local lifetime = require(\"lifetime\"); "
+
+test.case("a chunk that names `lifetime` only inside a type gets the header and nothing else", function()
+    -- Test case 1: the header, then the source's first line, on line 1.
+    local source = "local function f(r: lifetime.Reason)\n  print(r)\nend\nf(\"destroy\")\n"
+    local output = round_trip(source)
+    test.assert_eq(output, HEADER_ONLY .. "local function f(r: lifetime.Reason)\n    print(r)\nend\nf(\"destroy\")\n")
+    -- Every type position, alone in its chunk (test cases 2 and 3 among them).
+    local positions = {
+        "local function f(r: lifetime.Reason) print(r) end", -- a parameter
+        "local function f(...: lifetime.Reason) print(...) end", -- a typed vararg
+        "local function f(): lifetime.Reason return \"exit\" end", -- a return list
+        "local h: lifetime.Hook", -- a local's annotation
+        "local a, b: integer, {string: lifetime.Hook}", -- the second of a type list, in a map
+        "global g: lifetime.Token", -- a global's annotation
+        "local record R\n  tok: lifetime.Token\nend", -- a record field
+        "local interface I\n  tok: lifetime.Token\nend", -- an interface field
+        "local record R\n  record Inner\n    tok: lifetime.Token\n  end\nend", -- a nested record's field
+        "local record R is lifetime.Token\nend", -- an `is` clause of a record
+        "local t = x as lifetime.Token", -- an `as` operand
+        "local t = x as (lifetime.Token, integer)", -- a tuple cast
+        "local b = x is lifetime.Token", -- an `is` operand
+        "local m: Map<string, lifetime.Token>", -- a type argument
+        "local function f<T is lifetime.Token>(x: T): T return x end", -- a type argument's constraint
+        "local type Rs = lifetime.Reason", -- a type declaration body
+        "local f: function(lifetime.Reason): lifetime.Scope", -- a function type
+        "local t = {tok: lifetime.Token = nil}" -- a table field's annotation
+    }
+    for _, chunk in ipairs(positions) do
+        local out = round_trip(chunk)
+        -- The header, binding nothing else since the chunk calls no
+        -- runtime function, then the chunk token for token.
+        test.assert_eq(out:sub(1, #HEADER_ONLY), HEADER_ONLY, chunk)
+        test.assert_deep_eq(token_list(out:sub(#HEADER_ONLY + 1)), token_list(chunk), chunk)
+    end
+end)
+
+test.case("a chunk that names `lifetime` in no value and no type is its input", function()
+    -- Test case 4, and the names spelled `lifetime` that are no type: a
+    -- field, a parameter of a function type, a member, an attribute
+    -- position is a name too.
+    for _, chunk in ipairs({
+        "local function f(r: Reason) print(r) end\n",
+        "local record R\n    lifetime: integer\n    end\n",
+        "local f: function(lifetime: integer): integer\n",
+        "local x = foo.lifetime\n",
+        "local t: Ns.lifetime.Token\n"
+    }) do
+        test.assert_eq(round_trip(chunk), chunk)
+    end
+    test.assert_eq(round_trip(read_file("examples/teal/plain.tlt")), assert(cli.build(read_file("examples/teal/plain.tlt"), "t.tlt")))
+    test.assert_false(round_trip(read_file("examples/teal/plain.tlt")):find("require", 1, true))
+end)
+
+test.case("a type named `lifetime` shadows the runtime's name where tl reads it so", function()
+    -- "A source file that shadows `lifetime` gets what it wrote": no
+    -- header, so no second binding.
+    for _, chunk in ipairs({
+        -- Test case 2: a record named `lifetime` first.
+        "local record lifetime\n    record Token\n    end\n    end\nlocal record R\n    tok: lifetime.Token\n    end\n",
+        -- In scope in its own body, type arguments included.
+        "local record lifetime\n    record Token\n    end\n    t: lifetime.Token\n    end\n",
+        "local record lifetime<T is lifetime.I>\n    interface I\n    end\n    end\n",
+        "local type lifetime = record\n    record T\n    end\n    t: lifetime.T\n    end\n",
+        -- A nested type named `lifetime`, throughout the body around it.
+        "local record R is lifetime.I\n    t: lifetime.I\n    record lifetime\n    interface I\n    end\n    end\n    end\n",
+        -- A local or a parameter named `lifetime`.
+        "local lifetime = {}\nlocal t: lifetime.Token\n",
+        "local function f(lifetime: integer): lifetime.Reason return lifetime end\n"
+    }) do
+        test.assert_eq(round_trip(chunk), chunk)
+    end
+    -- Outside the body of a record that declares a nested `lifetime`, in
+    -- a record's own type arguments (read before its nested types), and
+    -- after the block of a local record named `lifetime`, the runtime's
+    -- name is named again.
+    for _, chunk in ipairs({
+        "local record R\n    record lifetime\n    end\n    end\nlocal h: lifetime.Hook\n",
+        "local record R<T is lifetime.Token>\n    record lifetime\n    end\n    end\n",
+        -- The right-hand side of a nested alias named `lifetime`.
+        "local record R\n    type lifetime = lifetime.Token\n    end\n",
+        "local record R\n    t: lifetime.Hook\n    type lifetime = lifetime.Token\n    end\n",
+        "do\n    local record lifetime\n        end\nend\nlocal h: lifetime.Hook\n"
+    }) do
+        test.assert_eq(round_trip(chunk), HEADER_ONLY .. chunk)
+    end
+end)
+
 test.suite("teal cli")
 
 test.case("cli.build picks the Teal dialect from the extension or the argument", function()
@@ -417,9 +508,34 @@ if HAS_TL then
             test.assert_eq(table.concat(messages, "\n"), "", name)
         end
         check(read_file("lifetime/init.d.tl"), "lifetime/init.d.tl")
-        for _, name in ipairs({"plain", "connection", "scope_exit", "exit_paths", "uncaught_error", "generics"}) do
+        for _, name in ipairs({"plain", "connection", "scope_exit", "exit_paths", "uncaught_error", "generics", "typed_reason"}) do
             local path = "examples/teal/" .. name .. ".tlt"
             check(assert(cli.build(read_file(path), path)), path)
+        end
+    end)
+
+    test.case("tl resolves a type that names `lifetime` through the header, or the program's own type", function()
+        -- Task 019, test cases 1 to 3: with the header the type resolves
+        -- through lifetime/init.d.tl; a record named `lifetime` is the
+        -- program's, with no second binding. Before the task tl reported
+        -- `unknown type lifetime.Reason` for the first.
+        for _, chunk in ipairs({
+            "local function f(r: lifetime.Reason)\n  print(r)\nend\nf(\"destroy\")\n",
+            "local record R\n  tok: lifetime.Token\nend\n",
+            "local record lifetime\n  record Token\n  end\nend\nlocal record R\n  tok: lifetime.Token\nend\n",
+            "local record R\n  record lifetime\n    record T\n    end\n  end\n  t: lifetime.T\nend\n",
+            "local x: any = 1\nlocal t = x as lifetime.Token\n",
+            "local x: any = 1\nlocal b = x is lifetime.Token\n",
+            -- A nested alias named `lifetime` reads its right-hand side
+            -- outside it: the runtime's name, through the header.
+            "local record R\n  type lifetime = lifetime.Token\nend\n"
+        }) do
+            local teal_source = assert(cli.build(chunk, "a.tlt"))
+            local _, n = teal_source:gsub("local lifetime", "")
+            test.assert_true(n <= 1, teal_source)
+            local lua, err = teal.compile(teal_source, "a.tlt")
+            test.assert_eq(err, nil, chunk)
+            test.assert_true(lua ~= nil, chunk)
         end
     end)
 
@@ -515,6 +631,14 @@ for _, interpreter in ipairs(TL_INTERPRETERS) do
         test.assert_eq(err, "")
         test.assert_eq(status, 0)
         test.assert_eq(out, path .. "\ta\tb\t2\tmain\ndestroy main (anchor)\ndestroy global (exit)\n")
+    end)
+
+    case("run FILE.tlt resolves `lifetime.Reason` named only in a type (task 019)", function()
+        local path = SCRATCH .. "/typed-only.tlt"
+        write_file(path, "local function f(r: lifetime.Reason)\n  print(r)\nend\nf(\"destroy\")\n")
+        test.assert_deep_eq({lifetime(interpreter, "run " .. path)}, {"destroy\n", "", 0})
+        local out = lifetime(interpreter, "build " .. path .. " -o -")
+        test.assert_eq(out:match("^[^\n]*"), "local lifetime = require(\"lifetime\"); local function f(r: lifetime.Reason)")
     end)
 
     case("build FILE.tlt -o OUT.lua compiles the Teal with tl", function()

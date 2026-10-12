@@ -1,0 +1,33 @@
+-- typed_reason.tlt: `lifetime.Reason` as a type (task 019). The
+-- destructor of a record is typed `function(self: R, reason:
+-- lifetime.Reason)` and `tl` accepts it through lifetime/init.d.tl; a
+-- plain function takes a `lifetime.Reason` parameter too
+-- (docs/04-transpiler.md, "The Teal front end", "Types pass through",
+-- "The declaration file"). The instance anchored `@ lifetime.scope` in
+-- `use` dies at the function's `end`, reason "anchor"
+-- (docs/02-semantics.md, "Scopes: `lifetime.scope`"): its line comes
+-- before the one `show` prints on the next statement.
+
+local record R
+    name: string
+end
+local R_mt = {
+    __index = R,
+    __destroy = function(self: R, reason: lifetime.Reason)
+        print("destroy " .. self.name .. " (" .. reason .. ")")
+    end
+} as metatable<R>
+
+local function use()
+    local r = setmetatable({name = "r"} as R, R_mt) @ lifetime.scope
+    assert(r.name == "r")
+end
+
+local function show(r: lifetime.Reason)
+    print("reason " .. r)
+end
+
+use()
+--> destroy r (anchor)
+show("anchor")
+--> reason anchor

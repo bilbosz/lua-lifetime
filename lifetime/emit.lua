@@ -512,8 +512,14 @@ end
 local emit_expr, emit_block
 
 -- A Raw node: its tokens on their lines, with the spacing it asks for,
--- and the expressions a dialect parsed inside it.
+-- and the expressions a dialect parsed inside it. A Raw whose type names
+-- the global `lifetime` (`lifetime.Reason`; the dialect marks it) names
+-- it for the header like an Id does (docs/04-transpiler.md, "The Teal
+-- front end", "Types pass through").
 local function emit_raw(st, raw)
+    if raw.names_lifetime and st.shadow == 0 then
+        st.named = true
+    end
     for i = 1, raw.n do
         local item = raw[i]
         if item.tag then
