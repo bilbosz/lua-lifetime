@@ -259,6 +259,122 @@ test.case("syntax errors of the Teal grammar take Lua's shape", function()
     fails("local x = 0x", "a.tlt:1: malformed number near '0x'")
 end)
 
+-- Task 020: a constructor item `Name ':' …` is Teal's typed field only
+-- when a type and `=` follow the `:`; anything else is read again as the
+-- expression it is, as tl.tl's parse_table_item backtracks
+-- (docs/04-transpiler.md, "Grammar": `field ::= … | exp`; "The Teal front
+-- end", "Types pass through").
+local METHOD_CALL_ITEMS = {
+    "local t = {\n    r:get()\n}\n", -- test case 1, on a line of its own
+    "local t = {r:get()}\n",
+    "local t = {1, r:get()}\n",
+    "local t = {r:get(), x = 1}\n",
+    "local t = {r:get(1, 2), s:put()}\n",
+    "local t = {\n    1,\n    r:get(),\n    x = s:put(2)\n}\nprint(#t)\n",
+    "local t = {r:get \"s\", r:get {1}, r:lifetime()}\n" -- string and table arguments; a method named like the runtime
+}
+
+local TYPED_FIELDS = {
+    "local t = {n: integer = 1}\n", -- test case 2
+    "local t = {f: function(): number = function(): number return 1 end}\n",
+    "local t = {n: integer = 1, r:get()}\n",
+    "local t = {m: {string: Box<Box<integer>>} = {}, r:get()}\n"
+}
+
+-- The output has the source's tokens, each on its line. (The emitter
+-- writes a constructor's closing `}` on a line of its own at the
+-- continuation indent, in both dialects, so a multi-line source does not
+-- come back byte for byte; a one-line source does.)
+local function assert_same_tokens(source, output)
+    local before, after = tokenize(source), tokenize(output)
+    test.assert_eq(#after, #before, source .. ": number of tokens")
+    for k = 1, #before do
+        test.assert_deep_eq(after[k], before[k], source .. ": token " .. k)
+    end
+end
+
+test.case("a `Name ':'` table item that is not a typed field is the method call it is", function()
+    for _, source in ipairs(METHOD_CALL_ITEMS) do
+        local output = assert(cli.build(source, "a.tlt"))
+        assert_same_tokens(source, output)
+        if select(2, source:gsub("\n", "")) == 1 then
+            test.assert_eq(output, source)
+        end
+    end
+    -- The item is the Invoke a Lua constructor has: the dialect reads it
+    -- exactly as the Lua grammar does.
+    local fields = parse("local t = {1, r:get(), x = 1}")[1].exprs[1].fields
+    test.assert_deep_eq({fields[1].tag, fields[2].tag, fields[3].tag}, {"PosField", "PosField", "NameField"})
+    test.assert_eq(fields[2].value.tag, "Invoke")
+    test.assert_eq(fields[2].value.method, "get")
+    test.assert_eq(fields[2].line, 1)
+    local source = "local t = {\n    1,\n    r:get(\n        a),\n    s:put {2}\n}\n"
+    test.assert_deep_eq(parse(source), parser.parse(lexer.tokenize(source, "t.tlt", true), "t.tlt"))
+    local split = parse(source)[1].exprs[1].fields
+    test.assert_eq(split[2].line, 3)
+    test.assert_eq(split[3].line, 5)
+    -- The extension inside the item is the expression's.
+    local anchored = parse("local t = {r:get() @ lifetime.scope, n: integer = s:put() @ x}")[1].exprs[1].fields
+    test.assert_eq(anchored[1].tag, "PosField")
+    test.assert_eq(anchored[1].value.tag, "Anchor")
+    test.assert_eq(anchored[1].value.expr.tag, "Invoke")
+    test.assert_eq(anchored[1].value.anchors[1].tag, "ScopeAnchor")
+    test.assert_eq(anchored[2].tag, "NameField")
+    test.assert_eq(anchored[2].type[2].text, "integer")
+    test.assert_eq(anchored[2].value.tag, "Anchor")
+end)
+
+test.case("a typed table field still parses and is written back as it was", function()
+    for _, source in ipairs(TYPED_FIELDS) do
+        test.assert_eq(assert(cli.build(source, "a.tlt")), source)
+        local field = parse(source)[1].exprs[1].fields[1]
+        test.assert_eq(field.tag, "NameField")
+        test.assert_eq(field.type.tag, "Raw")
+        test.assert_eq(field.type[1].text, ":")
+    end
+    local fields = parse(TYPED_FIELDS[3])[1].exprs[1].fields
+    test.assert_eq(fields[1].name, "n")
+    test.assert_eq(fields[1].value.tag, "Number")
+    test.assert_eq(fields[2].tag, "PosField")
+    test.assert_eq(fields[2].value.tag, "Invoke")
+    -- The nested list's `>>` was split by the typed field it belongs to.
+    local nested = parse(TYPED_FIELDS[4])[1].exprs[1].fields[1].type
+    local text = {}
+    for i = 1, nested.n do
+        text[i] = nested[i].text
+    end
+    test.assert_eq(table.concat(text, " "), ": { string : Box < Box < integer > > }")
+end)
+
+test.case("a malformed typed field is reported where tl reports it", function()
+    -- Test case 3. tl.tl's parse_table_item commits to the typed field only
+    -- when a type and `=` follow the `:`; otherwise it backtracks and reads
+    -- the item as an expression, which then fails. tl reports `{ n: integer
+    -- 1 }` as "expected a function call for a method" at the `1` (1:24),
+    -- `{ n: 1 }` as "syntax error, expected identifier" at the `1` (1:16),
+    -- and `{ n: T.x }` as "expected a function call for a method" at the
+    -- `.`. The front end matches tl: the same backtrack, the error at the
+    -- same token, in Lua's words for the method call that fails there.
+    -- Before task 020 the first read "'=' expected near '1'", the second
+    -- "expected a type near '1'".
+    local function fails(source, message)
+        local ok, err = pcall(parse, source, "a.tlt")
+        test.assert_false(ok, source)
+        test.assert_eq(err, message, source)
+    end
+    fails("local t = { n: integer 1 }", "a.tlt:1: function arguments expected near '1'")
+    fails("local t = { n: integer\n    1 }", "a.tlt:2: function arguments expected near '1'")
+    fails("local t = { n: 1 }", "a.tlt:1: '<name>' expected near '1'")
+    fails("local t = { n: T.x }", "a.tlt:1: function arguments expected near '.'")
+    fails("local t = { n: Box<Box<integer>> }", "a.tlt:1: function arguments expected near '<'")
+    -- A type and `=` commit to the typed field, as in tl: its value's error
+    -- is the value's.
+    fails("local t = { n: integer = }", "a.tlt:1: unexpected symbol near '}'")
+    -- The Lua dialect has no typed field: the same items are expressions.
+    test.assert_deep_eq({cli.build("local t = { n: integer 1 }", "a.lt")}, {nil, "a.lt:1: function arguments expected near '1'"})
+    test.assert_deep_eq({cli.build("local t = { r:get() }", "a.lt")}, {"local t = {r:get()}"})
+end)
+
 test.case("the Lua chunks parse to the same AST with and without the dialect", function()
     -- CLAUDE.md, rule 5: the dialect adds nothing to Lua. The test chunks
     -- of the Lua grammar and of the extension are the same trees.
@@ -639,6 +755,24 @@ for _, interpreter in ipairs(TL_INTERPRETERS) do
         test.assert_deep_eq({lifetime(interpreter, "run " .. path)}, {"destroy\n", "", 0})
         local out = lifetime(interpreter, "build " .. path .. " -o -")
         test.assert_eq(out:match("^[^\n]*"), "local lifetime = require(\"lifetime\"); local function f(r: lifetime.Reason)")
+    end)
+
+    case("run FILE.tlt with a method call as a table item (task 020)", function()
+        -- Test case 4: tl reads `{ r:get() }` as a method call whose two
+        -- values both go into the table.
+        local path = SCRATCH .. "/method-item.tlt"
+        write_file(path, table.concat({
+            "local record R",
+            "    get: function(self): number, number",
+            "end",
+            "local r: R = { get = function(_self: R): (number, number) return 1, 2 end }",
+            "local t = {",
+            "    r:get()",
+            "}",
+            "print(#t)",
+            ""
+        }, "\n"))
+        test.assert_deep_eq({lifetime(interpreter, "run " .. path)}, {"2\n", "", 0})
     end)
 
     case("build FILE.tlt -o OUT.lua compiles the Teal with tl", function()

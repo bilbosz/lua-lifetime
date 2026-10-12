@@ -696,7 +696,11 @@ function dialect.new(P)
         end
     end
 
-    -- ':' type, the type of a table field (`{name: T = v}`).
+    -- ':' type, the type of a table field (`{name: T = v}`). The parser
+    -- calls it speculatively at a constructor's `Name ':'` and reads the
+    -- item again as an expression when it raises or no `=` follows
+    -- (lifetime/parser.lua, `typed_field`; tl.tl, parse_table_item), so it
+    -- touches nothing but the Raw it returns and the parser's position.
     function D.annotation()
         local raw = new_raw()
         expect(raw, ":")
