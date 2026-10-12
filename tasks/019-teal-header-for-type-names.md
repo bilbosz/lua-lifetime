@@ -6,7 +6,7 @@ depends: [018]
 branch: task/019-teal-header-for-type-names
 pr:
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -126,3 +126,16 @@ the threshold of `bench/README.md`.
    test uses a global type named `lifetime`.
 
 ## Review log
+
+### Round 1: APPROVE
+
+Suite 428/428 under lua5.1 and luajit, conformance 91/91 (the Teal
+examples under both, `typed_reason` included), the Treflove trial 8/8,
+lint clean; `make bench BASE=origin/master` twice (the local `master`
+ref is stale): `build/teal-5000` and `build/extension-5000` within the
+threshold, no benchmark marked in both invocations. Findings: F1 (a
+nested `type lifetime = lifetime.Token` hid the runtime's name on its
+own right-hand side) and F3 (examples/README.md names
+`typed_reason.tlt`) applied by the implementer in the approval round;
+F2 (a `global record lifetime` chunk with type-only uses now gets the
+header) recorded under "Spec issues found" for the human.
