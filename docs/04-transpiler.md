@@ -272,9 +272,9 @@ measure).
   (`r: lifetime.Reason`, `x as lifetime.Hook`) names it for "The
   generated chunk header" as a value does, so the chunk gets the header
   and `tl` resolves the type through the declaration file; a type named
-  `lifetime` shadows it where `tl` reads it so. The expressions inside a type
-  declaration (a `where` clause, a macroexp's `return`) are parsed and
-  may use the extension. `global` declarations and `global function` are
+  `lifetime` shadows it where `tl` reads it so. The expressions inside a
+  type declaration (a `where` clause, a macroexp's `return`) are parsed
+  and may use the extension. `global` declarations and `global function` are
   statements of their own. Teal's `as` binds above every operator and
   `is` at the level of the comparisons, `//`, `&`, `|`, `~`, `<<` and
   `>>` with Teal's precedences; `global`, `record`, `enum`, `interface`,
