@@ -1,10 +1,10 @@
 ---
 id: 019
 title: Teal front end: a chunk that names `lifetime` only inside a type gets the header
-status: in-progress
+status: review
 depends: [018]
 branch: task/019-teal-header-for-type-names
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/55
 commits:
 review: APPROVE (round 1)
 ---

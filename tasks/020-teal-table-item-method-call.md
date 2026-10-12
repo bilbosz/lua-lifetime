@@ -1,12 +1,12 @@
 ---
 id: 020
 title: Teal front end: a `Name ':'` table item that is not a typed field is an expression
-status: todo
+status: review
 depends: [018]
-branch:
-pr:
+branch: task/020-teal-table-item-method-call
+pr: https://github.com/bilbosz/lua-lifetime/pull/56
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -58,11 +58,17 @@ which binds the results to locals as a workaround).
    number = function(): number return 1 end }` round-trip unchanged; a
    typed field followed by a method call item `{ n: integer = 1, r:get() }`
    too.
-3. A malformed typed field keeps its error: `{ n: integer 1 }` is reported
-   as before (`'=' expected near '1'`), not silently read as an
-   expression — the backtrack applies only when the item does not start a
-   valid `Name ':' type '='`, so compare with tl: tl reports the error at
-   the same place; match tl's behaviour and say which in the test.
+3. A malformed typed field is rejected, not silently read as an
+   expression, and the error sits where tl puts it: the backtrack applies
+   whenever the item does not start a valid `Name ':' type '='`, so the
+   expression read fails at the first token that is not a method call.
+   `{ n: integer 1 }` reads `function arguments expected near '1'` (tl:
+   1:24, the `1`), `{ n: 1 }` reads `'<name>' expected near '1'` (tl:
+   1:16), `{ n: T.x }` near `.`, `{ n: Box<Box<integer>> }` near `<`, in
+   Lua's wording for the construct that fails there; `{ n: integer = }`
+   commits to the typed field and reads `unexpected symbol near '}'`. (As
+   written at creation this case expected `'=' expected near '1'`, which
+   contradicted "exactly as tl does"; amended at review.)
 4. With `tl` installed: `lifetime run` of the reproducer below prints `2`.
 
    ```
@@ -95,3 +101,24 @@ twice.
 ## Spec issues found
 
 ## Review log
+
+### Round 1: APPROVE
+
+Head `fb5e917`. `make test`: unit 433/433 under `lua5.1` and `luajit`,
+conformance 91/91 under both (the Teal examples included), trial 8/8,
+luals-check green; `make lint` clean over 48 files. `make bench
+BASE=origin/master BENCH_FILES=bench/bench-build.lua` twice: no `SLOWER`
+mark; `build/extension-5000` 0.96-1.04, `build/teal-5000` 0.92-1.07,
+`build/teal-fields-5000` 0.98-1.01; the implementer's single run-1 mark on
+luajit `build/extension-5000` did not reproduce in three later runs
+(noise under the two-run rule). The backtrack was traced against tl's
+`read_table_item`: pos/tok restore, no side effect of a discarded type
+read (the only token write, the `>>` split, can never be reached by both
+reads), no header leak from a discarded Raw.
+
+- F1 (non-blocking): no byte-for-byte round trip pinned a typed field
+  after a backtracked item. Applied by the orchestrator in the approval
+  commit (two cases in `METHOD_CALL_ITEMS`).
+- F2 (non-blocking): the task's test case 3 expected `'=' expected near
+  '1'`, contradicting "exactly as tl does"; the implementation matches
+  tl's position with Lua's wording. The case is amended above.

@@ -350,6 +350,32 @@ function parser.parse(tokens, chunkname, dialect)
         return node
     end
 
+    -- A dialect's typed field, `Name ':' type '=' exp`, at the Name, or nil
+    -- with the parser back on the Name when the item is not one. As tl.tl's
+    -- parse_table_item (docs/04-transpiler.md, "The Teal front end", "Types
+    -- pass through"): the type is read speculatively, its error discarded,
+    -- and only a type followed by `=` makes a typed field; anything else,
+    -- the method call `{ r:get() }` among it, is read again as the
+    -- expression it is (lparser.c's `exp` field). The speculative read
+    -- leaves nothing behind but the parser's position: the hook builds a
+    -- Raw of its own and parses no expression. Its one write to a token,
+    -- `>>` split for a nested type argument list, lies at least five
+    -- tokens past the Name, beyond the `Name ':' Name args` an expression
+    -- item can be, so the expression read raises before it gets there.
+    local function typed_field()
+        local start, line, name = pos, tok.line, tok.value
+        advance()
+        local ok, annotation = pcall(D.annotation)
+        if ok and is("=") then
+            local field = {tag = "NameField", line = line, lines = {line}, name = name, type = annotation}
+            check_next("=", field.lines)
+            field.value = expr()
+            return field
+        end
+        pos, tok = start, tokens[start]
+        return nil
+    end
+
     -- '{' [field {fieldsep field} [fieldsep]] '}' (lparser.c, constructor).
     local function constructor()
         local line = tok.line
@@ -372,13 +398,9 @@ function parser.parse(tokens, chunkname, dialect)
                     advance()
                     field.value = expr()
                 elseif D and ahead.value == ":" and ahead.type == "symbol" then
-                    -- A dialect's typed field, `Name ':' type '=' exp`.
-                    field = {tag = "NameField", line = tok.line, lines = {tok.line}, name = tok.value}
-                    advance()
-                    field.type = D.annotation()
-                    check_next("=", field.lines)
-                    field.value = expr()
-                else
+                    field = typed_field()
+                end
+                if not field then
                     -- lparser.c, constructor: luaX_lookahead reads the token
                     -- after the Name and moves the lexer's line past it, so
                     -- when the Name is consumed Lua's `lastline` is that
