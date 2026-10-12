@@ -268,7 +268,11 @@ measure).
   `record`, `interface`, `enum`, `type`, `macroexp`, with `is`, `where`,
   `userdata`, `metamethod` and nested types) are kept as the tokens they
   were, with their lines, and written back unchanged; the transpiler
-  never interprets a type, `tl` does. The expressions inside a type
+  never interprets a type, `tl` does. A type that names `lifetime`
+  (`r: lifetime.Reason`, `x as lifetime.Hook`) names it for "The
+  generated chunk header" as a value does, so the chunk gets the header
+  and `tl` resolves the type through the declaration file; a type named
+  `lifetime` shadows it where `tl` reads it so. The expressions inside a type
   declaration (a `where` clause, a macroexp's `return`) are parsed and
   may use the extension. `global` declarations and `global function` are
   statements of their own. Teal's `as` binds above every operator and
