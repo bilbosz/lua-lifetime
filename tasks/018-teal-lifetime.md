@@ -1,11 +1,11 @@
 ---
 id: 018
 title: teal-lifetime: the Teal front end, Teal output, the `lifetime` declaration file and the second rockspec
-status: review
+status: done
 depends: [007]
 branch: task/018-teal-lifetime
 pr: https://github.com/bilbosz/lua-lifetime/pull/53
-commits:
+commits: 73548566d6b96dce48a2a13b3e492cf2a7441d43
 review: APPROVE (round 2)
 ---
 
