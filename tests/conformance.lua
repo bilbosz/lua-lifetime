@@ -13,6 +13,15 @@
 -- `lifetime: <message>` with exit status 1. At least one interpreter must
 -- be present, or the run fails loudly. Every example must pass.
 --
+-- The Teal examples (task 018; examples/README.md, "The Teal examples"):
+-- every examples/teal/NAME.tlt with an examples/teal/NAME.tlt.expected is
+-- built with the Teal front end (lifetime/teal.lua) to
+-- build/examples/teal/NAME.tl and run with `lifetime run
+-- examples/teal/NAME.tlt`, under the same contract, under every
+-- interpreter on which `require("tl")` works; with the `tl` module on no
+-- interpreter they are skipped with a note, since `tl` is the
+-- teal-lifetime rock's dependency, not this repository's.
+--
 -- Exposes `run(test)` for tests/run.lua, which records one test case per
 -- example and interpreter, plus the collection checks.
 
@@ -21,6 +30,12 @@ local conformance = {}
 local INTERPRETERS = {"lua5.1", "luajit"}
 local EXAMPLES_DIR = "examples"
 local BUILD_DIR = "build/examples"
+-- The two kinds of example: the source extension, the extension of the
+-- transpiled file, the module the interpreter must have to run them.
+local KINDS = {
+    lua = {dir = EXAMPLES_DIR, build_dir = BUILD_DIR, source = ".lt", output = ".lua"},
+    teal = {dir = EXAMPLES_DIR .. "/teal", build_dir = BUILD_DIR .. "/teal", source = ".tlt", output = ".tl", needs = "tl"}
+}
 
 local function shell_quote(s)
     return "'" .. s:gsub("'", "'\\''") .. "'"
@@ -65,11 +80,15 @@ local function list_directory(dir)
     return names
 end
 
--- Which of INTERPRETERS are on PATH, in that order.
-function conformance.find_interpreters()
+-- Which of INTERPRETERS are on PATH, in that order. With `module`, only
+-- those on which `require(module)` succeeds.
+function conformance.find_interpreters(module)
     local found = {}
     for _, name in ipairs(INTERPRETERS) do
         local r = run_shell("command -v " .. name)
+        if r.status == 0 and module then
+            r = run_shell(name .. " -e " .. shell_quote("require(" .. string.format("%q", module) .. ")"))
+        end
         if r.status == 0 then
             table.insert(found, name)
         end
@@ -77,16 +96,20 @@ function conformance.find_interpreters()
     return found
 end
 
--- Every NAME with a NAME.lt, and every NAME with a NAME.lt.expected; the
--- two sets must be equal (a missing partner is a collection error).
-function conformance.discover(dir)
+-- Every NAME with a NAME<ext>, and every NAME with a NAME<ext>.expected
+-- (`ext` is ".lt" unless given); the two sets must be equal (a missing
+-- partner is a collection error).
+function conformance.discover(dir, ext)
+    ext = ext or ".lt"
     local programs, expectations = {}, {}
+    local pattern = "^(.+)" .. ext:gsub("%.", "%%.") .. "$"
+    local expected_pattern = "^(.+)" .. ext:gsub("%.", "%%.") .. "%.expected$"
     for _, name in ipairs(list_directory(dir)) do
-        local stem = name:match("^(.+)%.lt$")
+        local stem = name:match(pattern)
         if stem then
             programs[stem] = true
         end
-        stem = name:match("^(.+)%.lt%.expected$")
+        stem = name:match(expected_pattern)
         if stem then
             expectations[stem] = true
         end
@@ -94,14 +117,14 @@ function conformance.discover(dir)
     local errors, names = {}, {}
     for stem in pairs(programs) do
         if not expectations[stem] then
-            table.insert(errors, string.format("%s/%s.lt has no %s.lt.expected", dir, stem, stem))
+            table.insert(errors, string.format("%s/%s%s has no %s%s.expected", dir, stem, ext, stem, ext))
         else
             table.insert(names, stem)
         end
     end
     for stem in pairs(expectations) do
         if not programs[stem] then
-            table.insert(errors, string.format("%s/%s.lt.expected has no %s.lt", dir, stem, stem))
+            table.insert(errors, string.format("%s/%s%s.expected has no %s%s", dir, stem, ext, stem, ext))
         end
     end
     table.sort(names)
@@ -137,10 +160,12 @@ function conformance.reported_error(stderr)
     return ("\n" .. stderr):match("\nlifetime: ([^\n]*)")
 end
 
--- Run one example under one interpreter. Returns nil on success, or a
+-- Run one example under one interpreter: a Lua example (`kind` "lua",
+-- the default) or a Teal one ("teal"). Returns nil on success, or a
 -- message describing the mismatch.
-function conformance.check(name, interpreter)
-    local source_path = EXAMPLES_DIR .. "/" .. name .. ".lt"
+function conformance.check(name, interpreter, kind)
+    kind = KINDS[kind or "lua"]
+    local source_path = kind.dir .. "/" .. name .. kind.source
     local source = read_file(source_path)
     if not source then
         return "cannot read " .. source_path
@@ -151,8 +176,8 @@ function conformance.check(name, interpreter)
     if not generated then
         return "build failed: " .. tostring(build_error)
     end
-    os.execute("mkdir -p " .. shell_quote(BUILD_DIR))
-    local output_path = BUILD_DIR .. "/" .. name .. ".lua"
+    os.execute("mkdir -p " .. shell_quote(kind.build_dir))
+    local output_path = kind.build_dir .. "/" .. name .. kind.output
     write_file(output_path, generated)
     local r = run_shell(string.format("%s %s run %s", interpreter, shell_quote(COMMAND), shell_quote(source_path)))
     if r.stdout ~= expected_stdout then
@@ -199,7 +224,30 @@ function conformance.run(test)
             end)
         end
     end
-    return interpreters
+    -- The Teal examples, on the interpreters that have the `tl` module.
+    local teal = KINDS.teal
+    local teal_interpreters = conformance.find_interpreters(teal.needs)
+    local teal_names, teal_errors = conformance.discover(teal.dir, teal.source)
+    test.case("every Teal example has its .expected and vice versa", function()
+        test.assert_eq(table.concat(teal_errors, "\n"), "")
+    end)
+    test.case("there is at least one Teal example", function()
+        test.assert_true(#teal_names > 0)
+    end)
+    if #teal_interpreters == 0 then
+        print("note: the Teal examples are skipped: module tl is not installed under " .. table.concat(interpreters, " or "))
+    end
+    for _, name in ipairs(teal_names) do
+        for _, interpreter in ipairs(teal_interpreters) do
+            test.case("teal/" .. name .. " under " .. interpreter, function()
+                local problem = conformance.check(name, interpreter, "teal")
+                if problem then
+                    error(problem, 0)
+                end
+            end)
+        end
+    end
+    return interpreters, teal_interpreters
 end
 
 return conformance

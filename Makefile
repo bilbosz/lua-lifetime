@@ -1,7 +1,9 @@
 # `make test` runs everything (CLAUDE.md, "Rules that apply to everyone",
 # rule 8): the unit suite under every interpreter found on PATH among
 # lua5.1 and luajit, then the conformance suite once, which itself runs
-# every example under every interpreter found (tests/conformance.lua).
+# every example under every interpreter found (tests/conformance.lua),
+# and the Teal examples (examples/teal/, task 018) under those that have
+# the tl module, skipping them with a note otherwise.
 # At least one interpreter must be present. Override the list with
 # `make test INTERPRETERS="luajit"`. Last, the Treflove trial
 # (trial/treflove/run.lua, task 009) runs under luajit when luajit is on

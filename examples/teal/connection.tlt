@@ -1,0 +1,61 @@
+-- connection.tlt: examples/connection.lt in Teal (task 018). The same
+-- program with records and types: the connection's own destructor runs
+-- first, while the buffers it owns are still alive, and then the buffers
+-- die, most recently attached first (docs/02-semantics.md, "Cascading
+-- death"). The output is connection.lt.expected byte for byte.
+--
+-- The Teal idiom for a destructor: `__destroy` is not a Lua metamethod,
+-- so `metatable<T>` does not know it; the metatable is a table literal
+-- cast with `as metatable<T>` (docs/04-transpiler.md, "The Teal front
+-- end").
+
+local record FakeSocket
+end
+local FakeSocket_mt = {} as metatable<FakeSocket>
+function FakeSocket.new(): FakeSocket
+  return setmetatable({} as FakeSocket, FakeSocket_mt)
+end
+function FakeSocket.close(_self: FakeSocket) print("socket closed") end
+FakeSocket_mt.__index = FakeSocket
+
+local record Connection
+  sock: FakeSocket
+end
+local Connection_mt = {
+  __index = Connection,
+  __destroy = function(self: Connection, _reason: lifetime.Reason)
+    print("closing connection")
+    self.sock:close()
+  end
+} as metatable<Connection>
+
+function Connection.open(sock: FakeSocket): Connection
+  return setmetatable({ sock = sock } as Connection, Connection_mt)
+end
+
+local record Buffer
+  bytes: integer
+end
+local Buffer_mt = {
+  __destroy = function(self: Buffer, _reason: lifetime.Reason)
+    print("freeing buffer of " .. self.bytes .. " bytes")
+  end
+} as metatable<Buffer>
+
+function Buffer.new(n: integer): Buffer
+  return setmetatable({ bytes = n } as Buffer, Buffer_mt)
+end
+
+local function serve(sock: FakeSocket)
+  local conn = Connection.open(sock) @ lifetime.scope
+  local rx: Buffer = Buffer.new(1024) @ conn
+  local tx: Buffer = Buffer.new(1024) @ conn
+  print("serving", rx.bytes == tx.bytes)
+end
+
+serve(FakeSocket.new())
+--> serving	true
+--> closing connection              the owner's body first, its buffers still alive
+--> socket closed
+--> freeing buffer of 1024 bytes    (tx: most recently attached dies first)
+--> freeing buffer of 1024 bytes    (rx)

@@ -20,8 +20,11 @@ source (.lt)  →  lexer  →  parser (AST)  →  emit  →  Lua 5.1 source
   that the emitter can put every token back on its source line.
 - `lifetime/emit.lua`: code generation from the AST.
 - `lifetime/cli.lua`: the pipeline as one function, `build(source,
-  chunkname)`, and the command (`lifetime build FILE -o OUT`, `lifetime run
+  chunkname [, lang])`, and the command (`lifetime build FILE -o OUT`, `lifetime run
   FILE [ARGS]`).
+- `lifetime/teal.lua`: the Teal dialect of the three stages and the
+  bridge to the `tl` compiler ("The Teal front end" below; the
+  `teal-lifetime` rock of [01-overview.md](01-overview.md), "Rocks").
 
 The emitter keeps every statement on its source line, so that positions
 in error messages and tracebacks name the `.lt` file and its line; where
@@ -224,3 +227,104 @@ would have needed one is not part of the language
   with a traceback on standard error and exit status 1, as the standalone
   interpreter reports it.
 - `bin/lifetime` is the installed script; the rockspec installs it.
+
+## The Teal front end
+
+*Task 018; [01-overview.md](01-overview.md), "Rocks"; [05-decisions.md](05-decisions.md),
+"`!@` survives Teal's macro operator", "The Teal source extension is
+`.tlt`", "The Teal front end is a dialect of the shared transpiler".*
+
+The same pipeline, with Teal in and Teal out:
+
+```
+source (.tlt)  →  lexer  →  parser (AST)  →  emit  →  Teal source  →  tl  →  Lua 5.1
+```
+
+A `.tlt` file is Teal ([tl](https://github.com/teal-language/tl) 0.24's
+grammar, `docs/grammar.md` there, plus the macro call `m!(…)` of its
+development branch) with the additions of this document. `lifetime build
+FILE.tlt -o OUT.tl` writes the Teal the stages produce; `lifetime run
+FILE.tlt` compiles that Teal with the `tl` module, in the current
+interpreter, and runs the Lua as it runs a `.lt` file. The three stages
+take a **dialect**, the object `lifetime/teal.lua` exports: the lexer
+reads Teal's `//`, `<<` and `>>`; the parser calls the dialect's hooks
+where Teal syntax can start; the emitter writes what the hooks kept.
+Without a dialect the stages are those of the sections above, and a
+`.lt` file pays nothing for the Teal grammar (the hooks are a nil upvalue
+tested at those points, never in a per-token loop; `build/teal-5000`
+against `build/extension-5000` in `bench/bench-build.lua` is the
+measure).
+
+- **`!@` before `!`.** The lexer reads `!@` as one token wherever `!` is
+  immediately followed by `@`; any other `!` is Teal's macro call,
+  `prefixexp '!' args`, read like a call. `m!(a) !@ s` hooks the macro
+  call's value to the scope; `m!@ s` hooks `m` to `s`. `!=` keeps its
+  error. This is the contract of [05-decisions.md](05-decisions.md),
+  "`!@` survives Teal's macro operator".
+- **Types pass through.** A type (after a local's or global's names, a
+  parameter, a vararg, a function's `)`, a table field's name, `as`, `is`),
+  an attribute (`<const>`, `<total>`, `<close>`), type arguments
+  (`function f<T>(…)`) and a whole type declaration (`local`/`global`
+  `record`, `interface`, `enum`, `type`, `macroexp`, with `is`, `where`,
+  `userdata`, `metamethod` and nested types) are kept as the tokens they
+  were, with their lines, and written back unchanged; the transpiler
+  never interprets a type, `tl` does. The expressions inside a type
+  declaration (a `where` clause, a macroexp's `return`) are parsed and
+  may use the extension. `global` declarations and `global function` are
+  statements of their own. Teal's `as` binds above every operator and
+  `is` at the level of the comparisons, `//`, `&`, `|`, `~`, `<<` and
+  `>>` with Teal's precedences; `global`, `record`, `enum`, `interface`,
+  `type`, `macroexp`, `as`, `is`, `where`, `userdata` and `metamethod` are
+  contextual, ordinary names where Teal reads them so (`local type = 1`,
+  `global = 2`).
+- **The same shape, typed.** The table of "What `@` expands to" holds row
+  for row, and so does "Blocks": `e @ a` is `__lt_attach(e, false, a)`,
+  whose declaration `attach<T>(obj: T, pin: boolean, ...: any): T` keeps
+  the type of `e`, so `local conn: Conn = Conn.open(s) @ lifetime.scope`
+  type-checks; `f !@ a` is `__lt_hook(f, name, a)`; a block that anchors
+  to `lifetime.scope` gets `__lt_enter` and `__lt_exit` with the same
+  positions; the header binds the same locals. Two rows differ because
+  `any` is assignable to no declared type in Teal and a type variable is
+  not inferred from `{any}`:
+  - the header's packing helpers are typed, `local __lt_unpack:
+    function({any}, integer, integer): any... = table.unpack` and a
+    `__lt_pack(...: any): {any}, integer` that returns the table and the
+    count;
+  - a `return` that passes a call's or `...`'s values through an epilogue
+    reads `local __r, __n = __lt_pack(…); <epilogues> return
+    __lt_unpack(__r, 1, __n) as (T1, …, Tn)`, the cast being the
+    enclosing function's declared return types. A function that declares
+    none, or ends them with `...` (which no cast can spell), gets no
+    cast, and `tl` reports the `any...` as it does for any such return;
+    the program declares or casts by hand. A `return` whose last value
+    is a tuple cast, `e as (T1, …, Tn)`, is n values through n locals
+    and is not packed.
+- **The declaration file.** `lifetime/init.d.tl` declares the `lifetime`
+  table of [02-semantics.md](02-semantics.md), "The `lifetime` table",
+  with `attach`, `hook`, `enter`, `exit` and `set_exiting`, the opaque
+  records `Lifetime`, `Hook`, `Token` and `Scope`, and the enum `Reason`
+  (`"anchor"`, `"destroy"`, `"unreachable"`, `"exit"`). `tl` finds it
+  next to the runtime through the `?/init.lua` entry of the path
+  (`lifetime/init.d.tl`), from a checkout and from the installed layout.
+  A destructor is written on the metatable, which `metatable<T>` does not
+  know as a field: `{__index = R, __destroy = function(self: R, reason:
+  lifetime.Reason) … end} as metatable<R>`.
+- **The command.** `lifetime build FILE.tlt -o OUT` writes the Teal; with
+  an OUT ending in `.lua` it compiles the Teal with `tl` first. `lifetime
+  run FILE.tlt [ARGS]` compiles with `tl` (target 5.1, every statement
+  kept on its line, so positions name the `.tlt` file) and runs as "The
+  command" says, installing `tl.loader()` so that the program can require
+  plain `.tl` modules. A syntax error of the extension is reported as
+  above, `FILE:LINE: <message>`; a Teal error as `tl` reports it,
+  `FILE:LINE:COL: <message>`, one line per error (each behind
+  `lifetime: ` under `run`), exit status 1. The line is the `.tlt` file's;
+  the column is the generated Teal's, which differs from the source's on
+  the lines the emitter rewrote (line 1, which carries the header, and
+  every line with `@`, `!@` or a packed `return`). A `.tlt` file without
+  the `teal-lifetime` rock installed, or `run` without the `tl` module,
+  is reported as `lifetime: <what is missing>`.
+- **Not kept.** Comments, so a `--#pragma` line is dropped (set pragmas
+  in `tlconfig.lua` or on the `tl` command); and Teal's macro
+  *declarations* (`local macro name!(…)` with backtick quotes and `$`
+  splices, development branch only): the call is read, the declaration
+  is not.

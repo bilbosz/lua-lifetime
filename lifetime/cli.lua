@@ -1,10 +1,19 @@
 -- lifetime/cli.lua: the pipeline and the command.
 --
--- `build(source, chunkname)` chains lexer, parser and emitter and returns
--- the generated Lua source, or nil and a message on a syntax error.
--- `main(argv)` is the command of docs/04-transpiler.md, "The command":
--- `lifetime build FILE -o OUT` and `lifetime run FILE [ARGS]`; it returns
--- the exit status, which bin/lifetime turns into the process's (task 007).
+-- `build(source, chunkname [, lang])` chains lexer, parser and emitter
+-- and returns the generated source, or nil and a message on a syntax
+-- error. `main(argv)` is the command of docs/04-transpiler.md, "The
+-- command": `lifetime build FILE -o OUT` and `lifetime run FILE [ARGS]`;
+-- it returns the exit status, which bin/lifetime turns into the
+-- process's (task 007).
+--
+-- The Teal front end (task 018; docs/04-transpiler.md, "The Teal front
+-- end"): a `.tlt` file is Teal with the extension. `build` runs the
+-- shared pipeline with the Teal dialect of lifetime/teal.lua and writes
+-- Teal; `run` then compiles that Teal with the `tl` module and runs the
+-- Lua as it runs a `.lt` file. The dialect module is required only for a
+-- `.tlt` file: without the teal-lifetime rock installed, a `.lt` file
+-- builds and runs as before, and a `.tlt` file is reported.
 
 local lexer = require("lifetime.lexer")
 local parser = require("lifetime.parser")
@@ -13,6 +22,26 @@ local emit = require("lifetime.emit")
 local cli = {}
 
 local find, match, sub = string.find, string.match, string.sub
+
+-- The language of a source file by its extension: "teal" for `.tlt`
+-- (docs/05-decisions.md, "The Teal source extension is `.tlt`"), "lua"
+-- for everything else.
+function cli.lang_of(chunkname)
+    if sub(chunkname, -4) == ".tlt" then
+        return "teal"
+    end
+    return "lua"
+end
+
+-- The Teal front end, or nil and the message for a missing
+-- teal-lifetime rock.
+local function teal_front_end(chunkname, what)
+    local ok, teal = pcall(require, "lifetime.teal")
+    if not ok then
+        return nil, "cannot " .. what .. " " .. chunkname .. ": the Teal front end is not installed (module lifetime.teal, the teal-lifetime rock)"
+    end
+    return teal
+end
 
 -- A syntax error is recognised by a marker, not by the chunkname prefix
 -- of its message (task 001, review round 2): a transpiler bug raised
@@ -29,20 +58,31 @@ local MARKER = "\0lifetime syntax error\0"
 -- (LuaJIT's lexical extension, lifetime/lexer.lua).
 local GOTO_ERROR = "^:%d+: <goto [%a_\128-\255][%w_\128-\255]*> jumps into the scope of a lifetime$"
 
-local function build(source, chunkname)
+local function build(source, chunkname, dialect)
     local marked = MARKER .. chunkname
     -- Deferred lexing: a malformed token is reported when the parser
     -- reaches it, so errors come in the order Lua reports them.
-    local ast = parser.parse(lexer.tokenize(source, marked, true), marked)
-    return emit.emit(ast, chunkname)
+    local ast = parser.parse(lexer.tokenize(source, marked, true, dialect and "teal"), marked, dialect)
+    return emit.emit(ast, chunkname, dialect)
 end
 
--- docs/04-transpiler.md, "Pipeline": `build(source, chunkname)`, lexer ->
--- parser -> emit. Returns the generated source, or nil and the message
--- `chunkname:line: <message>` on a syntax error. Any other error is a bug
--- in the transpiler and propagates.
-function cli.build(source, chunkname)
-    local ok, result = pcall(build, source, chunkname)
+-- docs/04-transpiler.md, "Pipeline": `build(source, chunkname [, lang])`,
+-- lexer -> parser -> emit. Returns the generated source, or nil and the
+-- message `chunkname:line: <message>` on a syntax error. `lang` is "lua"
+-- or "teal" (Teal in, Teal out); omitted, it is the chunkname's
+-- extension's (`cli.lang_of`). A `.tlt` file without the Teal front end
+-- installed is nil and a message too. Any other error is a bug in the
+-- transpiler and propagates.
+function cli.build(source, chunkname, lang)
+    local dialect
+    if (lang or cli.lang_of(chunkname)) == "teal" then
+        local teal, err = teal_front_end(chunkname, "build")
+        if not teal then
+            return nil, err
+        end
+        dialect = teal.dialect
+    end
+    local ok, result = pcall(build, source, chunkname, dialect)
     if ok then
         return result
     end
@@ -98,7 +138,10 @@ end
 -- `lifetime build FILE -o OUT`; `-o -` writes to standard output.
 -- docs/04-transpiler.md, "The command": "Exit status 1 and a message on
 -- standard error for a syntax error, in the shape `FILE:LINE:
--- <message>`." The options may come before or after FILE.
+-- <message>`." The options may come before or after FILE. A `.tlt` FILE
+-- builds to Teal; with an OUT ending in `.lua` the Teal is compiled by
+-- `tl` first, and its errors are reported as `run` reports them
+-- ("The Teal front end").
 local function build_command(argv)
     local file, out
     local i, n = 2, #argv
@@ -128,6 +171,14 @@ local function build_command(argv)
     if not generated then
         io.stderr:write(message, "\n")
         return 1
+    end
+    if cli.lang_of(file) == "teal" and sub(out, -4) == ".lua" then
+        local teal = assert(teal_front_end(file, "build"))
+        generated, message = teal.compile(generated, file)
+        if not generated then
+            io.stderr:write(message, "\n")
+            return 1
+        end
     end
     if out == "-" then
         io.stdout:write(generated)
@@ -252,6 +303,22 @@ local function run_command(argv)
     local generated, message = cli.build(source, file)
     if not generated then
         return report(message)
+    end
+    if cli.lang_of(file) == "teal" then
+        -- Teal -> Lua through `tl`, type-checked, every statement kept on
+        -- its line; a type error is reported like a syntax error, one
+        -- `FILE:LINE:COL: message` per line. The program may require
+        -- plain `.tl` modules, as under `tl run`.
+        local teal = assert(teal_front_end(file, "run"))
+        generated, message = teal.compile(generated, file)
+        if not generated then
+            -- One `lifetime: ` per error line.
+            return report((message:gsub("\n", "\nlifetime: ")))
+        end
+        local ok, loader_error = teal.install_loader(file)
+        if not ok then
+            return report(loader_error)
+        end
     end
     -- The chunk name `luaL_loadfile` gives the file (`@FILE`): positions
     -- read `FILE:LINE:`, and a long name keeps its tail.

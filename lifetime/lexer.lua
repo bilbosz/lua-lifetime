@@ -4,8 +4,17 @@
 -- of docs/04-transpiler.md, "Grammar", LuaJIT's `::` (labels), and the
 -- LuaJIT lexical extensions of docs/05-decisions.md, "The lexer accepts
 -- LuaJIT's lexical extensions". Exports `tokenize(source, chunkname [,
--- deferred])`, returning an array of tokens and ending with one token of
--- type "eof".
+-- deferred [, dialect]])`, returning an array of tokens and ending with
+-- one token of type "eof".
+--
+-- With `dialect` "teal" (task 018, the Teal front end of
+-- docs/01-overview.md, "Rocks") the lexer also reads Teal's two-character
+-- operators `//`, `<<` and `>>`; Teal's other characters (`&`, `|`, `?`,
+-- `$`, a lone `!`) are single-character symbols already, and `!@` stays
+-- one token before any of them: "its lexer reads `!@` before Teal's
+-- postfix `!`" (docs/05-decisions.md, "`!@` survives Teal's macro
+-- operator"). Without the dialect `//`, `<<` and `>>` are two symbols
+-- each, which the parser rejects as Lua does.
 --
 -- A token is a table {type, value, line}:
 --
@@ -144,7 +153,7 @@ local STOP = {}
 
 -- The lexer proper. Appends to `tokens`; raises on a malformed token, or
 -- in deferred mode appends the error token and raises STOP.
-local function scan(source, chunkname, tokens, deferred)
+local function scan(source, chunkname, tokens, deferred, teal)
     local pos, line, n = 1, 1, 0
 
     local function fail(message, near)
@@ -344,13 +353,18 @@ local function scan(source, chunkname, tokens, deferred)
                 fail("invalid long string delimiter", "[" .. rep("=", level))
             end
         elseif c == 61 or c == 60 or c == 62 or c == 126 then -- `=` `<` `>` `~`, each optionally followed by `=`
-            if byte(source, pos + 1) == 61 then
+            local d = byte(source, pos + 1)
+            if d == 61 or (teal and d == c and (c == 60 or c == 62)) then
+                -- Teal's shifts `<<` and `>>` with the dialect.
                 push("symbol", sub(source, pos, pos + 1))
                 pos = pos + 2
             else
                 push("symbol", char(c))
                 pos = pos + 1
             end
+        elseif c == 47 and teal and byte(source, pos + 1) == 47 then -- Teal's `//`
+            push("symbol", "//")
+            pos = pos + 2
         elseif c == 46 then -- `.`, `..`, `...` or a numeral
             local d = byte(source, pos + 1)
             if d == 46 then
@@ -400,14 +414,16 @@ local function scan(source, chunkname, tokens, deferred)
 end
 
 -- Tokenize `source`. A malformed token raises `chunkname:line: <message>`,
--- or with `deferred` ends the array with an "error" token.
-function lexer.tokenize(source, chunkname, deferred)
+-- or with `deferred` ends the array with an "error" token. `dialect`
+-- "teal" reads Teal's operators too (above).
+function lexer.tokenize(source, chunkname, deferred, dialect)
     local tokens = {}
+    local teal = dialect == "teal"
     if not deferred then
-        scan(source, chunkname, tokens, false)
+        scan(source, chunkname, tokens, false, teal)
         return tokens
     end
-    local ok, err = pcall(scan, source, chunkname, tokens, true)
+    local ok, err = pcall(scan, source, chunkname, tokens, true, teal)
     if not ok and err ~= STOP then
         error(err, 0)
     end

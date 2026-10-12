@@ -3,11 +3,43 @@
 -- A recursive-descent parser for the grammar of docs/04-transpiler.md,
 -- "Grammar": Lua 5.1 as in `lparser.c` and the manual's §8, plus `@` with
 -- the list form, the hook operator `!@`, `lifetime.scope` as an anchor,
--- and LuaJIT's `goto` and labels. Exports `parse(tokens, chunkname)`,
--- taking the tokens of lifetime/lexer.lua and returning the AST of the
--- chunk, a Block. A syntax error raises `chunkname:line: <message> near
--- '<token>'` in the wording of Lua 5.1's `lparser.c`, at the line Lua
--- names; the extension's own errors take the same shape.
+-- and LuaJIT's `goto` and labels. Exports `parse(tokens, chunkname [,
+-- dialect])`, taking the tokens of lifetime/lexer.lua and returning the
+-- AST of the chunk, a Block. A syntax error raises `chunkname:line:
+-- <message> near '<token>'` in the wording of Lua 5.1's `lparser.c`, at
+-- the line Lua names; the extension's own errors take the same shape.
+--
+-- `dialect` extends the grammar (task 018): the Teal front end of
+-- docs/01-overview.md, "Rocks", is lifetime/teal.lua, whose `dialect.new`
+-- is given the parser's primitives (below, `P`) and returns the hooks the
+-- parser calls where Teal syntax can start: after a parameter, a local's
+-- name, a function's `)`, after `local` and at `global`, on `as` and `is`.
+-- Without a dialect the hooks are a nil upvalue tested at those points
+-- and the grammar is Lua 5.1's (CLAUDE.md, rule 5: plain Lua pays
+-- nothing). What a dialect adds to the AST:
+--
+--   Raw          [1..n] = {text, line, gb, ga} | expression        (none)
+--                tokens kept as written (a type, an attribute, a whole
+--                type declaration) with expressions where the dialect
+--                parsed one (Teal's `where` clause, a macroexp body);
+--                `gb`/`ga` ask the emitter for no space before/after
+--   Teal         raw = Raw, name = string|nil                       (none)
+--                a declaration with no Lua counterpart (`local record`,
+--                `global enum`, `local type`, `local macroexp`), kept
+--                whole; `name` is the local it declares, if any
+--   Global       names = {Id}, types = Raw|nil, exprs = {expr}      global , = ,
+--   GlobalFunction name = Id, func = Function                       global
+--   As           expr, type = Raw, arity                            as
+--   Is           expr, type = Raw                                   is
+--   Macro        func, args, sugar                                  ! ( , )
+--                Teal's macro call `m!(…)` (docs/05-decisions.md, "`!@`
+--                survives Teal's macro operator": any `!` not followed by
+--                `@` is Teal's)
+--
+-- and fields on the nodes above: `Id.attrib` (Raw, `<const>`), `Id.opt`
+-- (the line of a parameter's `?`), `Id.type` (Raw, `: type`),
+-- `Function.typeargs`, `Function.vararg_type`, `Function.rets` (Raw),
+-- `Local.types` (Raw, `: typelist`), `NameField.type` (Raw).
 --
 -- The AST is plain tables. Every node has `tag` and `line`, the line its
 -- first token starts on. Every node that owns tokens of its own (keywords,
@@ -93,8 +125,9 @@ end
 
 local byte, sub, match, format = string.byte, string.sub, string.match, string.format
 
--- Binary operator priorities, left and right (lparser.c, `priority`).
-local LEFT = {
+-- Binary operator priorities, left and right (lparser.c, `priority`). A
+-- dialect brings its own tables (lifetime/teal.lua: Teal's).
+local LUA_LEFT = {
     ["or"] = 1,
     ["and"] = 2,
     ["<"] = 3,
@@ -111,7 +144,7 @@ local LEFT = {
     ["%"] = 7,
     ["^"] = 10
 }
-local RIGHT = {
+local LUA_RIGHT = {
     ["or"] = 1,
     ["and"] = 2,
     ["<"] = 3,
@@ -128,7 +161,7 @@ local RIGHT = {
     ["%"] = 7,
     ["^"] = 9
 }
-local UNARY_PRIORITY = 8
+local LUA_UNARY_PRIORITY = 8
 
 -- The text Lua shows for a token in "near '...'" (llex.c, txtToken): the
 -- spelling of names and numbers, a string with its delimiters around the
@@ -153,8 +186,15 @@ local function near_text(t)
     return t.value
 end
 
-function parser.parse(tokens, chunkname)
+function parser.parse(tokens, chunkname, dialect)
     local pos, tok = 1, tokens[1]
+    -- The dialect's hooks, or nil (the header above); set once the
+    -- primitives they need exist.
+    local D
+    local LEFT, RIGHT, UNARY_PRIORITY, TYPE_OPERATORS = LUA_LEFT, LUA_RIGHT, LUA_UNARY_PRIORITY, nil
+    if dialect then
+        LEFT, RIGHT, UNARY_PRIORITY, TYPE_OPERATORS = dialect.left, dialect.right, dialect.unary_priority, dialect.type_operators
+    end
     -- The function being parsed: is it vararg, how many loops enclose the
     -- current statement (lparser.c, FuncState and BlockCnt).
     local fs = {is_vararg = true, loops = 0}
@@ -266,16 +306,26 @@ function parser.parse(tokens, chunkname)
     -- line Lua reports an unclosed body against.
     local function body(node, line, is_method)
         local lines = node.lines
+        if D then
+            D.typeargs(node)
+        end
         check_next("(", lines)
         local params, is_vararg = {}, false
         if not is(")") then
             repeat
                 if tok.type == "name" then
-                    params[#params + 1] = id()
+                    local param = id()
+                    params[#params + 1] = param
+                    if D then
+                        D.param(param)
+                    end
                 elseif is("...") then
                     lines[#lines + 1] = tok.line
                     advance()
                     is_vararg = true
+                    if D then
+                        D.vararg(node)
+                    end
                 else
                     raise("<name> or '...' expected")
                 end
@@ -287,6 +337,9 @@ function parser.parse(tokens, chunkname)
             until not more
         end
         check_next(")", lines)
+        if D then
+            D.rets(node)
+        end
         local outer = fs
         fs = {is_vararg = is_vararg, loops = 0}
         node.params, node.is_vararg = params, is_vararg
@@ -317,6 +370,13 @@ function parser.parse(tokens, chunkname)
                     field = {tag = "NameField", line = tok.line, lines = {tok.line, ahead.line}, name = tok.value}
                     advance()
                     advance()
+                    field.value = expr()
+                elseif D and ahead.value == ":" and ahead.type == "symbol" then
+                    -- A dialect's typed field, `Name ':' type '=' exp`.
+                    field = {tag = "NameField", line = tok.line, lines = {tok.line}, name = tok.value}
+                    advance()
+                    field.type = D.annotation()
+                    check_next("=", field.lines)
                     field.value = expr()
                 else
                     -- lparser.c, constructor: luaX_lookahead reads the token
@@ -419,6 +479,11 @@ function parser.parse(tokens, chunkname)
                 e = funcargs(node)
             elseif t.value == "(" or t.value == "{" then
                 e = funcargs({tag = "Call", line = e.line, lines = {}, func = e})
+            elseif t.value == "!" and D then
+                -- Teal's macro call: `!` and the arguments (the header).
+                local node = {tag = "Macro", line = e.line, lines = {t.line}, func = e}
+                advance()
+                e = funcargs(node)
             else
                 return e
             end
@@ -578,7 +643,7 @@ function parser.parse(tokens, chunkname)
         local e
         local t = tok
         local v = t.type ~= "string" and t.value
-        if v == "not" or v == "-" or v == "#" then
+        if v == "not" or v == "-" or v == "#" or (v == "~" and D) then
             advance()
             e = {tag = "UnOp", line = t.line, lines = {t.line}, op = v, operand = subexpr(UNARY_PRIORITY)}
         else
@@ -592,7 +657,13 @@ function parser.parse(tokens, chunkname)
                 return e
             end
             advance()
-            e = {tag = "BinOp", line = e.line, lines = {t.line}, op = op, left = e, right = subexpr(RIGHT[op])}
+            if D and TYPE_OPERATORS[op] then
+                -- An operator whose right operand is a type (Teal's `as`
+                -- and `is`): the dialect reads the type.
+                e = D.type_operator(e, op, t.line)
+            else
+                e = {tag = "BinOp", line = e.line, lines = {t.line}, op = op, left = e, right = subexpr(RIGHT[op])}
+            end
         end
     end
 
@@ -780,21 +851,26 @@ function parser.parse(tokens, chunkname)
         return node
     end
 
-    statement_by_keyword["local"] = function(line)
-        local lines = {line}
-        advance()
-        if is("function") then
-            local func = {tag = "Function", line = tok.line, lines = {tok.line}}
-            advance()
-            local node = {tag = "LocalFunction", line = line, lines = lines, name = id(), func = func}
-            body(func, tok.end_line or tok.line)
-            return node
+    -- NAME {',' NAME} ['=' explist] after `local` (and, with a dialect,
+    -- after `global`): a Local or Global node with the given `tag`. The
+    -- dialect reads an attribute after each name and a type list after
+    -- the names.
+    local function declaration(tag, line, lines)
+        local node = {tag = tag, line = line, lines = lines, names = {id()}, exprs = {}}
+        if D then
+            D.attrib(node.names[1])
         end
-        local node = {tag = "Local", line = line, lines = lines, names = {id()}, exprs = {}}
         while is(",") do
             lines[#lines + 1] = tok.line
             advance()
-            node.names[#node.names + 1] = id()
+            local name = id()
+            node.names[#node.names + 1] = name
+            if D then
+                D.attrib(name)
+            end
+        end
+        if D then
+            D.typelist(node)
         end
         if is("=") then
             lines[#lines + 1] = tok.line
@@ -809,6 +885,27 @@ function parser.parse(tokens, chunkname)
             end
         end
         return node
+    end
+
+    statement_by_keyword["local"] = function(line)
+        local lines = {line}
+        advance()
+        if is("function") then
+            local func = {tag = "Function", line = tok.line, lines = {tok.line}}
+            advance()
+            local node = {tag = "LocalFunction", line = line, lines = lines, name = id(), func = func}
+            body(func, tok.end_line or tok.line)
+            return node
+        end
+        if D then
+            -- A dialect's own declaration after `local` (Teal's `local
+            -- record NAME …`), or nil for an ordinary local.
+            local node = D.local_declaration(line)
+            if node then
+                return node
+            end
+        end
+        return declaration("Local", line, lines)
     end
 
     -- `return` and `break` end a block (lparser.c, statement: "must be
@@ -839,7 +936,7 @@ function parser.parse(tokens, chunkname)
         if (op == "@" or op == "!@") and tok.type == "symbol" then
             return anchor_statement(e, line)
         end
-        if e.tag == "Call" or e.tag == "Invoke" then
+        if e.tag == "Call" or e.tag == "Invoke" or e.tag == "Macro" then
             return {tag = "CallStat", line = line, call = e}
         end
         local node = {tag = "Set", line = line, lines = {}, targets = {e}}
@@ -903,6 +1000,13 @@ function parser.parse(tokens, chunkname)
         elseif ty == "name" then
             if t.value == "goto" and tokens[pos + 1].type == "name" then
                 return goto_statement(line)
+            elseif D and t.value == "global" then
+                -- A dialect's statement at the name `global` (Teal), or
+                -- nil when `global` is an ordinary name here.
+                local node = D.global_statement(line)
+                if node then
+                    return node
+                end
             end
         elseif t.value == "::" and ty == "symbol" then
             return label_statement(line)
@@ -925,6 +1029,31 @@ function parser.parse(tokens, chunkname)
             b[n] = s
         end
         return b
+    end
+
+    if dialect then
+        -- The primitives a dialect builds its hooks on (the header).
+        D = dialect.new({
+            tokens = tokens,
+            current = function()
+                return tok
+            end,
+            peek = function(k)
+                return tokens[pos + k]
+            end,
+            advance = advance,
+            is = is,
+            raise = raise,
+            raise_expected = raise_expected,
+            check_next = check_next,
+            check_match = check_match,
+            check_name = check_name,
+            id = id,
+            expr = expr,
+            explist = explist,
+            body = body,
+            declaration = declaration
+        })
     end
 
     local chunk = block()

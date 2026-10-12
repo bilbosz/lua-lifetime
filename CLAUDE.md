@@ -20,10 +20,10 @@ documents are derived from `xd/docs/10-lua-lifetime-decisions.md` in the
 | `docs/05-decisions.md` | Decision log of this repository. Check here before proposing a change. |
 | `docs/06-open-questions.md` | Not decided yet. If a task hits one of these, stop and ask. |
 | `docs/07-conformance.md` | How the conformance suite relates to `xd/examples/`: ported, rewritten, deviations. |
-| `examples/*.lt` | Example programs. Each becomes a conformance test. |
+| `examples/*.lt` | Example programs. Each becomes a conformance test. `examples/teal/*.tlt` are the Teal ones, run where the `tl` module is installed. |
 | `tasks/` | Work items. See `tasks/README.md` for the format and lifecycle. |
-| `lifetime/` | The runtime (`init.lua`) and the transpiler (`lexer.lua`, `parser.lua`, `emit.lua`, `cli.lua`). |
-| `bin/lifetime` | The command: `lifetime build FILE -o OUT`, `lifetime run FILE`. |
+| `lifetime/` | The runtime (`init.lua`), the transpiler (`lexer.lua`, `parser.lua`, `emit.lua`, `cli.lua`), and the Teal front end (`teal.lua`, the dialect and the `tl` bridge; `init.d.tl`, the Teal declaration of the runtime), which `teal-lifetime-dev-1.rockspec` installs. |
+| `bin/lifetime` | The command: `lifetime build FILE -o OUT`, `lifetime run FILE`; a `.tlt` FILE goes through the Teal front end and `tl`. |
 | `tests/` | The unit suite (`run.lua`, `lib/test.lua`) and the conformance runner (`conformance.lua`). |
 | `bench/` | The benchmark harness (`lib/bench.lua`, `run.lua`, `compare.lua`), the benchmarks (`bench-*.lua`) and `bench/README.md` with the threshold; `make bench [BASE=master]`. |
 
@@ -126,7 +126,10 @@ Skills, invoked with `/name`:
   by the transpiler when it appears in the input and never emitted
   otherwise.
 - No dependencies. No busted, no luaunit, no lpeg. The lexer and parser are
-  hand-written. The test harness is `tests/lib/test.lua`.
+  hand-written. The test harness is `tests/lib/test.lua`. The one
+  exception is the Teal front end's: `lifetime/teal.lua` requires the
+  `tl` module, and only to compile a `.tlt` file for `run`; the core
+  requires `lifetime.teal` only for a `.tlt` file.
 - The parser is recursive descent over a plain table AST with a line on
   every node. The emitter preserves source lines.
 - State lives inside the object (`docs/03-runtime.md`). Dependents are

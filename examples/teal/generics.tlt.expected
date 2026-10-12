@@ -1,0 +1,10 @@
+made 3 with probe probe
+filled (anchor)
+destroy probe (anchor)
+2	1	f1
+named f2	a string of 3	15
+f1	f2
+destroy f3 (anchor)
+destroy f2 (anchor)
+destroy f1 (anchor)
+false	dead token pool

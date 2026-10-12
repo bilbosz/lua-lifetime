@@ -1,0 +1,95 @@
+-- generics.tlt: the grammar Teal adds to Lua, through the pipeline (task
+-- 018): a generic function whose body anchors to `lifetime.scope`, an
+-- enum, a union with `as` and `is`, a record with `where`, an interface,
+-- a `global`, a typed hook, `//` (which tl renders for Lua 5.1; the
+-- bitwise operators are read too, but their rendering needs the bit32
+-- module at run time, so none is run here), a tuple cast. Every type is
+-- written back as it was and tl checks the output; the destruction order
+-- printed is that of docs/02-semantics.md, "Cascading death" and
+-- "Scopes: `lifetime.scope`".
+
+local interface Named
+   name: string
+end
+
+local enum Shape
+   "circle"
+   "square"
+end
+
+local record Figure is Named
+   where self.shape ~= nil
+   shape: Shape
+   size: integer
+end
+local Figure_mt = {
+   __index = Figure,
+   __destroy = function(self: Figure, reason: lifetime.Reason)
+      print("destroy " .. self.name .. " (" .. reason .. ")")
+   end
+} as metatable<Figure>
+function Figure.new(name: string, shape: Shape, size: integer): Figure
+   return setmetatable({name = name, shape = shape, size = size} as Figure, Figure_mt)
+end
+
+-- A pool is a token owning what was made into it; the generic function's
+-- own scope owns a probe for as long as the call lasts.
+local function fill<T>(pool: lifetime.Token, make: function(integer): T, n: integer): {T}
+   local probe = Figure.new("probe", "circle", 0) @ lifetime.scope
+   function(reason: lifetime.Reason) print("filled (" .. reason .. ")") end !@ lifetime.scope
+   local out: {T} = {}
+   for i = 1, n do
+      out[i] = make(i) @ lifetime.pin(pool)
+   end
+   print("made " .. #out .. " with probe " .. probe.name)
+   return out
+end
+
+global function describe(value: Named | string): string
+   if value is string then
+      return "a string of " .. #value
+   end
+   return "named " .. (value as Named).name
+end
+
+local pool = lifetime.token("pool")
+local figures: {Figure} = fill(pool, function(i: integer): Figure
+   return Figure.new("f" .. i, i % 2 == 0 and "square" or "circle", i * 10)
+end, 3)
+-- A nested generic type ends in `>>`, which the lexer reads as one token
+-- and the parser splits between the two lists, as tl does.
+local by_shape: {Shape: {Figure}} = {}
+local record Pair<A, B>
+   first: A
+   second: B
+end
+local indexed: Pair<Shape, Pair<integer, Figure>> = {first = figures[1].shape, second = {first = 1, second = figures[1]}}
+for _, f in ipairs(figures) do
+   by_shape[f.shape] = by_shape[f.shape] or {}
+   table.insert(by_shape[f.shape], f)
+end
+print(#by_shape.circle, #by_shape.square, indexed.second.second.name)
+--> 2	1	f1
+--> made 3 with probe probe
+--> filled (anchor)
+--> destroy probe (anchor)
+
+local total = 0
+for _, f in ipairs(figures) do
+   total = total + f.size
+end
+print(describe(figures[2]), describe("abc"), total // 4)
+--> named f2	a string of 3	15
+
+local function first_two(): string, string
+   return (function(): any, any return figures[1].name, figures[2].name end)() as (string, string)
+end
+print(first_two())
+--> f1	f2
+
+lifetime.destroy(pool)
+--> destroy f3 (anchor)
+--> destroy f2 (anchor)
+--> destroy f1 (anchor)
+print(lifetime.alive(figures[1]), tostring(pool))
+--> false	dead token pool

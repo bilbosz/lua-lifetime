@@ -1,0 +1,47 @@
+-- uncaught_error.tlt: examples/uncaught_error.lt in Teal (task 018). An
+-- uncaught error: every scope it leaves unwinds on the way out, in the
+-- usual order, then the error is reported (`lifetime: <message>` on
+-- stderr, exit status 1). The error is raised on line 20, and the
+-- `!error:` line of the .expected names `examples/teal/uncaught_error.tlt:20`:
+-- the emitter keeps every statement on its line, and so does tl.
+local record Res
+  name: string
+end
+local Res_mt = {
+  __destroy = function(self: Res, reason: lifetime.Reason) print("close " .. self.name .. " (" .. reason .. ")") end
+} as metatable<Res>
+local function new(name: string): Res print("open " .. name); return setmetatable({ name = name } as Res, Res_mt) end
+global log: Res = new("log") @ lifetime.reachable  -- default lifetime: lives until the program ends
+--> open log
+local function handle(n: integer)
+  local conn = new("conn " .. n) @ lifetime.scope
+  function(reason: lifetime.Reason) print("hook for request " .. n .. " (" .. reason .. ")") end !@ lifetime.scope
+  if n == 2 then
+    error("request " .. n .. " failed")
+  end
+  print("handled " .. n, conn.name)
+end
+
+for i = 1, 3 do
+  local tmp = new("tmp " .. i) @ lifetime.scope
+  handle(i)
+  print(tmp.name)
+end
+--> open tmp 1
+--> open conn 1
+--> handled 1	conn 1
+--> hook for request 1 (anchor)     last attached, first to go
+--> close conn 1 (anchor)
+--> tmp 1
+--> close tmp 1 (anchor)            the iteration's scope
+--> open tmp 2
+--> open conn 2
+--> hook for request 2 (anchor)     the error leaves handle's scope...
+--> close conn 2 (anchor)
+--> close tmp 2 (anchor)            ...then the loop body's
+print("not reached")
+
+-- The main scope exits by the error; then everything still alive dies,
+-- newest first, with reason "exit".
+--> close log (exit)
+--> !error: examples/teal/uncaught_error.tlt:20: request 2 failed

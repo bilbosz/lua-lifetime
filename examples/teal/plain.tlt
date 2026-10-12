@@ -1,0 +1,53 @@
+-- plain.tlt: a Teal program that uses no lifetime syntax at all. It
+-- transpiles to itself (docs/04-transpiler.md, "Pipeline": a chunk with
+-- no extension syntax is its input modulo whitespace), every type
+-- annotation, record, enum and generic written back as it was, and
+-- exercises the Teal pipeline once: build, compile with tl, run under
+-- every interpreter that has tl, compare the output.
+
+local record Item
+   name: string
+   weight: integer
+end
+
+local enum Kind
+   "light"
+   "heavy"
+end
+
+local function kind_of(item: Item): Kind
+   if item.weight > 10 then
+      return "heavy"
+   end
+   return "light"
+end
+
+local function names<T>(list: {T}, show: function(T): string): {string}
+   local out: {string} = {}
+   for i, v in ipairs(list) do
+      out[i] = show(v)
+   end
+   return out
+end
+
+local items: {Item} = {{name = "gamma", weight = 3}, {name = "alpha", weight = 30}, {name = "beta", weight = 7}}
+table.sort(items, function(a: Item, b: Item): boolean return a.name < b.name end)
+print(table.concat(names(items, function(item: Item): string return item.name .. ":" .. kind_of(item) end), ", "))
+--> alpha:heavy, beta:light, gamma:light
+
+local total <const> = 0
+local count = total
+for _ in ipairs(items) do
+   count = count + 1
+end
+print(("%d items, %d heavy"):format(count, #names(items, function(item: Item): string return item.name end) // 3))
+--> 3 items, 1 heavy
+
+local value: number | string = "seven"
+if value is string then
+   print("string " .. value)
+end
+--> string seven
+
+print(pcall(error, "caught"))
+--> false	caught

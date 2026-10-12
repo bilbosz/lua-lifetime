@@ -55,6 +55,14 @@
 -- thrown away, then the analysis and the emission again; about 1.4 times
 -- `build/generated-5000` on the same file under both interpreters, task
 -- 007).
+--
+-- A dialect (task 018; lifetime/parser.lua's header lists its nodes) is
+-- written back as it was read: a Raw node's tokens go on their lines, a
+-- Teal declaration whole, the type of a parameter after its name, and
+-- so on; the Lua path never sees those fields. The Teal dialect also asks
+-- for a typed `return` when values are packed (`dialect.typed_returns`,
+-- `dialect.return_cast`) and brings its own packing header
+-- (`dialect.pack_header`); see lifetime/teal.lua.
 
 local count_newlines = require("lifetime.lexer").count_newlines
 
@@ -110,10 +118,14 @@ end
 -- nil; `scope` the record local of the innermost block, if it has one.
 -- `shadow` counts the locals named `lifetime` in scope, `named` says the
 -- chunk names the global `lifetime`; `attach`, `hook`, `record` and
--- `pack` say which runtime functions the generated code calls.
-local function new_state(info)
+-- `pack` say which runtime functions the generated code calls. `dialect`
+-- is the dialect or nil; `rets` the declared return types (a Raw) of the
+-- function being emitted, for the dialect's typed `return`.
+local function new_state(info, dialect)
     return {
         buf = {""},
+        dialect = dialect,
+        rets = nil,
         n = 1,
         line = 1,
         depth = 0,
@@ -289,6 +301,18 @@ local function analyse(chunk, chunkname)
                 end
                 walk_expr(field.value)
             end
+        elseif tag == "As" or tag == "Is" then
+            walk_expr(e.expr)
+        elseif tag == "Macro" then
+            walk_expr(e.func)
+            walk_list(e.args)
+        elseif tag == "Raw" then
+            -- The expressions a dialect parsed inside kept tokens.
+            for i = 1, e.n do
+                if e[i].tag then
+                    walk_expr(e[i])
+                end
+            end
         end
     end
 
@@ -303,8 +327,12 @@ local function analyse(chunk, chunkname)
             walk_expr(s.call)
         elseif tag == "AnchorStat" or tag == "HookStat" then
             walk_expr(s.expr)
-        elseif tag == "LocalFunction" then
+        elseif tag == "LocalFunction" or tag == "GlobalFunction" then
             walk_function(s.func)
+        elseif tag == "Global" then
+            walk_list(s.exprs)
+        elseif tag == "Teal" then
+            walk_expr(s.raw)
         elseif tag == "FunctionStat" then
             walk_expr(s.target)
             walk_function(s.func)
@@ -483,6 +511,19 @@ end
 
 local emit_expr, emit_block
 
+-- A Raw node: its tokens on their lines, with the spacing it asks for,
+-- and the expressions a dialect parsed inside it.
+local function emit_raw(st, raw)
+    for i = 1, raw.n do
+        local item = raw[i]
+        if item.tag then
+            emit_expr(st, item)
+        else
+            put(st, item.text, item.line, item.gb, item.ga)
+        end
+    end
+end
+
 -- An expression list whose commas are the node's own tokens from index
 -- `k + 1` on. Returns the index of the last comma.
 local function emit_explist(st, list, node, k)
@@ -531,6 +572,9 @@ local function emit_function(st, f, name, method, stat, local_name)
             put(st, method, slines and slines[2])
         end
     end
+    if f.typeargs then
+        emit_raw(st, f.typeargs)
+    end
     put(st, "(", lines and lines[2], true, true)
     local saved = st.shadow
     local k = 2
@@ -540,8 +584,16 @@ local function emit_function(st, f, name, method, stat, local_name)
             k = k + 1
             put(st, ",", lines and lines[k], true)
         end
-        put_name(st, params[i])
-        declare(st, params[i].name)
+        local param = params[i]
+        put_name(st, param)
+        -- A dialect's `?` and `: type` after the name.
+        if param.opt then
+            put(st, "?", param.opt, true, true)
+        end
+        if param.type then
+            emit_raw(st, param.type)
+        end
+        declare(st, param.name)
     end
     if f.is_vararg then
         if #params > 0 then
@@ -550,9 +602,18 @@ local function emit_function(st, f, name, method, stat, local_name)
         end
         k = k + 1
         put(st, "...", lines and lines[k])
+        if f.vararg_type then
+            emit_raw(st, f.vararg_type)
+        end
     end
     put(st, ")", lines and lines[k + 1], true)
+    if f.rets then
+        emit_raw(st, f.rets)
+    end
+    local outer_rets = st.rets
+    st.rets = f.rets
     emit_block(st, f.body, lines and lines[k + 2])
+    st.rets = outer_rets
     undeclare(st, saved)
     put(st, "end", lines and lines[k + 2])
 end
@@ -565,6 +626,9 @@ local function emit_table(st, t)
         local tag, flines = field.tag, field.lines
         if tag == "NameField" then
             put(st, field.name, flines and flines[1])
+            if field.type then
+                emit_raw(st, field.type)
+            end
             put(st, "=", flines and flines[2])
         elseif tag == "KeyField" then
             put(st, "[", flines and flines[1], false, true)
@@ -675,6 +739,28 @@ EXPR.UnOp = function(st, e)
     emit_expr(st, e.operand)
 end
 
+-- A dialect's nodes (lifetime/parser.lua's header): `e as T`, `e is T`,
+-- the macro call `m!(…)`, kept tokens.
+EXPR.As = function(st, e)
+    emit_expr(st, e.expr)
+    put(st, "as", e.lines and e.lines[1])
+    emit_raw(st, e.type)
+end
+
+EXPR.Is = function(st, e)
+    emit_expr(st, e.expr)
+    put(st, "is", e.lines and e.lines[1])
+    emit_raw(st, e.type)
+end
+
+EXPR.Macro = function(st, e)
+    emit_expr(st, e.func)
+    put(st, "!", e.lines and e.lines[1], true, true)
+    emit_args(st, e, 1)
+end
+
+EXPR.Raw = emit_raw
+
 -- docs/04-transpiler.md, "What `@` expands to": `e @ (a1, …, an)` is
 -- `__lt_attach(e, false, a1, …, an)` and `f !@ (a1, …, an)` is
 -- `__lt_hook(f, name, a1, …, an)`, `name` being the quoted name of the
@@ -758,9 +844,11 @@ end
 
 local STAT = {}
 
-STAT.Local = function(st, s)
+-- `local` (or a dialect's `global`) NAME {',' NAME} ['=' explist], with
+-- a dialect's attribute after a name and type list after the names.
+local function emit_declaration(st, s, keyword)
     local lines = s.lines
-    put(st, "local", lines and lines[1])
+    put(st, keyword, lines and lines[1])
     local k = 1
     local names = s.names
     for i = 1, #names do
@@ -768,22 +856,53 @@ STAT.Local = function(st, s)
             k = k + 1
             put(st, ",", lines and lines[k], true)
         end
-        put_name(st, names[i])
+        local name = names[i]
+        put_name(st, name)
+        if name.attrib then
+            emit_raw(st, name.attrib)
+        end
+    end
+    if s.types then
+        emit_raw(st, s.types)
     end
     if #s.exprs > 0 then
         k = k + 1
         put(st, "=", lines and lines[k])
         emit_explist(st, s.exprs, s, k)
     end
-    -- The values are evaluated before the names come into scope.
-    for i = 1, #names do
-        declare(st, names[i].name)
+    if keyword == "local" then
+        -- The values are evaluated before the names come into scope.
+        for i = 1, #names do
+            declare(st, names[i].name)
+        end
     end
+end
+
+STAT.Local = function(st, s)
+    emit_declaration(st, s, "local")
+end
+
+STAT.Global = function(st, s)
+    emit_declaration(st, s, "global")
 end
 
 STAT.LocalFunction = function(st, s)
     put(st, "local", s.lines and s.lines[1])
     emit_function(st, s.func, nil, nil, nil, s.name)
+end
+
+STAT.GlobalFunction = function(st, s)
+    put(st, "global", s.lines and s.lines[1])
+    emit_function(st, s.func, nil, nil, nil, s.name)
+end
+
+-- A dialect's declaration with no Lua counterpart, kept whole; the local
+-- it declares (a Teal `local record NAME`) counts like any local.
+STAT.Teal = function(st, s)
+    emit_raw(st, s.raw)
+    if s.name then
+        declare(st, s.name)
+    end
 end
 
 STAT.FunctionStat = function(st, s)
@@ -913,15 +1032,32 @@ STAT.Return = function(st, s)
     elseif n == 0 then
         put(st, exits .. "return", line)
     else
-        local tag = exprs[n].tag
+        local last = exprs[n]
+        local tag = last.tag
         if tag == "Call" or tag == "Invoke" or tag == "Vararg" then
             st.pack = true
-            put(st, "local __r = __lt_pack(", line, false, true)
-            emit_explist(st, exprs, s, 1)
-            put(st, "); " .. exits .. "return __lt_unpack(__r, 1, __r.n)", nil, true)
+            local dialect = st.dialect
+            if dialect and dialect.typed_returns then
+                -- The dialect's typed shape: the table and the count as
+                -- two locals, and the values cast to the function's
+                -- declared return types (lifetime/teal.lua).
+                put(st, "local __r, __n = __lt_pack(", line, false, true)
+                emit_explist(st, exprs, s, 1)
+                put(st, "); " .. exits .. "return __lt_unpack(__r, 1, __n)" .. (dialect.return_cast(st.rets) or ""), nil, true)
+            else
+                put(st, "local __r = __lt_pack(", line, false, true)
+                emit_explist(st, exprs, s, 1)
+                put(st, "); " .. exits .. "return __lt_unpack(__r, 1, __r.n)", nil, true)
+            end
         else
+            -- A fixed number of values: one local each. A dialect's
+            -- tuple cast `e as (T1, …, Tn)` as the last value is n values.
+            local count = n
+            if tag == "As" then
+                count = n - 1 + last.arity
+            end
             local names = {}
-            for i = 1, n do
+            for i = 1, count do
                 names[i] = "__r" .. i
             end
             names = concat(names, ", ")
@@ -996,7 +1132,7 @@ local function starts_with_paren(s)
         tag = e.tag
         if tag == "Paren" then
             return true
-        elseif tag == "Call" then
+        elseif tag == "Call" or tag == "Macro" then
             e = e.func
         elseif tag == "Invoke" or tag == "Member" or tag == "Index" then
             e = e.obj
@@ -1115,14 +1251,16 @@ local function header(st)
         parts[#parts + 1] = "local " .. concat(names, ", ") .. " = " .. concat(values, ", ") .. ";"
     end
     if st.pack then
-        parts[#parts + 1] = "local __lt_unpack, __lt_select = unpack, select; local function __lt_pack(...) return {n = __lt_select(\"#\", ...), ...} end;"
+        local dialect = st.dialect
+        parts[#parts + 1] = dialect and dialect.pack_header or "local __lt_unpack, __lt_select = unpack, select; local function __lt_pack(...) return {n = __lt_select(\"#\", ...), ...} end;"
     end
     return concat(parts, " ")
 end
 
--- The chunk, with the analysis `info` or without it.
-local function emit_chunk(ast, info)
-    local st = new_state(info)
+-- The chunk, with the analysis `info` or without it, for `dialect` (nil
+-- for Lua).
+local function emit_chunk(ast, info, dialect)
+    local st = new_state(info, dialect)
     local close = ast.lines and ast.lines[1]
     -- "The main chunk is a block like any other"; its end is <eof>.
     emit_scope(st, ast, close, nil, 0)
@@ -1143,21 +1281,22 @@ local function emit_chunk(ast, info)
     return concat(st.buf, "", 1, st.n)
 end
 
--- Emit a chunk (the Block that parser.parse returns) as Lua source.
--- `chunkname` is the name positions are reported under (`"?"` if
--- omitted), as given to lifetime/cli.lua's `build`. Raises
--- `chunkname:line: <goto NAME> jumps into the scope of a lifetime` for a
--- `goto` into a block that needs a record (docs/04-transpiler.md,
--- "Blocks").
-function emit.emit(ast, chunkname)
-    local ok, result = pcall(emit_chunk, ast, nil)
+-- Emit a chunk (the Block that parser.parse returns) as Lua source, or
+-- as the dialect's source when `dialect` is given (the one the chunk was
+-- parsed with; lifetime/teal.lua's gives Teal). `chunkname` is the name
+-- positions are reported under (`"?"` if omitted), as given to
+-- lifetime/cli.lua's `build`. Raises `chunkname:line: <goto NAME> jumps
+-- into the scope of a lifetime` for a `goto` into a block that needs a
+-- record (docs/04-transpiler.md, "Blocks").
+function emit.emit(ast, chunkname, dialect)
+    local ok, result = pcall(emit_chunk, ast, nil, dialect)
     if ok then
         return result
     end
     if result ~= RESTART then
         error(result, 0)
     end
-    return emit_chunk(ast, analyse(ast, chunkname or "?"))
+    return emit_chunk(ast, analyse(ast, chunkname or "?"), dialect)
 end
 
 return emit

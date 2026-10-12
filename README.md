@@ -4,9 +4,10 @@ Owned and scoped objects with destructors for Lua. `x @ owner`, `x @
 scope`, `cleanup !@ owner` hooks. Cleanup runs in a defined order when the owner dies
 or the scope exits. Transpiles to Lua 5.1 / LuaJIT.
 
-**Status:** bootstrapped, not yet implemented. The specification is
-written; the backlog in [tasks/](tasks/) starts with task 001. Nothing
-transpiles yet except a plain Lua file to itself.
+**Status:** the runtime, the transpiler and the command are implemented
+(tasks 001 to 017 in [tasks/](tasks/)); the conformance suite runs every
+example under Lua 5.1 and LuaJIT. The Teal front end, `teal-lifetime`,
+is task 018: `.tlt` files transpile to Teal and run through `tl`.
 
 ## One-screen taste
 
@@ -41,15 +42,45 @@ program may rely on.
 | [docs/05-decisions.md](docs/05-decisions.md) | Decision log |
 | [docs/06-open-questions.md](docs/06-open-questions.md) | Not decided yet |
 | [docs/07-conformance.md](docs/07-conformance.md) | How the conformance suite relates to `xd/examples/` |
-| [examples/](examples/) | Example programs, each a conformance test |
+| [examples/](examples/) | Example programs, each a conformance test; [examples/teal/](examples/teal/) the Teal ones |
 | [tasks/](tasks/) | The backlog |
 
 The model comes from [xd](https://github.com/bilbosz/xd), a Lua-like
 language with lifetimes built in; the decisions this repository is built
 on are `xd/docs/10-lua-lifetime-decisions.md` there. `xd` is the
 pre-playground for the language; lua-lifetime carries the model to Lua as
-it is today. A later `teal-lifetime` rock will do the same for Teal from
-this repository.
+it is today.
+
+## teal-lifetime
+
+The same for [Teal](https://github.com/teal-language/tl), from this
+repository: `teal-lifetime-dev-1.rockspec` depends on `lua-lifetime` and
+on `tl` and installs the Teal front end (`lifetime/teal.lua`) and the
+declaration file of the runtime (`lifetime/init.d.tl`). A `.tlt` file is
+Teal with the same additions; `lifetime build FILE.tlt -o OUT.tl` writes
+plain Teal, every type written back as it was, and `lifetime run
+FILE.tlt` type-checks and compiles it with `tl` and runs it on the
+runtime:
+
+```lua
+local record Connection
+  sock: Socket
+end
+local Connection_mt = {
+  __index = Connection,
+  __destroy = function(self: Connection, reason: lifetime.Reason) self.sock:close() end
+} as metatable<Connection>
+
+local function serve(sock: Socket)
+  local conn: Connection = Connection.open(sock) @ lifetime.scope
+  local buf: Buffer = Buffer.new(64 * 1024) @ conn
+  function(reason: lifetime.Reason) metrics.connections = metrics.connections - 1 end !@ conn
+  handle(conn, buf)
+end
+```
+
+See [docs/04-transpiler.md](docs/04-transpiler.md), "The Teal front
+end", and [examples/teal/](examples/teal/).
 
 ## Running the tests
 
@@ -63,5 +94,7 @@ Performance is a priority second only to correctness: code that does not
 use the extension pays nothing, and what does is measured.
 
 Both `lua5.1` and `luajit` are supported; at least one must be on `PATH`.
-`luacheck` is needed for `make lint`. See [CLAUDE.md](CLAUDE.md) for how
-work happens in this repository.
+`luacheck` is needed for `make lint`. The Teal examples run on the
+interpreters that have the `tl` module (`luarocks install tl`) and are
+skipped with a note otherwise. See [CLAUDE.md](CLAUDE.md) for how work
+happens in this repository.
