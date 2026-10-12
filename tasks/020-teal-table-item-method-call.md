@@ -1,9 +1,9 @@
 ---
 id: 020
 title: Teal front end: a `Name ':'` table item that is not a typed field is an expression
-status: todo
+status: in-progress
 depends: [018]
-branch:
+branch: task/020-teal-table-item-method-call
 pr:
 commits:
 review:
