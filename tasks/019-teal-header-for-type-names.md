@@ -109,9 +109,12 @@ the threshold of `bench/README.md`.
 
 1. A *global* type named `lifetime` (`global record lifetime … end`) is
    not a shadowing local, so a `lifetime.T` read after it in the same
-   chunk now gets the header, and `tl` resolves it through the header's
-   local (the runtime's declaration), not the global record. Before this
-   task the same chunk had no header and `tl` found the global record.
+   chunk now gets the header, and `tl` then rejects the chunk: "cannot
+   define a global when a local with the same name is in scope" at the
+   declaration and "unknown type lifetime.T" at the use. Before this
+   task the same chunk had no header and compiled. (The same `tl` error
+   already met a chunk that names `lifetime` as a value and declares a
+   `global record lifetime`.)
    This follows the value rule of docs/04-transpiler.md, "The generated
    chunk header" ("An assignment to the global `lifetime` in a
    transpiled chunk assigns the header's local … a program that wants
