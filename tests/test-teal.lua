@@ -271,7 +271,9 @@ local METHOD_CALL_ITEMS = {
     "local t = {r:get(), x = 1}\n",
     "local t = {r:get(1, 2), s:put()}\n",
     "local t = {\n    1,\n    r:get(),\n    x = s:put(2)\n}\nprint(#t)\n",
-    "local t = {r:get \"s\", r:get {1}, r:lifetime()}\n" -- string and table arguments; a method named like the runtime
+    "local t = {r:get \"s\", r:get {1}, r:lifetime()}\n", -- string and table arguments; a method named like the runtime
+    "local t = {r:get(), n: integer = 1}\n", -- a typed field after a backtracked item
+    "local t = {r:get(), n: Box<Box<integer>> = x}\n"
 }
 
 local TYPED_FIELDS = {
