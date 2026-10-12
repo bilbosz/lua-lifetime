@@ -327,6 +327,14 @@ function dialect.new(P)
     local function base_type(raw)
         local t = current()
         if t.type == "name" then
+            -- A nominal type that starts with `lifetime` (`lifetime.Reason`)
+            -- names the runtime's local, which only the header binds: the
+            -- Raw says so to the emitter (docs/04-transpiler.md, "The
+            -- Teal front end", "Types pass through"). Read here, where the
+            -- type is kept anyway: no pass of its own.
+            if t.value == "lifetime" then
+                raw.names_lifetime = true
+            end
             take(raw)
             while is(".") do
                 take(raw)
@@ -436,8 +444,19 @@ function dialect.new(P)
     -- {recordentry} 'end' (tl.tl, parse_record_body); `kind` is "record"
     -- or "interface", `line` the line of that word. The `where` clause is
     -- an expression and is parsed as one.
-    local function record_body(raw, kind, line)
+    --
+    -- A type named `lifetime` shadows the runtime's name where `tl`
+    -- resolves it ("A source file that shadows `lifetime` gets what it
+    -- wrote"): a record or an interface so named (`self_named`) from its
+    -- type arguments to its `end`, and one declared among the entries
+    -- throughout the body around it, from its `is` clause on. A
+    -- `lifetime.T` read there names that type, so the mark it set on
+    -- `raw` (`base_type`) is put back as it was before.
+    local function record_body(raw, kind, line, self_named)
+        local before_typeargs = raw.names_lifetime
         typeargs_if_any(raw)
+        local before_body = raw.names_lifetime
+        local shadowed = false
         if is("{") then
             take(raw)
             parse_type(raw)
@@ -482,13 +501,17 @@ function dialect.new(P)
                 take(raw)
             elseif word == "type" and not field then
                 take(raw)
+                local nested = ahead.value == "lifetime"
+                shadowed = shadowed or nested
                 name(raw)
                 expect(raw, "=")
-                newtype(raw)
+                newtype(raw, nested)
             elseif (word == "record" or word == "interface" or word == "enum") and not field then
                 take(raw)
+                local nested = ahead.value == "lifetime"
+                shadowed = shadowed or nested
                 name(raw)
-                type_body(raw, word, t.line)
+                type_body(raw, word, t.line, nested)
             else
                 if word == "metamethod" and not field then
                     take(raw)
@@ -515,27 +538,35 @@ function dialect.new(P)
             end
         end
         take(raw)
+        if self_named then
+            raw.names_lifetime = before_typeargs
+        elseif shadowed then
+            raw.names_lifetime = before_body
+        end
     end
 
     -- The body of a `record`, `interface` or `enum` named `kind`, whose
-    -- word is on `line`.
-    function type_body(raw, kind, line)
+    -- word is on `line`; `self_named` says the type is named `lifetime`.
+    function type_body(raw, kind, line, self_named)
         if kind == "enum" then
             enum_body(raw, line)
         else
-            record_body(raw, kind, line)
+            record_body(raw, kind, line, self_named)
         end
     end
 
     -- newtype ::= 'record' recordbody | 'interface' recordbody | 'enum'
     -- enumbody | 'require' '(' LiteralString ')' {'.' Name} | type.
-    function newtype(raw)
+    -- `self_named`: the type is declared as `lifetime` (`type lifetime =
+    -- record … end`, in scope in its own body); an alias's type is read
+    -- outside it.
+    function newtype(raw, self_named)
         local t = current()
         if t.type == "name" then
             local word = t.value
             if word == "record" or word == "interface" or word == "enum" then
                 take(raw)
-                type_body(raw, word, t.line)
+                type_body(raw, word, t.line, self_named)
                 return
             elseif word == "require" and peek(1).value == "(" and peek(1).type == "symbol" then
                 take(raw)
@@ -564,16 +595,17 @@ function dialect.new(P)
         local word = t.value
         take(raw)
         local declared = current().value
+        local self_named = declared == "lifetime"
         name(raw)
         if word == "type" then
             if is("=") or keyword == "local" then
                 expect(raw, "=")
-                newtype(raw)
+                newtype(raw, self_named)
             end
         elseif word == "macroexp" then
             macroexp_body(raw, t.line)
         else
-            type_body(raw, word, t.line)
+            type_body(raw, word, t.line, self_named)
         end
         -- `name` is the declared local, for the emitter's shadowing count
         -- (`local record lifetime` shadows the runtime's name).
