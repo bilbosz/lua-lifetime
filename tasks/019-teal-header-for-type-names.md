@@ -1,9 +1,9 @@
 ---
 id: 019
 title: Teal front end: a chunk that names `lifetime` only inside a type gets the header
-status: todo
+status: in-progress
 depends: [018]
-branch:
+branch: task/019-teal-header-for-type-names
 pr:
 commits:
 review:
