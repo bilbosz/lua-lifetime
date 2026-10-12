@@ -78,17 +78,16 @@ lifetime.Reason` for such a chunk.
 3. `as`: `local t = x as lifetime.Token` alone gets the header.
 4. Negative: `local function f(r: Reason) print(r) end` (no `lifetime`
    anywhere) is its input unchanged.
-5. `examples/teal/*.tlt.expected` unchanged; add
-   `examples/teal/typed_reason.tlt` + `.expected`: a destructor typed with
-   `lifetime.Reason` whose module names `lifetime` nowhere else, printing
-   the reason of one `lifetime.destroy`… (careful: that call names
-   `lifetime` as a value; the example must keep the type as the only
-   mention — e.g. the destroy happens in a block exit: `local x = make() @
-   lifetime.scope` is extension syntax, which already triggers the header.
-   Use a scope exit so the header comes from the type mention alone is not
-   possible; make the example a module-level function whose reason type is
-   the only `lifetime` and let the object die at program end with reason
-   `"exit"`, pinned by the expected output).
+5. `examples/teal/*.tlt.expected` unchanged. New `examples/teal/typed_reason.tlt`
+   + `.expected`: a record with a `__destroy` typed `function(self: R,
+   reason: lifetime.Reason)` that prints the reason, an instance anchored
+   `@ lifetime.scope` in a function (the anchor is extension syntax, so the
+   header is expected anyway; what the example pins is that `tl` accepts the
+   typed destructor), and a second, plain function `local function show(r:
+   lifetime.Reason) print("reason " .. r) end` called with `"anchor"` — the
+   expected output is the destructor's line then `reason anchor`. The unit
+   test in `tests/test-teal.lua` (case 1) is the one that pins the header
+   coming from the type mention alone.
 
 The sentence most likely to be misread: "does not name `lifetime`" taken
 to mean "as a value"; cases 1 and 4 pin both sides.
