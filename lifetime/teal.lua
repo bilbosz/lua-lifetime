@@ -505,7 +505,19 @@ function dialect.new(P)
                 shadowed = shadowed or nested
                 name(raw)
                 expect(raw, "=")
+                -- An alias's own right-hand side is read outside it: a
+                -- `lifetime.T` there names the runtime even when the alias
+                -- is `lifetime` (`type lifetime = lifetime.Token`, which
+                -- tl compiles only with the header), so it survives the
+                -- restore at the record's `end`. A `type lifetime = record
+                -- … end` restored its own mark already.
+                local before = raw.names_lifetime
+                raw.names_lifetime = nil
                 newtype(raw, nested)
+                if nested and raw.names_lifetime then
+                    before_body = true
+                end
+                raw.names_lifetime = raw.names_lifetime or before
             elseif (word == "record" or word == "interface" or word == "enum") and not field then
                 take(raw)
                 local nested = ahead.value == "lifetime"

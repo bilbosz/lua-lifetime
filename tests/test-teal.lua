@@ -443,6 +443,9 @@ test.case("a type named `lifetime` shadows the runtime's name where tl reads it 
     for _, chunk in ipairs({
         "local record R\n    record lifetime\n    end\n    end\nlocal h: lifetime.Hook\n",
         "local record R<T is lifetime.Token>\n    record lifetime\n    end\n    end\n",
+        -- The right-hand side of a nested alias named `lifetime`.
+        "local record R\n    type lifetime = lifetime.Token\n    end\n",
+        "local record R\n    t: lifetime.Hook\n    type lifetime = lifetime.Token\n    end\n",
         "do\n    local record lifetime\n        end\nend\nlocal h: lifetime.Hook\n"
     }) do
         test.assert_eq(round_trip(chunk), HEADER_ONLY .. chunk)
@@ -522,7 +525,10 @@ if HAS_TL then
             "local record lifetime\n  record Token\n  end\nend\nlocal record R\n  tok: lifetime.Token\nend\n",
             "local record R\n  record lifetime\n    record T\n    end\n  end\n  t: lifetime.T\nend\n",
             "local x: any = 1\nlocal t = x as lifetime.Token\n",
-            "local x: any = 1\nlocal b = x is lifetime.Token\n"
+            "local x: any = 1\nlocal b = x is lifetime.Token\n",
+            -- A nested alias named `lifetime` reads its right-hand side
+            -- outside it: the runtime's name, through the header.
+            "local record R\n  type lifetime = lifetime.Token\nend\n"
         }) do
             local teal_source = assert(cli.build(chunk, "a.tlt"))
             local _, n = teal_source:gsub("local lifetime", "")
