@@ -107,4 +107,19 @@ the threshold of `bench/README.md`.
 
 ## Spec issues found
 
+1. A *global* type named `lifetime` (`global record lifetime … end`) is
+   not a shadowing local, so a `lifetime.T` read after it in the same
+   chunk now gets the header, and `tl` resolves it through the header's
+   local (the runtime's declaration), not the global record. Before this
+   task the same chunk had no header and `tl` found the global record.
+   This follows the value rule of docs/04-transpiler.md, "The generated
+   chunk header" ("An assignment to the global `lifetime` in a
+   transpiled chunk assigns the header's local … a program that wants
+   the global sets `_G.lifetime`"), but types have no `_G.` spelling, so
+   a program cannot ask for the global type. The spec does not say
+   whether a global type declaration shadows. Implemented: it does not
+   (same as a global value); the self-reference inside the global
+   record's own body is still the record's. Not blocking: no example or
+   test uses a global type named `lifetime`.
+
 ## Review log
