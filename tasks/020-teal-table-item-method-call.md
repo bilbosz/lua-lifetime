@@ -1,10 +1,10 @@
 ---
 id: 020
 title: Teal front end: a `Name ':'` table item that is not a typed field is an expression
-status: in-progress
+status: review
 depends: [018]
 branch: task/020-teal-table-item-method-call
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/56
 commits:
 review: APPROVE (round 1)
 ---
