@@ -61,5 +61,6 @@ during implementation and review.
 | 017 | Runtime: keep each anchor's sentinel newer than its dependents' so a collected subtree dies in ownership order | |
 | 018 | teal-lifetime: the Teal front end, Teal output, the `lifetime` declaration file and the second rockspec | 007 |
 | 019 | Teal front end: a chunk that names `lifetime` only inside a type gets the header | 018 |
+| 020 | Teal front end: a `Name ':'` table item that is not a typed field is an expression | 018 |
 
 Keep this table in sync when adding tasks.
