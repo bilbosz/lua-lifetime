@@ -22,6 +22,19 @@
 --   scope/hook-on-scope     a block with one hook (`f !@ lifetime.scope`):
 --                           enter, hook, exit; against calling `f` by hand
 --                           at the end of the block
+--   scope/block-one-object  the library form of scope/loop-one-object
+--                           (docs/02-semantics.md, "The library form"):
+--                           `lifetime.block(body)` of a function that
+--                           attaches one object with a `__destroy` to the
+--                           record, the function made once; against
+--                           calling a function that creates the object
+--                           and calls its body by hand
+--   scope/block-closure     the same with the function written inline, a
+--                           closure per entry capturing a local; against
+--                           making and calling the same closure
+--   scope/block-empty       `lifetime.block` of a function that attaches
+--                           nothing; against calling it directly (the
+--                           absolute cost of a library-form record)
 --   scope/pcall-empty       pcall of an empty function through the
 --                           runtime's pcall (the original xpcall with the
 --                           runtime's message handler, task 014); against
@@ -76,7 +89,7 @@ bench.add("scope/loop-one-object", (function()
     return function()
         for _ = 1, 10 do
             local s = enter("bench:1")
-            local x = attach(setmetatable({}, MT), false, s)
+            local x = attach(setmetatable({}, MT), s)
             x.v = 1
             exit(s, "bench:1")
         end
@@ -117,7 +130,7 @@ bench.add("scope/hook-on-scope", (function()
     return function()
         for _ = 1, 10 do
             local s = enter("bench:3")
-            hook(on_exit, nil, s)
+            hook(on_exit, s)
             exit(s, "bench:3")
         end
     end
@@ -129,8 +142,79 @@ end)(), {
     end
 })
 
+-- scope/block-one-object: `lifetime.block(function(s) local x = {}
+-- @ s … end)`, the body made once (docs/02-semantics.md, "The library
+-- form"). A closure call stands on both sides.
+local block_body
+bench.add("scope/block-one-object", (function()
+    local block, attach = lifetime.block, lifetime.attach
+    block_body = function(s)
+        local x = attach(setmetatable({}, MT), s)
+        x.v = 1
+    end
+    return function()
+        for _ = 1, 10 do
+            block(block_body)
+        end
+    end
+end)(), {
+    baseline = (function()
+        local function plain_body()
+            local x = setmetatable({}, MT)
+            x.v = 1
+            body(x, "anchor")
+        end
+        return function()
+            for _ = 1, 10 do
+                plain_body()
+            end
+        end
+    end)()
+})
+
+-- scope/block-closure: the function written inline, as a program writes
+-- it, so each entry makes a closure that captures a local.
+bench.add("scope/block-closure", (function()
+    local block, attach = lifetime.block, lifetime.attach
+    return function()
+        for i = 1, 10 do
+            block(function(s)
+                local x = attach(setmetatable({}, MT), s)
+                x.v = i
+            end)
+        end
+    end
+end)(), {
+    baseline = function()
+        for i = 1, 10 do
+            local f = function()
+                local x = setmetatable({}, MT)
+                x.v = i
+                body(x, "anchor")
+            end
+            f()
+        end
+    end
+})
+
 local function empty()
 end
+
+-- scope/block-empty
+bench.add("scope/block-empty", (function()
+    local block = lifetime.block
+    return function()
+        for _ = 1, 10 do
+            block(empty)
+        end
+    end
+end)(), {
+    baseline = function()
+        for _ = 1, 10 do
+            empty()
+        end
+    end
+})
 
 -- scope/pcall-empty
 local original_pcall = original(pcall, "pcall")

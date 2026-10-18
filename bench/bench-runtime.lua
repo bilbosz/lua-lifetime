@@ -49,7 +49,7 @@ bench.add("runtime/attach-destroy-100", function()
     local attach = lifetime.attach
     local anchor, children = {}, {}
     for i = 1, N do
-        children[i] = attach(setmetatable({}, CHILD_MT), false, anchor)
+        children[i] = attach(setmetatable({}, CHILD_MT), anchor)
     end
     lifetime.destroy(anchor)
     return children
@@ -71,18 +71,18 @@ local move_x, move_a, move_b, move_on_a
 bench.add("runtime/move", function()
     if not move_x then
         move_a, move_b = {}, {}
-        move_x = lifetime.attach({}, false, move_a)
+        move_x = lifetime.attach({}, move_a)
         move_on_a = true
         -- Neighbours, so the move is not into an empty list.
         for _ = 1, 10 do
-            lifetime.attach({}, false, move_a)
-            lifetime.attach({}, false, move_b)
+            lifetime.attach({}, move_a)
+            lifetime.attach({}, move_b)
         end
     end
     if move_on_a then
-        lifetime.attach(move_x, false, move_b)
+        lifetime.attach(move_x, move_b)
     else
-        lifetime.attach(move_x, false, move_a)
+        lifetime.attach(move_x, move_a)
     end
     move_on_a = not move_on_a
 end, {
@@ -110,12 +110,12 @@ bench.add("runtime/cascade-tree", function()
     local root = setmetatable({}, CHILD_MT)
     local held, n = {}, 0
     for _ = 1, 10 do
-        local child = attach(setmetatable({}, CHILD_MT), false, root)
+        local child = attach(setmetatable({}, CHILD_MT), root)
         n = n + 1
         held[n] = child
         for _ = 1, 10 do
             n = n + 1
-            held[n] = attach(setmetatable({}, CHILD_MT), false, child)
+            held[n] = attach(setmetatable({}, CHILD_MT), child)
         end
     end
     lifetime.destroy(root)
@@ -150,7 +150,7 @@ bench.add("runtime/dependents-100", function()
     if not dependents_anchor then
         dependents_anchor, dependents_kept = {}, {}
         for i = 1, N do
-            dependents_kept[i] = lifetime.attach({}, false, dependents_anchor)
+            dependents_kept[i] = lifetime.attach({}, dependents_anchor)
         end
     end
     -- dependents_kept holds the dependents: the anchor's list does not.
@@ -174,7 +174,7 @@ end, {
 -- runtime/attach-first
 local first_anchor = {}
 bench.add("runtime/attach-first", function()
-    lifetime.attach({}, false, first_anchor)
+    lifetime.attach({}, first_anchor)
 end, {
     baseline = (function()
         local list, n = setmetatable({}, {__mode = "v"}), 0
@@ -191,7 +191,7 @@ local function_anchor = {}
 bench.add("runtime/attach-function", function()
     local f = function()
     end
-    lifetime.attach(f, false, function_anchor)
+    lifetime.attach(f, function_anchor)
     lifetime.destroy(f)
 end, {
     baseline = (function()

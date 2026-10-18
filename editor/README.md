@@ -8,6 +8,7 @@ not install it, and `bin/lifetime` never reads it.
 | --- | --- |
 | `luals/plugin.lua` | A plugin for the Lua language server (LuaLS, the `sumneko.lua` extension of VS Code). It rewrites a `.lt` file into plain Lua of the same shape before the server parses it, so that `.lt` files get completion, hover, go to definition and diagnostics. The rewrite is for analysis only and is never run. |
 | `luals/check.lua` | Runs the rewrite over `.lt` files and checks that each result compiles. `make luals-check`, part of `make test`, runs it over every `.lt` file of the repository. |
+| `luals/meta/lifetime.lua` | A `---@meta` declaration of the `lifetime` module for LuaLS: the names of `docs/02-semantics.md`, "The `lifetime` table" and "The library form", typed. For a program that requires the runtime as a library (Treflove's lua-lifetime branch points its `workspace.library` at this directory). Never run. |
 | `../.vscode/launch.json`, `../.vscode/launch.lua` | Run and debug configurations for VS Code with the "Local Lua Debugger" extension (`tomblind.local-lua-debugger-vscode`), and the script they run. |
 
 ## The language server plugin

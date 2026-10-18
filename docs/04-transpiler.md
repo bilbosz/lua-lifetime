@@ -107,26 +107,29 @@ sets `_G.lifetime`.
 
 | Source | Generated |
 | --- | --- |
-| `e @ a` | `__lt_attach(e, false, a)` |
-| `e @ (a, b)` | `__lt_attach(e, false, a, b)` |
-| `e @ lifetime.scope` | `__lt_attach(e, false, <scope local>)` |
-| `e @ lifetime.pin(a, b)` | `__lt_attach(e, false, lifetime.pin(a, b))` (the value carries no term) |
+| `e @ a` | `__lt_attach(e, a)` |
+| `e @ (a, b)` | `__lt_attach(e, a, b)` |
+| `e @ lifetime.scope` | `__lt_attach(e, <scope local>)` |
+| `e @ lifetime.pin(a, b)` | `__lt_attach(e, (lifetime.pin(a, b)))` (the value carries no term) |
 | `x @ a` as a statement | the same call as a statement |
-| `f !@ a` | `lifetime.hook(f, nil, a)` |
-| `f !@ lifetime.scope` | `lifetime.hook(f, nil, <scope local>)` |
-| `f !@ (a, b)` | `lifetime.hook(f, nil, a, b)` |
-| `local h = f !@ a`, `h = f !@ a`, `t.h = f !@ a` | `… = lifetime.hook(f, "h", a)`: the name of the binding target ([02-semantics.md](02-semantics.md), "Named hooks") |
+| `f !@ a` | `__lt_hook(f, a)` |
+| `f !@ lifetime.scope` | `__lt_hook(f, <scope local>)` |
+| `f !@ (a, b)` | `__lt_hook(f, a, b)` |
+| `local h = f !@ a`, `h = f !@ a`, `t.h = f !@ a` | `… = __lt_named_hook("h", f, a)`: the name of the binding target ([02-semantics.md](02-semantics.md), "Named hooks") |
 
 `attach` returns its first argument, so the expression form keeps its
 value. A call or `...` as the last item of a list is parenthesised in the
 generated call, so an anchor item is always one value (02, "Acquiring a
 lifetime", step 2). `lifetime.token("t")` is an ordinary call and is emitted as
-written; `lifetime.token("t") @ a` is the `@` row. The rows below that still read `lifetime.x` are bound to a local in
-the header the same way when the chunk uses them; the table shows the
-runtime entry point, not the spelling. The implicit `reachable` term is the runtime's business
+written; `lifetime.token("t") @ a` is the `@` row. `__lt_hook` and
+`__lt_named_hook` are bound in the header the same way when the chunk
+uses them. The implicit `reachable` term is the runtime's business
 (`lifetime.attach` adds it unless every anchor is a pinned value), not the
-emitter's. The exact names are the emitter task's to fix with the runtime
-tasks; this table fixes the shape.
+emitter's. The calls are the library form's ([02-semantics.md](02-semantics.md),
+"The library form"): a program that is not transpiled writes
+`lifetime.attach(e, a)`, `lifetime.hook(f, a)` and
+`lifetime.named_hook("h", f, a)` itself, and `lifetime.block` in place
+of the block prologue and epilogue below (task 019).
 
 ## Blocks: prologue and epilogue on every exit path
 
@@ -278,10 +281,10 @@ measure).
   contextual, ordinary names where Teal reads them so (`local type = 1`,
   `global = 2`).
 - **The same shape, typed.** The table of "What `@` expands to" holds row
-  for row, and so does "Blocks": `e @ a` is `__lt_attach(e, false, a)`,
+  for row, and so does "Blocks": `e @ a` is `__lt_attach(e, a)`,
   whose declaration `attach<T>(obj: T, pin: boolean, ...: any): T` keeps
   the type of `e`, so `local conn: Conn = Conn.open(s) @ lifetime.scope`
-  type-checks; `f !@ a` is `__lt_hook(f, name, a)`; a block that anchors
+  type-checks; `f !@ a` is `__lt_hook(f, a)` (`__lt_named_hook("h", f, a)` bound to a name); a block that anchors
   to `lifetime.scope` gets `__lt_enter` and `__lt_exit` with the same
   positions; the header binds the same locals. Two rows differ because
   `any` is assignable to no declared type in Teal and a type variable is

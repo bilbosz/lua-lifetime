@@ -942,3 +942,71 @@ for any `any...` return. The alternative, a runtime `pack` of its own,
 would change the Lua path's shape for a Teal need and was rejected.
 → [04-transpiler.md](04-transpiler.md), "The Teal front end";
 `lifetime/teal.lua`, `lifetime/init.d.tl`
+
+## The runtime is usable as a library: `attach`, `hook`, `named_hook` and `block`
+
+Decided by the human on 2026-10-18, for the lua-lifetime branch of
+Treflove, a LÖVE program whose chunks the host loads itself and which
+is not transpiled: "I don't want you to use language syntax addition,
+just library. So e.g. instead of `@ self` write `lifetime.attach(obj,
+self)`. `lifetime.scope` ... should be used only in [a function-wrapping
+form]". The entry points the generated code already called become the
+public, documented library form ([02-semantics.md](02-semantics.md),
+"The library form"), with three changes to their shape:
+
+- `lifetime.attach(obj, a1, …, an)` loses the `pin` boolean the emitter
+  passed as `false` on every call: pinning is `lifetime.pin`'s and a
+  hook's, so the flag was an implementation detail in a public table,
+  and `lifetime.attach(obj, self)` is the spelling the human asked for.
+- `lifetime.hook(f, a1, …, an)` loses the name slot the emitter filled
+  with `nil` on every anonymous hook; `lifetime.named_hook(name, f, a1,
+  …, an)` carries the name of a hook bound to a name, and the emitter
+  calls it for those ([04-transpiler.md](04-transpiler.md), "What `@`
+  expands to").
+- `lifetime.block(fn, …)` is the block: `enter`, the call `fn(record,
+  …)`, `exit`, the results passed through. Its name is not `scope`, at
+  the human's request ("names up to you, not the same"), since
+  `lifetime.scope` is the marker and the syntax's spelling.
+
+What it keeps. The syntax and the transpiled semantics are unchanged;
+decision 5 of file 10 ("scopes are syntax") and "The scope anchor is
+spelled `lifetime.scope`" above hold for the language, and the marker is
+still refused as an anchor. The one thing the library form adds is a
+scope record as a value, handed to `fn` and valid inside it only: the
+spec says so, the record is dead once `fn` has returned (which made
+`lifetime.exit` mark an empty record dead too, one store), and
+`check_anchor` names it (`attempt to anchor to a dead scope`). The error
+path is the same mechanism as a block's: no `pcall` is introduced, the
+catching `pcall`'s handler unwinds the record at the raise point, and
+`fn` may yield. The position of a tombstone's death is the function's
+(chunk and line of its `function`), read with `debug.getinfo` only in a
+cascade that destroys something, never per entry, which keeps rule 5 of
+`CLAUDE.md`.
+
+Alternatives rejected: a separate name for the library's `attach`
+beside the emitter's (two public functions for one operation); keeping
+the `pin` flag and documenting it (a boolean the caller must always
+write `false`); naming the block function `lifetime.scope` (the marker,
+and the human said not the same). Task 019 implemented it;
+`tests/test-library.lua` and `bench/bench-scopes.lua` (`scope/block-*`)
+cover it; `editor/luals/meta/lifetime.lua` declares the module for a
+program that uses it as a library.
+→ [02-semantics.md](02-semantics.md), "The library form" and "The
+`lifetime` table"; [03-runtime.md](03-runtime.md), "Attachment: what
+`@` does", "Hooks", "Scope records"; [04-transpiler.md](04-transpiler.md),
+"What `@` expands to"
+
+## A LÖVE host announces program end from `love.quit`
+
+Settles "How an embedding host announces program end" of
+[06-open-questions.md](06-open-questions.md), which task 009 left for
+Treflove to answer: the lua-lifetime branch of Treflove (2026-10-18)
+calls `lifetime.set_exiting(true)` from a `love.quit` callback that
+`App:register_love_callbacks` defines, which LÖVE runs on every quit
+path (`love.event.quit` included) before it closes the state, so the
+sentinel finalizers the closing state runs report `"exit"` (02,
+"Program end"). The callback returns nothing, so the quit proceeds. An
+embedding host in general does the same from its own quit path; the
+runtime's entry point stays `lifetime.set_exiting(flag)`.
+→ [02-semantics.md](02-semantics.md), "Program end";
+[03-runtime.md](03-runtime.md), "Program end"

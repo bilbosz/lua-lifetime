@@ -169,19 +169,19 @@ test.case("attach adds the term unless every anchor is a pinned value; format sh
     local b = setmetatable({}, {__tostring = function()
         return "b"
     end})
-    local x = attach({}, false, a)
+    local x = attach({}, a)
     test.assert_eq(lifetime.format(x), "(a, reachable)")
-    attach(x, false, a, b)
+    attach(x, a, b)
     test.assert_eq(lifetime.format(x), "(a, b, reachable)")
-    attach(x, false, pin(a))
+    attach(x, pin(a))
     test.assert_eq(lifetime.format(x), "a", "a pinned value alone: no term")
-    attach(x, false, pin(a), pin(b))
+    attach(x, pin(a), pin(b))
     test.assert_eq(lifetime.format(x), "(a, b)", "pinned values only: no term")
-    attach(x, false, pin(a), b)
+    attach(x, pin(a), b)
     test.assert_eq(lifetime.format(x), "(a, b, reachable)", "a table adds the term")
-    attach(x, false, pin(a), lifetime.reachable)
+    attach(x, pin(a), lifetime.reachable)
     test.assert_eq(lifetime.format(x), "(a, reachable)", "lifetime.reachable adds the term")
-    attach(x, false, lifetime.reachable)
+    attach(x, lifetime.reachable)
     test.assert_eq(lifetime.format(x), "reachable")
 end)
 
@@ -196,12 +196,12 @@ test.case("pin(a, b) is a lifetime value without the term; it strips the term of
     test.assert_eq(getmetatable(v), "lifetime")
     test.assert_eq(lifetime.format(v), "(a, b)")
     test.assert_eq(lifetime.format(pin(a)), "a")
-    local x = attach({}, false, a, b)
+    local x = attach({}, a, b)
     test.assert_eq(lifetime.format(lifetime.of(x)), "(a, b, reachable)")
     test.assert_eq(lifetime.format(pin(lifetime.of(x))), "(a, b)", "the term of a value is stripped")
     test.assert_eq(lifetime.format(pin(a, lifetime.reachable)), "a", "lifetime.reachable among anchors is stripped")
     test.assert_true(pin(a, b) == pin(b, a), "== compares structure")
-    test.assert_false(pin(a) == lifetime.of(attach({}, false, a)), "the term is part of the structure")
+    test.assert_false(pin(a) == lifetime.of(attach({}, a)), "the term is part of the structure")
 end)
 
 test.case("pin() and pin(lifetime.reachable) raise the spec's errors at the caller", function()
@@ -243,13 +243,13 @@ test.case("a pinned value is an immutable snapshot: @ on it after an anchor died
     destroy(a)
     test.assert_eq(lifetime.format(v), "dead a")
     test.assert_error(function()
-        attach({}, false, v)
+        attach({}, v)
     end, "attempt to anchor to a dead table")
     local tok = token("t")
     local w = pin(tok)
     destroy(tok)
     test.assert_error(function()
-        attach({}, false, w)
+        attach({}, w)
     end, "attempt to anchor to a dead token")
 end)
 
@@ -258,7 +258,7 @@ test.case("case 2: a pinned dependent survives a collection unreferenced and die
     local a = new_logged(log, "a")
     local probe = setmetatable({}, {__mode = "k"})
     local function make()
-        local x = attach(new_logged(log, "x"), false, pin(a))
+        local x = attach(new_logged(log, "x"), pin(a))
         probe[x] = true
     end
     run_dropped(make)
@@ -277,29 +277,29 @@ test.suite("sentinel: which objects carry one")
 
 test.case("a table with the term and a __destroy carries a sentinel; without either it does not", function()
     local a = {}
-    local x = attach(new_logged({}, "x"), false, a)
+    local x = attach(new_logged({}, "x"), a)
     test.assert_true(sentinel_of(x) ~= nil, "term and __destroy")
-    local plain = attach({}, false, a)
+    local plain = attach({}, a)
     test.assert_eq(sentinel_of(plain), nil, "term, nothing to run at collection")
-    local pinned = attach(new_logged({}, "p"), false, pin(a))
+    local pinned = attach(new_logged({}, "p"), pin(a))
     test.assert_eq(sentinel_of(pinned), nil, "a pinned object never carries one")
-    local flagged = attach(new_logged({}, "f"), true, a)
-    test.assert_eq(sentinel_of(flagged), nil, "nor one attached with the pin flag")
+    local snapshot = attach(new_logged({}, "f"), lifetime.of(pinned))
+    test.assert_eq(sentinel_of(snapshot), nil, "nor one attached through a pinned value's snapshot")
 end)
 
 test.case("a table with the term gets one with its first dependent or hook; a pinned anchor does not", function()
     local a = {}
-    local anchor = attach({}, false, a)
+    local anchor = attach({}, a)
     test.assert_eq(sentinel_of(anchor), nil)
-    local dep = attach({}, false, anchor)
+    local dep = attach({}, anchor)
     test.assert_true(sentinel_of(anchor) ~= nil, "dependents to kill at collection")
     test.assert_eq(sentinel_of(dep), nil)
-    local hooked = attach({}, false, a)
+    local hooked = attach({}, a)
     hook(function()
-    end, nil, hooked)
+    end, hooked)
     test.assert_true(sentinel_of(hooked) ~= nil, "a hook to run at collection")
-    local pinned_anchor = attach({}, false, pin(a))
-    local dep2 = attach({}, false, pinned_anchor)
+    local pinned_anchor = attach({}, pin(a))
+    local dep2 = attach({}, pinned_anchor)
     test.assert_eq(sentinel_of(pinned_anchor), nil, "a pinned anchor has no term")
     test.assert_true(dep2 ~= nil and dep ~= nil)
 end)
@@ -307,15 +307,15 @@ end)
 test.case("a hook carries none, unless its formula is lifetime.reachable alone", function()
     local a = {}
     local h = hook(function()
-    end, nil, a)
+    end, a)
     test.assert_eq(sentinel_of(h), nil)
-    local alone = hook(function()
-    end, "alone", lifetime.reachable)
+    local alone = lifetime.named_hook("alone", function()
+    end, lifetime.reachable)
     test.assert_true(sentinel_of(alone) ~= nil)
     test.assert_eq(lifetime.format(alone), "hook alone")
     test.assert_eq(lifetime.format(lifetime.of(alone)), "reachable")
     -- Moved onto an anchor it is pinned again and drops the sentinel.
-    attach(alone, false, a)
+    attach(alone, a)
     test.assert_eq(sentinel_of(alone), nil)
     test.assert_eq(lifetime.format(lifetime.of(alone)), tostring(a))
 end)
@@ -324,18 +324,18 @@ test.case("a token carries one under the same rule as a table", function()
     local owner = {}
     local tok = token("t")
     test.assert_eq(sentinel_of(tok), nil, "a fresh token has nothing to run")
-    attach(tok, false, owner)
+    attach(tok, owner)
     test.assert_eq(sentinel_of(tok), nil, "no __destroy, no dependents")
-    local dep = attach({}, false, tok)
+    local dep = attach({}, tok)
     test.assert_true(sentinel_of(tok) ~= nil, "a token with the term and a dependent")
-    local pinned = attach(token("p"), false, pin(owner))
-    attach({}, false, pinned)
+    local pinned = attach(token("p"), pin(owner))
+    attach({}, pinned)
     test.assert_eq(sentinel_of(pinned), nil, "a pinned token never")
     test.assert_true(dep ~= nil)
 end)
 
 test.case("x @ lifetime.reachable and lifetime.of register a table with a __destroy", function()
-    local x = attach(new_logged({}, "x"), false, lifetime.reachable)
+    local x = attach(new_logged({}, "x"), lifetime.reachable)
     test.assert_true(sentinel_of(x) ~= nil)
     local y = new_logged({}, "y")
     lifetime.of(y)
@@ -346,30 +346,30 @@ end)
 
 test.case("never twice: a move that keeps the term keeps the proxy; one that drops it drops it", function()
     local a, b = {}, {}
-    local x = attach(new_logged({}, "x"), false, a)
+    local x = attach(new_logged({}, "x"), a)
     local p = sentinel_of(x)
-    attach(x, false, b)
+    attach(x, b)
     test.assert_true(rawequal(sentinel_of(x), p), "same proxy after a move")
-    attach(x, false, a, b)
+    attach(x, a, b)
     test.assert_true(rawequal(sentinel_of(x), p), "same proxy after a move to a list")
-    attach(x, false, lifetime.reachable)
+    attach(x, lifetime.reachable)
     test.assert_true(rawequal(sentinel_of(x), p), "same proxy on the default lifetime")
-    attach(x, false, pin(a))
+    attach(x, pin(a))
     test.assert_eq(sentinel_of(x), nil, "pinned: no proxy")
-    attach(x, false, b)
+    attach(x, b)
     test.assert_true(sentinel_of(x) ~= nil, "the term again: a sentinel again")
 end)
 
 test.case("a scope record carries one only on a coroutine's stack, with its first dependent", function()
     local s = enter("t.lt:1")
-    local x = attach(new_logged({}, "x"), false, s)
+    local x = attach(new_logged({}, "x"), s)
     test.assert_eq(sentinel_of(s), nil, "the main thread's records are the runtime's roots")
     exit(s, "t.lt:1")
     local seen = {}
     local co = coroutine.create(function()
         local r = enter("t.lt:2")
         seen[1] = sentinel_of(r) ~= nil
-        local y = attach({}, false, r)
+        local y = attach({}, r)
         seen[2] = sentinel_of(r) ~= nil
         exit(r, "t.lt:2")
         seen[3] = y
@@ -386,7 +386,7 @@ test.suite("sentinel: the collector")
 test.case("case 1: an unreferenced dependent dies unreachable at the collection; the anchor lives", function()
     local log = {}
     local a = new_logged(log, "a")
-    local x = attach(new_logged(log, "x"), false, a)
+    local x = attach(new_logged(log, "x"), a)
     test.assert_deep_eq(lifetime.dependents(a), {x})
     x = nil -- luacheck: ignore 311
     collect()
@@ -407,10 +407,10 @@ test.case("the cascade takes the dependents with reason anchor, at collector, be
         saved[tostring(self)] = self
     end
     local function make()
-        local parent = attach(new_logged(log, "parent", save), false, lifetime.reachable)
-        local child = attach(new_logged(log, "child", save), false, pin(parent))
+        local parent = attach(new_logged(log, "parent", save), lifetime.reachable)
+        local child = attach(new_logged(log, "child", save), pin(parent))
         parent.child = child
-        hook(logger(log, "hook"), nil, parent)
+        hook(logger(log, "hook"), parent)
     end
     run_dropped(make)
     test.assert_deep_eq(log, {})
@@ -436,8 +436,8 @@ test.case("case 3: a subtree held only by itself dies as one cascade from its ro
     -- finalized before their dependents", reversed it.
     local log = {}
     local function make()
-        local parent = attach(new_logged(log, "parent"), false, lifetime.reachable)
-        local child = attach(new_logged(log, "child"), false, parent)
+        local parent = attach(new_logged(log, "parent"), lifetime.reachable)
+        local child = attach(new_logged(log, "child"), parent)
         child.parent = parent
     end
     run_dropped(make)
@@ -452,8 +452,8 @@ test.case("a dependent with the term and nothing to run carries no sentinel and 
         local parent = attach(new_logged(log, "parent", function(self)
             seen.child = self.child
             seen.alive = alive(self.child)
-        end), false, lifetime.reachable)
-        local child = attach({}, false, parent)
+        end), lifetime.reachable)
+        local child = attach({}, parent)
         test.assert_eq(sentinel_of(child), nil)
         child.parent = parent
         parent.child = child
@@ -470,8 +470,8 @@ test.case("case 4: two unrelated objects in one collection die newest first", fu
     -- Both are held until both exist, so that they become unreachable
     -- together, when `make` returns.
     local function make()
-        local a = attach(new_logged(log, "a"), false, lifetime.reachable)
-        local b = attach(new_logged(log, "b"), false, lifetime.reachable)
+        local a = attach(new_logged(log, "a"), lifetime.reachable)
+        local b = attach(new_logged(log, "b"), lifetime.reachable)
         return a ~= b
     end
     run_dropped(make)
@@ -484,8 +484,8 @@ test.case("newest first is the order of the @ that gave each its sentinel", func
     local function make()
         local older = new_logged(log, "created first")
         local newer = new_logged(log, "created second")
-        attach(newer, false, lifetime.reachable)
-        attach(older, false, lifetime.reachable)
+        attach(newer, lifetime.reachable)
+        attach(older, lifetime.reachable)
     end
     run_dropped(make)
     collect()
@@ -499,9 +499,9 @@ test.case("an anchor armed before its dependents is still finalized first; its w
     -- exchanged with each newer dependent's at its `@` (task 017).
     local log = {}
     local function make()
-        local older = attach(new_logged(log, "older"), false, lifetime.reachable)
-        local younger = attach(new_logged(log, "younger"), false, older)
-        local other = attach(new_logged(log, "other"), false, older)
+        local older = attach(new_logged(log, "older"), lifetime.reachable)
+        local younger = attach(new_logged(log, "younger"), older)
+        local other = attach(new_logged(log, "other"), older)
         older.kids = {younger, other}
     end
     run_dropped(make)
@@ -513,9 +513,9 @@ test.case("the walk of a newer anchor takes an older dependent; its own finalize
     local log = {}
     local function make()
         local older = new_logged(log, "older")
-        attach(older, false, lifetime.reachable)
-        local anchor = attach(new_logged(log, "anchor"), false, lifetime.reachable)
-        attach(older, false, anchor)
+        attach(older, lifetime.reachable)
+        local anchor = attach(new_logged(log, "anchor"), lifetime.reachable)
+        attach(older, anchor)
         anchor.older = older
     end
     run_dropped(make)
@@ -526,7 +526,7 @@ end)
 test.case("registration: x @ lifetime.reachable runs __destroy at collection; never seen, the table goes silently", function()
     local log = {}
     local function make()
-        attach(new_logged(log, "registered"), false, lifetime.reachable)
+        attach(new_logged(log, "registered"), lifetime.reachable)
         local silent = new_logged(log, "silent")
         silent.x = 1
     end
@@ -549,7 +549,7 @@ test.case("case 5: a weak table clears one collection after the finalizer", func
     local log = {}
     local w = setmetatable({}, {__mode = "k"})
     local function make()
-        local x = attach(new_logged(log, "x"), false, lifetime.reachable)
+        local x = attach(new_logged(log, "x"), lifetime.reachable)
         w[x] = true
     end
     run_dropped(make)
@@ -577,7 +577,7 @@ test.case("case 8: a metatable made in the same statement as its instance still 
             __destroy = function(_, reason)
                 log[#log + 1] = "inline (" .. reason .. ")"
             end
-        }), false, lifetime.reachable)
+        }), lifetime.reachable)
     end
     run_dropped(make)
     collect()
@@ -632,10 +632,10 @@ local function proxy_reuse_case(collect_between)
     -- Written, never read: it only holds.
     local held = {} -- luacheck: ignore 241
     local function make()
-        local x1 = attach(new_logged(log, "x1"), false, lifetime.reachable)
-        local x2 = attach(new_logged(log, "x2"), false, lifetime.reachable)
-        local x3 = attach(new_logged(log, "x3"), false, lifetime.reachable)
-        local x4 = attach(new_logged(log, "x4"), false, lifetime.reachable)
+        local x1 = attach(new_logged(log, "x1"), lifetime.reachable)
+        local x2 = attach(new_logged(log, "x2"), lifetime.reachable)
+        local x3 = attach(new_logged(log, "x3"), lifetime.reachable)
+        local x4 = attach(new_logged(log, "x4"), lifetime.reachable)
         proxies[2], proxies[3] = sentinel_of(x2), sentinel_of(x3)
         destroy(x2)
         destroy(x4)
@@ -644,8 +644,8 @@ local function proxy_reuse_case(collect_between)
             collect()
             test.assert_deep_eq(log, {"x2 (destroy)", "x4 (destroy)", "x3 (destroy)"}, "the collection killed nothing")
         end
-        local y1 = attach(new_logged(log, "y1"), false, lifetime.reachable)
-        local y2 = attach(new_logged(log, "y2"), false, lifetime.reachable)
+        local y1 = attach(new_logged(log, "y1"), lifetime.reachable)
+        local y2 = attach(new_logged(log, "y2"), lifetime.reachable)
         test.assert_true(rawequal(sentinel_of(y1), proxies[2]), "y1 took x2's proxy")
         test.assert_true(rawequal(sentinel_of(y2), proxies[3]), "y2 took x3's proxy")
         -- A proxy's metatable holds its owner: let go of them.
@@ -675,16 +675,16 @@ test.case("a proxy disarmed below the last slot waits in its slot; the kept ones
     local log = {}
     local proxies = {}
     local function make()
-        local x1 = attach(new_logged(log, "x1"), false, lifetime.reachable)
-        local x2 = attach(new_logged(log, "x2"), false, lifetime.reachable)
-        local x3 = attach(new_logged(log, "x3"), false, lifetime.reachable)
-        local x4 = attach(new_logged(log, "x4"), false, lifetime.reachable)
+        local x1 = attach(new_logged(log, "x1"), lifetime.reachable)
+        local x2 = attach(new_logged(log, "x2"), lifetime.reachable)
+        local x3 = attach(new_logged(log, "x3"), lifetime.reachable)
+        local x4 = attach(new_logged(log, "x4"), lifetime.reachable)
         proxies[2], proxies[3] = sentinel_of(x2), sentinel_of(x3)
         destroy(x3)
         destroy(x4)
         destroy(x2)
-        local y1 = attach(new_logged(log, "y1"), false, lifetime.reachable)
-        local y2 = attach(new_logged(log, "y2"), false, lifetime.reachable)
+        local y1 = attach(new_logged(log, "y1"), lifetime.reachable)
+        local y2 = attach(new_logged(log, "y2"), lifetime.reachable)
         test.assert_true(rawequal(sentinel_of(y1), proxies[2]), "y1 took x2's proxy")
         test.assert_true(rawequal(sentinel_of(y2), proxies[3]), "y2 took x3's proxy")
         proxies[2], proxies[3] = nil, nil
@@ -707,12 +707,12 @@ test.case("the kept proxies move down over a slot the collector emptied, and a f
     local proxies = {}
     local held = {} -- luacheck: ignore 241
     local function make()
-        local x1 = attach(new_logged(log, "x1"), false, lifetime.reachable)
+        local x1 = attach(new_logged(log, "x1"), lifetime.reachable)
         run_dropped(function()
-            attach(new_logged(log, "x2"), false, lifetime.reachable)
+            attach(new_logged(log, "x2"), lifetime.reachable)
         end)
-        local x3 = attach(new_logged(log, "x3"), false, lifetime.reachable)
-        local x4 = attach(new_logged(log, "x4"), false, lifetime.reachable)
+        local x3 = attach(new_logged(log, "x3"), lifetime.reachable)
+        local x4 = attach(new_logged(log, "x4"), lifetime.reachable)
         held[1], held[3], held[4] = x1, x3, x4
     end
     run_dropped(make)
@@ -725,9 +725,9 @@ test.case("the kept proxies move down over a slot the collector emptied, and a f
     destroy(x4)
     x3, x4 = nil, nil -- luacheck: ignore 311
     local function attach_new()
-        local y1 = attach(new_logged(log, "y1"), false, lifetime.reachable)
-        local y2 = attach(new_logged(log, "y2"), false, lifetime.reachable)
-        local y3 = attach(new_logged(log, "y3"), false, lifetime.reachable)
+        local y1 = attach(new_logged(log, "y1"), lifetime.reachable)
+        local y2 = attach(new_logged(log, "y2"), lifetime.reachable)
+        local y3 = attach(new_logged(log, "y3"), lifetime.reachable)
         test.assert_true(rawequal(sentinel_of(y1), proxies[3]), "y1 took x3's proxy")
         test.assert_true(rawequal(sentinel_of(y2), proxies[4]), "y2 took x4's proxy")
         local fresh = sentinel_of(y3)
@@ -755,12 +755,12 @@ test.case("a proxy whose finalizer is pending is not handed to another owner", f
     local A = new_logged(log, "A")
     local W = {}
     local function make()
-        attach(new_logged(log, "X"), false, A)
+        attach(new_logged(log, "X"), A)
         local q = newproxy(true)
         getmetatable(q).__gc = function()
             destroy(A)
-            W[1] = attach(new_logged(log, "W1"), false, lifetime.reachable)
-            W[2] = attach(new_logged(log, "W2"), false, lifetime.reachable)
+            W[1] = attach(new_logged(log, "W1"), lifetime.reachable)
+            W[2] = attach(new_logged(log, "W2"), lifetime.reachable)
         end
     end
     run_dropped(make)
@@ -775,7 +775,7 @@ end)
 test.case("an object already dead is skipped by its finalizer; its sentinel is disarmed", function()
     local log = {}
     local function make()
-        local x = attach(new_logged(log, "x"), false, lifetime.reachable)
+        local x = attach(new_logged(log, "x"), lifetime.reachable)
         local p = sentinel_of(x)
         destroy(x)
         test.assert_eq(rawget(getmetatable(p), "owner"), nil, "disarmed")
@@ -791,7 +791,7 @@ end)
 test.case("a dependent killed by its anchor's cascade is not run again by its own finalizer", function()
     local log = {}
     local a = new_logged(log, "a")
-    local x = attach(new_logged(log, "x"), false, a)
+    local x = attach(new_logged(log, "x"), a)
     test.assert_true(sentinel_of(x) ~= nil)
     destroy(a)
     test.assert_deep_eq(log, {"a (destroy)", "x (anchor)"})
@@ -803,9 +803,9 @@ end)
 
 test.case("a hook anchored to lifetime.reachable alone runs with unreachable when collected", function()
     local log = {}
-    local held = hook(logger(log, "held"), nil, lifetime.reachable)
+    local held = hook(logger(log, "held"), lifetime.reachable)
     local function make()
-        hook(logger(log, "dropped"), nil, lifetime.reachable)
+        hook(logger(log, "dropped"), lifetime.reachable)
     end
     run_dropped(make)
     collect()
@@ -825,8 +825,8 @@ test.case("an unreferenced token's cascade kills its dependents with reason anch
         local period = token("period")
         local menu = attach(new_logged(log, "menu", function(self)
             saved = self
-        end), false, pin(period))
-        hook(logger(log, "hook"), nil, period)
+        end), pin(period))
+        hook(logger(log, "hook"), period)
         test.assert_true(sentinel_of(period) ~= nil)
         return menu ~= nil
     end
@@ -842,10 +842,10 @@ test.case("errors of a finalizer-run cascade all go to destroyerror, the first i
     local function make()
         local x = attach(new_logged(log, "x", function()
             error("x failed", 0)
-        end), false, lifetime.reachable)
+        end), lifetime.reachable)
         local y = attach(new_logged(log, "y", function()
             error("y failed", 0)
-        end), false, pin(x))
+        end), pin(x))
         return y ~= nil
     end
     with_handler(function(obj, e)
@@ -881,7 +881,7 @@ test.case("a finalizer that runs inside attach waits until attach has linked, th
     local function make()
         holder[1] = attach(new_logged(log, "U", function()
             destroy(a)
-        end), false, lifetime.reachable)
+        end), lifetime.reachable)
     end
     run_dropped(make)
     test.assert_true(sentinel_of(holder[1]) ~= nil, "U is registered and held")
@@ -915,7 +915,7 @@ test.case("a finalizer that runs inside attach waits until attach has linked, th
     collectgarbage("stop")
     holder[1] = nil
     debug.sethook(on_line, "l")
-    attach(obj, false, a)
+    attach(obj, a)
     debug.sethook()
     collectgarbage("restart")
     if jit_on then
@@ -972,7 +972,7 @@ test.case("a foreign __gc that raises inside attach does not stop later deaths b
         end
     end)
     debug.sethook(on_line, "l")
-    pcall(attach, {}, false, anchor)
+    pcall(attach, {}, anchor)
     debug.sethook()
     collectgarbage("restart")
     if jit_on then
@@ -981,7 +981,7 @@ test.case("a foreign __gc that raises inside attach does not stop later deaths b
     test.assert_true(fired, "the collection ran inside attach")
     local log = {}
     run_dropped(function()
-        attach(new_logged(log, "later"), false, lifetime.reachable)
+        attach(new_logged(log, "later"), lifetime.reachable)
     end)
     collect()
     test.assert_deep_eq(log, {"later (unreachable)"})
@@ -996,8 +996,8 @@ local lifetime = require("lifetime")
 local function logged(name)
     return setmetatable({}, {__destroy = function(_, reason) print(name .. " (" .. reason .. ")") end})
 end
-g = lifetime.attach(logged("g"), false, lifetime.reachable)
-local function make() lifetime.attach(logged("tmp"), false, lifetime.reachable) end
+g = lifetime.attach(logged("g"), lifetime.reachable)
+local function make() lifetime.attach(logged("tmp"), lifetime.reachable) end
 make()
 collectgarbage("collect")
 print("collected")
@@ -1010,7 +1010,7 @@ end)
 test.case("without the flag a finalizer at state close reports unreachable", function()
     local stdout, stderr = run_program([[
 local lifetime = require("lifetime")
-g = lifetime.attach(setmetatable({}, {__destroy = function(_, reason) print("g (" .. reason .. ")") end}), false, lifetime.reachable)
+g = lifetime.attach(setmetatable({}, {__destroy = function(_, reason) print("g (" .. reason .. ")") end}), lifetime.reachable)
 ]])
     test.assert_eq(stderr, "")
     test.assert_eq(stdout, "g (unreachable)\n")
@@ -1057,9 +1057,9 @@ test.case("a token starts on the default lifetime and is seen; it is an anchor a
     local t = token("t")
     test.assert_true(rawequal(lifetime.of(t), lifetime.reachable))
     test.assert_true(state_of(t) ~= nil, "created by lifetime.token: seen")
-    test.assert_true(rawequal(attach(t, false, owner), t))
+    test.assert_true(rawequal(attach(t, owner), t))
     test.assert_eq(lifetime.format(lifetime.of(t)), "(owner, reachable)")
-    local x = attach({}, false, t)
+    local x = attach({}, t)
     test.assert_eq(lifetime.format(x), "(token t, reachable)")
     test.assert_deep_eq(lifetime.dependents(owner), {t})
     test.assert_deep_eq(lifetime.dependents(t), {x})
@@ -1068,9 +1068,9 @@ end)
 test.case("case 6: a token's period: destroy(period) runs hook then menu; destroy(session) then omits period", function()
     local log = {}
     local session = new_logged(log, "session")
-    local period = attach(token("period"), false, session)
-    local menu = attach(new_logged(log, "menu"), false, period)
-    hook(logger(log, "hook"), nil, period)
+    local period = attach(token("period"), session)
+    local menu = attach(new_logged(log, "menu"), period)
+    hook(logger(log, "hook"), period)
     test.assert_deep_eq(log, {})
     local where = THIS_FILE .. ":" .. debug.getinfo(1, "l").currentline + 1
     destroy(period)
@@ -1094,19 +1094,19 @@ test.case("a dead token names itself in the tombstone message and refuses anchor
         return t.x
     end, "attempt to index a dead table (token period, died at " .. where .. ", destroy)")
     test.assert_error(function()
-        attach({}, false, t)
+        attach({}, t)
     end, "attempt to anchor to a dead token")
     test.assert_error(function()
-        attach(t, false, {})
+        attach(t, {})
     end, "attempt to index a dead table (token period")
 end)
 
 test.case("a token can be moved, pinned and discarded", function()
     local log = {}
     local a, b = {}, {}
-    local t = attach(token("t"), false, pin(a))
-    hook(logger(log, "h"), nil, t)
-    attach(t, false, pin(b))
+    local t = attach(token("t"), pin(a))
+    hook(logger(log, "h"), t)
+    attach(t, pin(b))
     test.assert_deep_eq(lifetime.dependents(a), {})
     test.assert_deep_eq(lifetime.dependents(b), {t})
     discard(t)
@@ -1154,19 +1154,19 @@ end)
 test.case("alive of hooks, dependents of a cascade and scope dependents", function()
     local log = {}
     local a = {}
-    local h = hook(logger(log, "h"), nil, a)
+    local h = hook(logger(log, "h"), a)
     local seen = {}
     local dep = attach(new_logged(log, "dep", function(self)
         seen[1] = alive(self)
         seen[2] = alive(a)
-    end), false, a)
+    end), a)
     test.assert_true(alive(h))
     destroy(a)
     test.assert_deep_eq(seen, {true, true}, "dying, inside the cascade")
     test.assert_false(alive(h))
     test.assert_false(alive(dep))
     local s = enter("t.lt:1")
-    local x = attach({}, false, s)
+    local x = attach({}, s)
     test.assert_true(alive(x))
     exit(s, "t.lt:1")
     test.assert_false(alive(x))
@@ -1182,7 +1182,7 @@ test.case("task 003 case 7: a collected suspended coroutine's records die throug
         local co = coroutine.create(function()
             -- `local x = … @ lifetime.scope`: the suspended frame holds x.
             local s = enter("t.lt:10")
-            local x = attach(new_logged(log, "x"), false, s)
+            local x = attach(new_logged(log, "x"), s)
             coroutine.yield()
             exit(s, "t.lt:10")
             return x
@@ -1215,11 +1215,11 @@ test.case("a collected coroutine's records die innermost first, whichever sentin
             -- The order of the first links decides which record's sentinel
             -- is newer, and so which finalizer runs first.
             if outer_first then
-                hook(logger(log, "h1"), nil, s1)
-                hook(logger(log, "h2"), nil, s2)
+                hook(logger(log, "h1"), s1)
+                hook(logger(log, "h2"), s2)
             else
-                hook(logger(log, "h2"), nil, s2)
-                hook(logger(log, "h1"), nil, s1)
+                hook(logger(log, "h2"), s2)
+                hook(logger(log, "h1"), s1)
             end
             coroutine.yield()
             exit(s2, "t.lt:19")
@@ -1243,14 +1243,14 @@ test.case("F2: nested coroutines swap stacks; B's record dies inside A's resume,
     local depths = {}
     local before = depth()
     local m = enter("t.lt:40")
-    local m1 = attach(new_logged(log, "m1"), false, m)
+    local m1 = attach(new_logged(log, "m1"), m)
     local A = coroutine.create(function()
         local a = enter("t.lt:39")
-        local a1 = attach(new_logged(log, "a1"), false, a)
+        local a1 = attach(new_logged(log, "a1"), a)
         depths.a = depth()
         local B = coroutine.create(function()
             local b = enter("t.lt:38")
-            local b1 = attach(new_logged(log, "b1"), false, b)
+            local b1 = attach(new_logged(log, "b1"), b)
             depths.b = depth()
             coroutine.yield("b yielded")
             depths.b_resumed = depth()
@@ -1336,7 +1336,7 @@ end
 -- lifetime.reachable`"): its sentinel is armed before anything is
 -- attached to it or it to anything.
 local function registered(log, name, extra)
-    return attach(new_logged(log, name, extra), false, lifetime.reachable)
+    return attach(new_logged(log, name, extra), lifetime.reachable)
 end
 
 -- The number of active stack levels of the running coroutine.
@@ -1366,10 +1366,10 @@ test.case("case 1: a registered tree with three children dies from its root; sib
             local extra = i == 2 and function(self)
                 seen.c2 = alive(self.kid)
             end or nil
-            p.kids[i] = attach(registered(log, "c" .. i, extra), false, p)
+            p.kids[i] = attach(registered(log, "c" .. i, extra), p)
         end
         local c2 = p.kids[2]
-        c2.kid = attach(registered(log, "g"), false, c2)
+        c2.kid = attach(registered(log, "g"), c2)
         for i = 1, 3 do
             test.assert_true(slot_of(p) > slot_of(p.kids[i]), "p's proxy is newer than c" .. i .. "'s")
         end
@@ -1401,7 +1401,7 @@ test.case("case 2: a parent armed lazily at the link needs no exchange: its prox
         local c = registered(log, "c")
         local before = sentinel_of(c)
         local p = new_logged(log, "p") -- never seen: armed at its first link
-        attach(c, false, p)
+        attach(c, p)
         test.assert_true(rawequal(sentinel_of(c), before), "c kept its own proxy")
         before = nil -- luacheck: ignore 311
         test.assert_true(slot_of(p) > slot_of(c), "the parent's proxy, made at the link, is newer")
@@ -1422,9 +1422,9 @@ test.case("case 3: children created and registered before their parent die in th
     local function child_then_parent()
         local c = registered(log, "c")
         local p = registered(log, "p")
-        attach(c, false, p)
+        attach(c, p)
         p.c = c
-        c.g = attach(registered(log, "g"), false, c)
+        c.g = attach(registered(log, "g"), c)
         test.assert_true(slot_of(p) > slot_of(c) and slot_of(c) > slot_of(c.g), "p, c, g newest first")
     end
     run_dropped(child_then_parent)
@@ -1434,10 +1434,10 @@ test.case("case 3: children created and registered before their parent die in th
     local function bottom_up()
         local g = registered(log, "g")
         local c = registered(log, "c")
-        attach(g, false, c)
+        attach(g, c)
         c.g = g
         local p = registered(log, "p")
-        attach(c, false, p)
+        attach(c, p)
         p.c = c
     end
     run_dropped(bottom_up)
@@ -1453,7 +1453,7 @@ test.case("case 4: x @ (a, b), a older than b and x newest: x dies anchor in the
     local function make()
         local a = registered(log, "a")
         local b = registered(log, "b")
-        local x = attach(registered(log, "x"), false, a, b)
+        local x = attach(registered(log, "x"), a, b)
         a.x, b.x = x, x
         test.assert_true(slot_of(a) > slot_of(x) and slot_of(b) > slot_of(x), "both anchors newer than x")
         test.assert_true(slot_of(a) > slot_of(b), "a took x's proxy, the newest")
@@ -1477,8 +1477,8 @@ test.case("case 5: a cycle of anchors ends the climb; each object dies once, one
     local function two()
         local a = registered(log, "a", deep)
         local b = registered(log, "b", deep)
-        attach(a, false, b)
-        attach(b, false, a)
+        attach(a, b)
+        attach(b, a)
         -- b's link exchanged with a (the climb from a stopped at b, which
         -- it had marked), and the descent from b exchanged back with its
         -- dependent a (stopping at b again): on a cycle the proxies stay
@@ -1498,13 +1498,13 @@ test.case("case 5: a cycle of anchors ends the climb; each object dies once, one
         local a = registered(log, "a", deep)
         local b = registered(log, "b", deep)
         local c = registered(log, "c", deep)
-        attach(a, false, b)
-        attach(b, false, c)
-        attach(c, false, a)
-        local x = attach(registered(log, "x", deep), false, a)
+        attach(a, b)
+        attach(b, c)
+        attach(c, a)
+        local x = attach(registered(log, "x", deep), a)
         a.x = x
         -- A move inside the cycle climbs it again.
-        attach(b, false, c)
+        attach(b, c)
     end
     run_dropped(three_and_a_dependent)
     base = stack_depth()
@@ -1533,8 +1533,8 @@ test.case("case 6: a move to an anchor older than the object exchanges at the mo
         local p2 = registered(log, "p2")
         local p1 = registered(log, "p1")
         local c = registered(log, "c")
-        attach(c, false, p1)
-        attach(c, false, p2)
+        attach(c, p1)
+        attach(c, p2)
         p2.c = c
         test.assert_true(slot_of(p2) > slot_of(c), "p2 took the newer proxy at the move")
         held.p1 = p1
@@ -1558,9 +1558,9 @@ test.case("case 7: a collected suspended coroutine's record takes its registered
     local function start()
         local co = coroutine.create(function()
             local s = enter("t.lt:10")
-            local y = attach(new_logged(log, "y"), false, s)
+            local y = attach(new_logged(log, "y"), s)
             local x = registered(log, "x")
-            attach(x, false, s)
+            attach(x, s)
             test.assert_true(slot_of(s) > slot_of(x) and slot_of(s) > slot_of(y), "the record's proxy is the newest")
             coroutine.yield()
             exit(s, "t.lt:10")
@@ -1582,9 +1582,9 @@ test.case("case 8: unrelated subtrees still die newest first, each from its root
     local log = {}
     local function make()
         local pa = registered(log, "pa")
-        pa.c = attach(registered(log, "ca"), false, pa)
+        pa.c = attach(registered(log, "ca"), pa)
         local pb = registered(log, "pb")
-        pb.c = attach(registered(log, "cb"), false, pb)
+        pb.c = attach(registered(log, "cb"), pb)
         return pa ~= pb
     end
     run_dropped(make)
@@ -1597,12 +1597,12 @@ test.case("a token with the term and a list form are ordered like tables; a sent
     local function make()
         local t = token("t")
         local holder = registered(log, "holder")
-        attach(t, false, holder)
+        attach(t, holder)
         local x = registered(log, "x")
-        attach(x, false, t, lifetime.reachable)
+        attach(x, t, lifetime.reachable)
         test.assert_true(slot_of(t) > slot_of(x), "the token took the newer proxy")
         test.assert_true(slot_of(holder) > slot_of(t), "and the climb went on to its anchor")
-        local pinned = attach(new_logged(log, "pinned"), false, pin(holder))
+        local pinned = attach(new_logged(log, "pinned"), pin(holder))
         test.assert_eq(slot_of(pinned), nil, "a pinned dependent has no proxy")
         holder.t, holder.x, holder.pinned = t, x, pinned
     end
@@ -1620,10 +1620,10 @@ test.case("an anchor armed lazily while it has anchors of its own climbs past th
         local p = registered(log, "p", function(self)
             seen.c = alive(self.c)
         end)
-        local c = attach({}, false, p)
+        local c = attach({}, p)
         p.c = c
         test.assert_eq(slot_of(c), nil, "c has nothing to run yet")
-        c.g = attach(registered(log, "g"), false, c)
+        c.g = attach(registered(log, "g"), c)
         test.assert_true(slot_of(p) > slot_of(c) and slot_of(c) > slot_of(c.g), "p, c, g newest first")
     end
     run_dropped(make)
@@ -1666,7 +1666,7 @@ test.case("random registered graphs built top down: every anchor's proxy is newe
                         -- The anchor holds its dependent, as a parent does.
                         nodes[j][name] = x
                     end
-                    attach(x, false, unpack(anchors))
+                    attach(x, unpack(anchors))
                 end
                 anchors_of[i] = list
             end
@@ -1676,7 +1676,7 @@ test.case("random registered graphs built top down: every anchor's proxy is newe
                 if #lifetime.dependents(nodes[i]) == 0 and i > 1 then
                     local j = rand(i - 1)
                     nodes[j]["n" .. i] = nodes[i]
-                    attach(nodes[i], false, nodes[j])
+                    attach(nodes[i], nodes[j])
                     anchors_of[i] = {j}
                 end
             end
@@ -1735,8 +1735,8 @@ test.case("a subtree moved under an older anchor dies from its root when only th
     local function make()
         local p = registered(log, "p")
         local c = registered(log, "c")
-        c.g = attach(registered(log, "g"), false, c)
-        attach(c, false, p)
+        c.g = attach(registered(log, "g"), c)
+        attach(c, p)
         test.assert_true(slot_of(p) > slot_of(c) and slot_of(c) > slot_of(c.g), "p, c, g newest first")
         held.p = p
     end
@@ -1754,11 +1754,11 @@ test.case("the descent goes down a chain of three below the moved object", funct
     local function make()
         local p = registered(log, "p")
         local c = registered(log, "c")
-        local g1 = attach(registered(log, "g1"), false, c)
-        local g2 = attach(registered(log, "g2"), false, g1)
-        local g3 = attach(registered(log, "g3"), false, g2)
+        local g1 = attach(registered(log, "g1"), c)
+        local g2 = attach(registered(log, "g2"), g1)
+        local g3 = attach(registered(log, "g3"), g2)
         c.g1, g1.g2, g2.g3 = g1, g2, g3
-        attach(c, false, p)
+        attach(c, p)
         local chain = {p, c, g1, g2, g3}
         for i = 1, 4 do
             test.assert_true(slot_of(chain[i]) > slot_of(chain[i + 1]), "newest first down the chain, at " .. i)
@@ -1779,7 +1779,7 @@ test.case("a moved object with several dependents exchanges with the newest; the
         local c = registered(log, "c")
         c.d = {}
         for i = 1, 3 do
-            c.d[i] = attach(registered(log, "d" .. i), false, c)
+            c.d[i] = attach(registered(log, "d" .. i), c)
         end
         local newest, newest_slot = nil, 0
         for i = 1, 3 do
@@ -1788,7 +1788,7 @@ test.case("a moved object with several dependents exchanges with the newest; the
             end
         end
         local p_slot = slot_of(p)
-        attach(c, false, p)
+        attach(c, p)
         test.assert_eq(slot_of(c), newest_slot, "c took its newest dependent's proxy")
         test.assert_eq(slot_of(newest), p_slot, "which took p's")
         for i = 1, 3 do
@@ -1815,15 +1815,15 @@ test.case("Treflove's shape: a session whose constructor attaches its procedures
         end)
         s.login = attach(registered(log, "login", function(self)
             seen.login = alive(self.rp)
-        end), false, s)
-        s.login.rp = attach(registered(log, "login_rp"), false, s.login)
-        s.data = attach(registered(log, "data_rp"), false, s)
+        end), s)
+        s.login.rp = attach(registered(log, "login_rp"), s.login)
+        s.data = attach(registered(log, "data_rp"), s)
         s.connection = connection
         return s
     end
     local function make()
         local connection = registered(log, "connection")
-        attach(Session(connection), false, connection)
+        attach(Session(connection), connection)
         held.connection = connection
     end
     run_dropped(make)
@@ -1841,9 +1841,9 @@ test.case("a pinned anchor is transparent: the dependent's proxy is ordered agai
     local log = {}
     local function one()
         local b = registered(log, "b")
-        local a = attach(new_logged(log, "a"), false, pin(b))
+        local a = attach(new_logged(log, "a"), pin(b))
         b.a = a
-        a.x = attach(registered(log, "x"), false, a)
+        a.x = attach(registered(log, "x"), a)
         test.assert_eq(slot_of(a), nil, "a has no proxy")
         test.assert_true(slot_of(b) > slot_of(a.x), "b newer than x, through a")
     end
@@ -1853,10 +1853,10 @@ test.case("a pinned anchor is transparent: the dependent's proxy is ordered agai
     log = {}
     local function chain()
         local b = registered(log, "b")
-        local a1 = attach(new_logged(log, "a1"), false, pin(b))
-        local a2 = attach(new_logged(log, "a2"), false, pin(a1))
+        local a1 = attach(new_logged(log, "a1"), pin(b))
+        local a2 = attach(new_logged(log, "a2"), pin(a1))
         b.a1, a1.a2 = a1, a2
-        a2.x = attach(registered(log, "x"), false, a2)
+        a2.x = attach(registered(log, "x"), a2)
         test.assert_true(slot_of(b) > slot_of(a2.x), "b newer than x, through a1 and a2")
     end
     run_dropped(chain)
@@ -1870,10 +1870,10 @@ test.case("a pinned dependent on the descent path is passed through to its depen
     local function make()
         local p = registered(log, "p")
         local c = registered(log, "c")
-        local t = attach(new_logged(log, "t"), false, pin(c))
+        local t = attach(new_logged(log, "t"), pin(c))
         c.t = t
-        t.x = attach(registered(log, "x"), false, t)
-        attach(c, false, p)
+        t.x = attach(registered(log, "x"), t)
+        attach(c, p)
         test.assert_true(slot_of(p) > slot_of(c) and slot_of(c) > slot_of(t.x), "p, c, then x below the pinned t")
         held.p = p
     end
@@ -1890,8 +1890,8 @@ test.case("an object that loses its proxy (pinned by a move) passes its new anch
     local function make()
         local q = registered(log, "q")
         local m = registered(log, "m")
-        m.y = attach(registered(log, "y"), false, m)
-        attach(m, false, pin(q))
+        m.y = attach(registered(log, "y"), m)
+        attach(m, pin(q))
         q.m = m
         test.assert_eq(slot_of(m), nil, "m lost its proxy")
         test.assert_true(slot_of(q) > slot_of(m.y), "q newer than y, through m")
@@ -1913,8 +1913,8 @@ test.case("a list form with a dependent below: the proxy the descent gives back 
         local a = registered(log, "a")
         local b = registered(log, "b")
         local m = registered(log, "m")
-        m.d = attach(registered(log, "d"), false, m)
-        attach(m, false, a, b)
+        m.d = attach(registered(log, "d"), m)
+        attach(m, a, b)
         b.m = m
         test.assert_true(slot_of(a) > slot_of(m) and slot_of(b) > slot_of(m) and slot_of(m) > slot_of(m.d), "both anchors newer than m, m newer than d")
         held.a = a
@@ -1931,9 +1931,9 @@ test.case("a cycle of pinned anchors ends the walk through them", function()
     local function make()
         local a = new_logged(log, "a")
         local b = new_logged(log, "b")
-        attach(a, false, pin(b))
-        attach(b, false, pin(a))
-        a.x = attach(registered(log, "x"), false, a)
+        attach(a, pin(b))
+        attach(b, pin(a))
+        a.x = attach(registered(log, "x"), a)
     end
     run_dropped(make)
     collect()
@@ -1997,7 +1997,7 @@ test.case("random graphs in random order, with moves, pins and lists: the order 
                 nodes[j]["n" .. i] = nodes[i]
             end
             if #args > 0 then
-                attach(nodes[i], false, unpack(args))
+                attach(nodes[i], unpack(args))
             end
             anchors_of[i] = list
         end

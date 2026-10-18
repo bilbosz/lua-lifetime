@@ -1656,7 +1656,7 @@ local function check_anchor(a, level)
             if phase == "marker" then
                 error(MARKER_MESSAGE, level)
             end
-            error("attempt to anchor to a " .. phase .. (ast.token and " token" or " table"), level)
+            error("attempt to anchor to a " .. phase .. (ast.token and " token" or ast.n == nil and " scope" or " table"), level)
         end
         return true
     end
@@ -1732,6 +1732,13 @@ end
 -- `__destroy` not run"; docs/03-runtime.md, "The state of an object").
 -- The `reachable` field is therefore only ever `true` or `false`, and a
 -- collected object's record goes with the weak key.
+-- The argument error of an entry point called with no anchor: the anchors
+-- follow the object (`lifetime.attach(obj, a1, …)`, `lifetime.hook(f, a1,
+-- …)`) or the name and the function (`lifetime.named_hook(name, f, a1, …)`).
+local function no_anchor_message(fname)
+    return "bad argument #" .. (fname == "lifetime.named_hook" and "3" or "2") .. " to '" .. fname .. "' (anchor expected, got no value)"
+end
+
 local function attach_side(fname, obj, t, pin, count, ...)
     -- Step 2: every element, left to right, before anything changes.
     local term = false
@@ -1739,7 +1746,7 @@ local function attach_side(fname, obj, t, pin, count, ...)
         term = check_anchor((...), 5)
     else
         if count == 0 then
-            error("bad argument #3 to '" .. fname .. "' (anchor expected, got no value)", 4)
+            error(no_anchor_message(fname), 4)
         end
         for i = 1, count do
             if check_anchor((select(i, ...)), 5) then
@@ -1828,7 +1835,7 @@ local function attach_general(fname, obj, pin, count, ...)
         term = check_anchor((...), 4)
     else
         if count == 0 then
-            error("bad argument #3 to '" .. fname .. "' (anchor expected, got no value)", 3)
+            error(no_anchor_message(fname), 3)
         end
         for i = 1, count do
             if check_anchor((select(i, ...)), 4) then
@@ -1965,16 +1972,17 @@ local function attach_general(fname, obj, pin, count, ...)
 end
 
 -- docs/03-runtime.md, "Attachment: what `@` does": `lifetime.attach(obj,
--- pin, a1, …, an)` performs steps 1 to 4 of docs/02-semantics.md,
--- "Acquiring a lifetime", and returns `obj`. `pin` true attaches without
--- the implicit `reachable` term (hooks); otherwise the formula carries it
--- when any element does ("The implicit `reachable` term"), so a list of
--- `lifetime.pin` values alone is pinned. A formula without the term is
--- pinned: the anchors hold the object in their `strong` tables. A hook
--- stays pinned whatever `pin` says, unless its formula is the term
--- alone. Step 5, the sentinel, follows docs/03-runtime.md, "The
--- sentinel".
-function lifetime.attach(obj, pin, ...)
+-- a1, …, an)` performs steps 1 to 4 of docs/02-semantics.md,
+-- "Acquiring a lifetime", and returns `obj`. It is what `e @ a` compiles
+-- to and what a program that is not transpiled writes itself
+-- (docs/02-semantics.md, "The library form"). The formula carries the
+-- implicit `reachable` term when any element does ("The implicit
+-- `reachable` term"), so a list of `lifetime.pin` values alone is
+-- pinned. A formula without the term is pinned: the anchors hold the
+-- object in their `strong` tables. A hook stays pinned (`attach_general`
+-- sets `pin` for a hook), unless its formula is the term alone. Step 5,
+-- the sentinel, follows docs/03-runtime.md, "The sentinel".
+function lifetime.attach(obj, ...)
     local count = select("#", ...)
 
     -- The common case, without a call: one anchor, a live table the
@@ -1999,7 +2007,7 @@ function lifetime.attach(obj, pin, ...)
                         a,
                         false,
                         n = 1,
-                        reachable = not pin,
+                        reachable = true,
                         deps = false,
                         phase = false,
                         phase_id = phase_id,
@@ -2017,7 +2025,7 @@ function lifetime.attach(obj, pin, ...)
                     -- and the anchor's own anchors are `climb`'s.
                     local deps = ast.deps
                     local smt = false
-                    if not pin and mt ~= nil and rawget(mt, "__destroy") ~= nil then
+                    if mt ~= nil and rawget(mt, "__destroy") ~= nil then
                         local n = armed_n + 1
                         smt = kept[n]
                         if smt then
@@ -2069,7 +2077,7 @@ function lifetime.attach(obj, pin, ...)
                     -- `link`, its common case inlined: an unpinned link
                     -- to an anchor that has its list (outside any destroy
                     -- phase, so compaction may run).
-                    if deps and not pin then
+                    if deps then
                         local s = deps.seq
                         if s - deps.lo >= deps.limit then
                             s = compact(a, ast, deps)
@@ -2078,7 +2086,7 @@ function lifetime.attach(obj, pin, ...)
                         deps.seq = s + 1
                         st[2] = s
                     else
-                        st[2] = link(a, ast, obj, pin)
+                        st[2] = link(a, ast, obj, false)
                     end
                     -- Not exchanged above: the anchor's first link (one
                     -- comparison, an exchange only when it had its proxy
@@ -2117,7 +2125,7 @@ function lifetime.attach(obj, pin, ...)
                     end
                     return obj
                 end
-            elseif not st.phase and st.n == 1 and st.reachable and not pin then
+            elseif not st.phase and st.n == 1 and st.reachable then
                 -- The ordinary move. It runs in a `busy` region like every
                 -- other operation: even a store that allocates nothing can
                 -- meet a debug hook that does (task 004, review round 1).
@@ -2154,7 +2162,7 @@ function lifetime.attach(obj, pin, ...)
         end
     end
 
-    local result = attach_general("lifetime.attach", obj, pin, count, ...)
+    local result = attach_general("lifetime.attach", obj, false, count, ...)
     return result
 end
 
@@ -2378,15 +2386,16 @@ end
 -- Hooks
 ------------------------------------------------------------------------
 
--- docs/03-runtime.md, "Hooks": "`lifetime.hook(f, name, a1, …)` creates a
+-- docs/03-runtime.md, "Hooks": "`lifetime.hook(f, a1, …)` creates a
 -- hook: a table with a state record, the metatable `"hook"`, the
--- function, and the name (a constant string the emitter passes for a
--- named hook, `nil` otherwise). It is attached pinned to its anchors and
--- linked into each anchor's `strong` list, never into `dependents`, so
--- the anchor holds it strongly; it never carries a sentinel. Its body
--- calls `f(reason)`." Except, since docs/05-decisions.md, "A hook
--- anchored to `lifetime.reachable` alone runs when collected": a hook
--- whose formula is the term alone carries one (`attach_general`).
+-- function, and the name (`lifetime.named_hook(name, f, a1, …)`, which
+-- the emitter calls for a named hook; `nil` otherwise). It is attached
+-- pinned to its anchors and linked into each anchor's `strong` list,
+-- never into `dependents`, so the anchor holds it strongly; it never
+-- carries a sentinel. Its body calls `f(reason)`." Except, since
+-- docs/05-decisions.md, "A hook anchored to `lifetime.reachable` alone
+-- runs when collected": a hook whose formula is the term alone carries
+-- one (`attach_general`).
 --
 -- The hook's record is an ordinary state record plus `fn`, with `name`
 -- holding the name it was created with, and without `deps` (a hook is
@@ -2394,8 +2403,10 @@ end
 -- hash part keeps eight slots. docs/02-semantics.md, "Hooks: the `!@`
 -- operator": "The left operand must be a function: `attempt to defer a
 -- number value`. A hook is not a function, so `h !@ x` on a hook is
--- `attempt to defer a hook value`".
-function lifetime.hook(f, name, ...)
+-- `attempt to defer a hook value`". `level` is the entry point's caller,
+-- where the error is raised; the two entry points call this without a
+-- tail call (as `attach_general` expects of them), so it is 3.
+local function new_hook(f, name, level)
     if type(f) ~= "function" then
         local what = type(f)
         if what == "table" then
@@ -2404,7 +2415,7 @@ function lifetime.hook(f, name, ...)
                 what = mt
             end
         end
-        error("attempt to defer a " .. what .. " value", 2)
+        error("attempt to defer a " .. what .. " value", level)
     end
     local h = {}
     local st = {
@@ -2421,27 +2432,52 @@ function lifetime.hook(f, name, ...)
     }
     h[STATE] = st
     setmetatable(h, HOOK_MT)
+    return h, st
+end
 
-    -- The common case, as in `attach`: one live anchor the runtime has
-    -- seen (a scope record always is). A new object may be anchored
-    -- during a destroy phase, so no phase test is needed here.
-    local count = select("#", ...)
-    if count == 1 then
-        local a = ...
-        local ast = type(a) == "table" and rawget(a, STATE)
-        if ast and not ast.phase then
-            busy = 1
-            st[1] = a
-            st[2] = link(a, ast, h, true)
-            st.n = 1
-            busy = 0
-            if busy == 0 and queue_tail ~= 0 then
-                drain()
-            end
-            return h
+-- The common case, as in `attach`: one live anchor the runtime has seen
+-- (a scope record always is). A new object may be anchored during a
+-- destroy phase, so no phase test is needed here. True when it linked.
+local function link_hook(h, st, a)
+    local ast = type(a) == "table" and rawget(a, STATE)
+    if ast and not ast.phase then
+        busy = 1
+        st[1] = a
+        st[2] = link(a, ast, h, true)
+        st.n = 1
+        busy = 0
+        if busy == 0 and queue_tail ~= 0 then
+            drain()
         end
+        return true
+    end
+    return false
+end
+
+function lifetime.hook(f, ...)
+    local h, st = new_hook(f, nil, 3)
+    local count = select("#", ...)
+    if count == 1 and link_hook(h, st, (...)) then
+        return h
     end
     local result = attach_general("lifetime.hook", h, true, count, ...)
+    return result
+end
+
+-- docs/02-semantics.md, "Named hooks": "A hook created as the value
+-- bound to a name carries that name"; the emitter passes the binding
+-- target's name, and a program that is not transpiled names its hook
+-- here (docs/02-semantics.md, "The library form").
+function lifetime.named_hook(name, f, ...)
+    if type(name) ~= "string" then
+        error("bad argument #1 to 'lifetime.named_hook' (string expected, got " .. type(name) .. ")", 2)
+    end
+    local h, st = new_hook(f, name, 3)
+    local count = select("#", ...)
+    if count == 1 and link_hook(h, st, (...)) then
+        return h
+    end
+    local result = attach_general("lifetime.named_hook", h, true, count, ...)
     return result
 end
 
@@ -2621,10 +2657,24 @@ local function destroy_entry(deps, strong, other, i, id, where)
     end
 end
 
+-- The position of a record `lifetime.block` made ("The library form"):
+-- its function's chunk and line, in place of the block's `end` the
+-- emitter passes to `enter`. Read with `debug.getinfo` once per cascade
+-- that has something to destroy, never per block entry (CLAUDE.md,
+-- "Technical decisions"), and only for such a record: the emitter's
+-- records always carry their position.
+local function block_where(rec)
+    local info = debug_getinfo(rec.fn, "S")
+    return info.short_src .. ":" .. info.linedefined
+end
+
 local function scope_cascade(rec, where)
     rec.phase = "dying"
     local deps = rec.deps
     if deps then
+        if not where then
+            where = block_where(rec)
+        end
         local strong, other = rec.strong, deps.other
         local id = phase_counter + 1
         phase_counter = id
@@ -2754,7 +2804,43 @@ function lifetime.exit(rec, line)
         if raise then
             error(err, 0)
         end
+    else
+        -- Dead like a record that had dependents, so that a record the
+        -- library form handed out ("The library form") refuses anchors
+        -- after its block has returned.
+        rec.phase = "dead"
     end
+end
+
+-- docs/02-semantics.md, "The library form": `lifetime.block(fn, …)` runs
+-- `fn(record, …)` in a block of its own and returns what `fn` returns.
+-- The record is the block's anchor for `lifetime.attach` and
+-- `lifetime.hook` inside `fn`, as the scope local is for the generated
+-- code; it is pushed and popped as `enter` and `exit` do, with no
+-- position (`block_where` reads the function's when a tombstone needs
+-- it) and no `pcall` between the block and its body, so an error in
+-- `fn` unwinds the record at the raise point like any block's
+-- (docs/03-runtime.md, "The scope stack and the error path"), and `fn`
+-- may yield. The results pass through a vararg frame, never a table.
+local scope_exit = lifetime.exit
+
+local function block_exit(rec, ...)
+    scope_exit(rec, false)
+    return ...
+end
+
+function lifetime.block(fn, ...)
+    if type(fn) ~= "function" then
+        error("bad argument #1 to 'lifetime.block' (function expected, got " .. type(fn) .. ")", 2)
+    end
+    local s = stack
+    local n = s.n + 1
+    local rec = {deps = false, strong = false, phase = false, line = false, depth = n, stack = s, fn = fn}
+    rec[STATE] = rec
+    setmetatable(rec, SCOPE_MT)
+    s[n] = rec
+    s.n = n
+    return block_exit(rec, fn(rec, ...))
 end
 
 -- The error path: every record of `s` above `depth` dies, innermost

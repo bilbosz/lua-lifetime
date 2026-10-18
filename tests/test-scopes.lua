@@ -19,7 +19,7 @@ local test = require("tests.lib.test")
 local lifetime = require("lifetime")
 
 local attach, destroy, discard = lifetime.attach, lifetime.destroy, lifetime.discard
-local enter, exit, hook = lifetime.enter, lifetime.exit, lifetime.hook
+local enter, exit, hook, named_hook = lifetime.enter, lifetime.exit, lifetime.hook, lifetime.named_hook
 
 -- A logging object: `__tostring` gives `name`, `__destroy` appends
 -- `name (reason)` to `log`, and `extra(self, reason)` runs inside the body
@@ -227,9 +227,9 @@ end)
 test.case("exit destroys the record's dependents in reverse attachment order, reason anchor, at the exit", function()
     local log = {}
     local s = enter("t.lt:20")
-    local a = attach(new_logged(log, "a"), false, s)
-    local b = attach(new_logged(log, "b"), false, s)
-    local c = attach(new_logged(log, "c"), false, s)
+    local a = attach(new_logged(log, "a"), s)
+    local b = attach(new_logged(log, "b"), s)
+    local c = attach(new_logged(log, "c"), s)
     test.assert_deep_eq(lifetime.dependents(s), {a, b, c})
     test.assert_eq(lifetime.format(a), "(scope, reachable)")
     test.assert_deep_eq(log, {}, "nothing dies before the exit")
@@ -247,11 +247,11 @@ end)
 test.case("the example of Cascading death: c, d, a, hook, b", function()
     local log = {}
     local s = enter("t.lt:7")
-    local a = attach(new_logged(log, "a"), false, s)
-    local b = attach(new_logged(log, "b"), false, a)
-    local c = attach(new_logged(log, "c"), false, s)
-    local d = attach(new_logged(log, "d"), false, a, c)
-    hook(logger(log, "hook on a"), nil, a)
+    local a = attach(new_logged(log, "a"), s)
+    local b = attach(new_logged(log, "b"), a)
+    local c = attach(new_logged(log, "c"), s)
+    local d = attach(new_logged(log, "d"), a, c)
+    hook(logger(log, "hook on a"), a)
     exit(s, "t.lt:7")
     test.assert_deep_eq(log, {"c (anchor)", "d (anchor)", "a (anchor)", "hook on a (anchor)", "b (anchor)"})
     test.assert_eq(getmetatable(b), "dead")
@@ -262,8 +262,8 @@ test.case("case 3: nested records are independent; each exit kills only its own 
     local log = {}
     local outer = enter("t.lt:40")
     local inner = enter("t.lt:39")
-    local x = attach(new_logged(log, "x"), false, outer)
-    local y = attach(new_logged(log, "y"), false, inner)
+    local x = attach(new_logged(log, "x"), outer)
+    local y = attach(new_logged(log, "y"), inner)
     -- Nothing links the records: neither refers to the other.
     for _, v in pairs(inner) do
         test.assert_false(rawequal(v, outer))
@@ -285,7 +285,7 @@ test.case("each entry is a new record: a loop body's dependent dies at the end o
     for i = 1, 3 do
         local s = enter("t.lt:60")
         records[i] = s
-        local x = attach(new_logged(log, "x" .. i), false, s)
+        local x = attach(new_logged(log, "x" .. i), s)
         log[#log + 1] = "body " .. i
         exit(s, "t.lt:60")
         test.assert_eq(getmetatable(x), "dead")
@@ -298,9 +298,9 @@ test.case("a record whose dependents were moved away or destroyed has nothing le
     local log = {}
     local s = enter("t.lt:70")
     local keep = {}
-    local moved = attach(new_logged(log, "moved"), false, s)
-    local gone = attach(new_logged(log, "gone"), false, s)
-    attach(moved, false, keep)
+    local moved = attach(new_logged(log, "moved"), s)
+    local gone = attach(new_logged(log, "gone"), s)
+    attach(moved, keep)
     destroy(gone)
     test.assert_deep_eq(log, {"gone (destroy)"})
     exit(s, "t.lt:70")
@@ -317,10 +317,10 @@ test.case("the first destructor error is raised at the exit, after the whole cas
     -- as the generated locals would (CLAUDE.md, rule 6).
     local a = attach(new_logged(log, "a", function()
         error("a failed", 0)
-    end), false, s)
+    end), s)
     local b = attach(new_logged(log, "b", function()
         error("b failed", 0)
-    end), false, s)
+    end), s)
     local routed = {}
     local err
     with_handler(function(obj, e)
@@ -342,13 +342,13 @@ test.case("a dependent of a record cannot be moved during the scope exit; a fres
     local other = {}
     local s = enter("t.lt:90")
     local fresh_ok, move_err
-    local older = attach({}, false, s)
+    local older = attach({}, s)
     local x = attach(new_logged(log, "x", function()
-        fresh_ok = pcall(attach, {}, false, other)
+        fresh_ok = pcall(attach, {}, other)
         local ok
-        ok, move_err = pcall(attach, older, false, other)
+        ok, move_err = pcall(attach, older, other)
         test.assert_false(ok)
-    end), false, s) -- held: rule 6
+    end), s) -- held: rule 6
     exit(s, "t.lt:90")
     test.assert_deep_eq(log, {"x (anchor)"})
     test.assert_false(lifetime.alive(x))
@@ -369,23 +369,23 @@ test.case("a record's list is reused only when its exit emptied it", function()
         log[#log + 1] = "exited"
     end)
     lifetime.of(a)
-    local x = attach(new_logged(log, "x"), false, a, s)
+    local x = attach(new_logged(log, "x"), a, s)
     destroy(a)
     test.assert_deep_eq(log, {"a (destroy)", "exited", "x (anchor)"})
     test.assert_eq(getmetatable(x), "dead")
     local b = {}
-    local y = attach({}, false, b)
+    local y = attach({}, b)
     test.assert_deep_eq(lifetime.dependents(b), {y})
     -- And a list that was emptied is reused without carrying anything.
     local s2 = enter("t.lt:111")
-    attach({}, false, s2)
+    attach({}, s2)
     hook(function()
-    end, nil, s2)
+    end, s2)
     exit(s2, "t.lt:111")
     local c = {}
-    local z = attach({}, false, c)
+    local z = attach({}, c)
     local h = hook(function()
-    end, nil, c)
+    end, c)
     test.assert_deep_eq(lifetime.dependents(c), {z, h})
 end)
 
@@ -426,10 +426,10 @@ test.suite("scopes: hooks")
 test.case("case 1: hooks on a scope interleave with its dependents, last attached first", function()
     local log = {}
     local s = enter("t.lt:3")
-    local f = attach(new_logged(log, "f"), false, s)
-    hook(logger(log, "after f is still open"), nil, s)
-    local g = attach(new_logged(log, "g"), false, s)
-    hook(logger(log, "runs first"), nil, s)
+    local f = attach(new_logged(log, "f"), s)
+    hook(logger(log, "after f is still open"), s)
+    local g = attach(new_logged(log, "g"), s)
+    hook(logger(log, "runs first"), s)
     test.assert_deep_eq(log, {})
     exit(s, "t.lt:6")
     test.assert_deep_eq(log, {"runs first (anchor)", "g (anchor)", "after f is still open (anchor)", "f (anchor)"})
@@ -444,7 +444,7 @@ test.case("case 2: a hook on an object runs after its __destroy, while the objec
     lifetime.of(conn)
     hook(function(reason)
         log[#log + 1] = "hook sees " .. conn.id .. " (" .. reason .. ")"
-    end, nil, conn)
+    end, conn)
     destroy(conn)
     test.assert_deep_eq(log, {"conn (destroy)", "hook sees conn (anchor)"})
     test.assert_eq(getmetatable(conn), "dead")
@@ -453,11 +453,11 @@ end)
 test.case("a hook takes its place among an object's dependents by attachment order", function()
     local log = {}
     local root = new_logged(log, "root")
-    local x = attach(new_logged(log, "x"), false, root)
-    hook(logger(log, "h1"), nil, root)
-    local y = attach(new_logged(log, "y"), false, root)
-    hook(logger(log, "h2"), nil, root)
-    local z = attach(new_logged(log, "z"), false, root)
+    local x = attach(new_logged(log, "x"), root)
+    hook(logger(log, "h1"), root)
+    local y = attach(new_logged(log, "y"), root)
+    hook(logger(log, "h2"), root)
+    local z = attach(new_logged(log, "z"), root)
     test.assert_eq(#lifetime.dependents(root), 5)
     test.assert_true(rawequal(lifetime.dependents(root)[1], x))
     test.assert_eq(getmetatable(lifetime.dependents(root)[2]), "hook")
@@ -472,7 +472,7 @@ test.case("a hook is pinned: its anchor holds it, nothing else needs to", functi
     local probe = setmetatable({}, {__mode = "k"})
     local a = {}
     do
-        local h = hook(logger(log, "h"), nil, a)
+        local h = hook(logger(log, "h"), a)
         probe[h] = true
     end
     collectgarbage("collect")
@@ -486,9 +486,9 @@ end)
 test.case("an anchor holds nothing strongly but its hooks and pinned dependents", function()
     local probe = setmetatable({}, {__mode = "k"})
     local a = {}
-    local pinned = attach({}, true, a)
+    local pinned = attach({}, lifetime.pin(a))
     do
-        local loose = attach({}, false, a)
+        local loose = attach({}, a)
         probe[loose] = true
     end
     collectgarbage("collect")
@@ -499,7 +499,7 @@ test.case("an anchor holds nothing strongly but its hooks and pinned dependents"
     local function make()
         local b = {}
         probe[hook(function()
-        end, nil, b)] = true
+        end, b)] = true
         return b
     end
     local b = make()
@@ -511,18 +511,18 @@ end)
 
 test.case("lifetime.hook(5) and a hook as the function raise attempt to defer", function()
     test.assert_error(function()
-        hook(5, nil, {})
+        hook(5, {})
     end, "attempt to defer a number value")
     test.assert_error(function()
-        hook(nil, nil, {})
+        hook(nil, {})
     end, "attempt to defer a nil value")
     test.assert_error(function()
-        hook({}, nil, {})
+        hook({}, {})
     end, "attempt to defer a table value")
     local h = hook(function()
-    end, nil, {})
+    end, {})
     test.assert_error(function()
-        hook(h, nil, {})
+        hook(h, {})
     end, "attempt to defer a hook value")
 end)
 
@@ -530,29 +530,37 @@ test.case("hook errors name the caller's position; anchors are validated as by @
     local this = debug.getinfo(1, "S").short_src
     local line = debug.getinfo(1, "l").currentline + 2
     local ok, err = pcall(function()
-        hook(5, nil, {})
+        hook(5, {})
     end)
     test.assert_false(ok)
     test.assert_eq(err, this .. ":" .. line .. ": attempt to defer a number value")
     test.assert_error(function()
         hook(function()
-        end, nil, nil)
+        end, nil)
     end, "attempt to anchor to a nil value")
     test.assert_error(function()
         hook(function()
-        end, nil)
-    end, "bad argument #3 to 'lifetime.hook' (anchor expected, got no value)")
+        end)
+    end, "bad argument #2 to 'lifetime.hook' (anchor expected, got no value)")
+    test.assert_error(function()
+        named_hook("h", function()
+        end)
+    end, "bad argument #3 to 'lifetime.named_hook' (anchor expected, got no value)")
+    test.assert_error(function()
+        named_hook(nil, function()
+        end, {})
+    end, "bad argument #1 to 'lifetime.named_hook' (string expected, got nil)")
     local dead = {}
     destroy(dead)
     test.assert_error(function()
         hook(function()
-        end, nil, {}, dead)
+        end, {}, dead)
     end, "attempt to anchor to a dead table")
 end)
 
 test.case("calling, indexing or assigning to a hook raises the hook errors; getmetatable is hook", function()
     local h = hook(function()
-    end, nil, {})
+    end, {})
     test.assert_eq(getmetatable(h), "hook")
     test.assert_error(function()
         h()
@@ -570,12 +578,12 @@ end)
 
 test.case("a named hook renders as hook NAME; an anonymous one as hook: 0x...", function()
     local a = {}
-    local cleanup = hook(function()
-    end, "cleanup", a)
+    local cleanup = named_hook("cleanup", function()
+    end, a)
     test.assert_eq(tostring(cleanup), "hook cleanup")
     test.assert_eq(lifetime.format(cleanup), "hook cleanup")
     local anonymous = hook(function()
-    end, nil, a)
+    end, a)
     test.assert_true(tostring(anonymous):match("^hook: 0x%x+$") ~= nil, tostring(anonymous))
     test.assert_eq(lifetime.format(anonymous), "hook")
     -- The formula of a hook has no term: it is pinned.
@@ -596,7 +604,7 @@ end)
 test.case("destroy(h) runs f('destroy') once; afterwards the hook is dead and destroy and discard do nothing", function()
     local log = {}
     local a = {}
-    local h = hook(logger(log, "f"), "h", a)
+    local h = named_hook("h", logger(log, "f"), a)
     destroy(h)
     test.assert_deep_eq(log, {"f (destroy)"})
     test.assert_eq(getmetatable(h), "dead")
@@ -610,21 +618,21 @@ test.case("destroy(h) runs f('destroy') once; afterwards the hook is dead and de
     test.assert_deep_eq(lifetime.dependents(a), {})
     -- Moving a dead hook raises the dead-object error.
     test.assert_error(function()
-        attach(h, false, {})
+        attach(h, {})
     end, "attempt to index a dead table (hook h")
 end)
 
 test.case("case 6: discard cancels a hook; a hook moved with @ runs when its new anchor dies, still pinned", function()
     local log = {}
     local s = enter("t.lt:120")
-    local cancelled = hook(logger(log, "cancelled"), "cancelled", s)
-    local moved = hook(logger(log, "moved"), "moved", s)
-    hook(logger(log, "stays"), nil, s)
+    local cancelled = named_hook("cancelled", logger(log, "cancelled"), s)
+    local moved = named_hook("moved", logger(log, "moved"), s)
+    hook(logger(log, "stays"), s)
     discard(cancelled)
     test.assert_deep_eq(log, {}, "discard never runs f")
     test.assert_eq(getmetatable(cancelled), "dead")
     local registry = {}
-    attach(moved, false, registry)
+    attach(moved, registry)
     test.assert_eq(lifetime.format(lifetime.of(moved)), tostring(registry), "the move kept it pinned")
     exit(s, "t.lt:120")
     test.assert_deep_eq(log, {"stays (anchor)"})
@@ -641,7 +649,7 @@ end)
 test.case("a hook on several anchors runs when the first of them dies, once", function()
     local log = {}
     local emitter, listener = {}, {}
-    hook(logger(log, "unsubscribe"), nil, emitter, listener)
+    hook(logger(log, "unsubscribe"), emitter, listener)
     test.assert_deep_eq(lifetime.dependents(emitter), lifetime.dependents(listener))
     destroy(listener)
     test.assert_deep_eq(log, {"unsubscribe (anchor)"})
@@ -656,11 +664,11 @@ test.case("a hook's error follows the destructor rule", function()
     hook(function()
         log[#log + 1] = "first"
         error("first failed", 0)
-    end, nil, a)
+    end, a)
     hook(function()
         log[#log + 1] = "second"
         error("second failed", 0)
-    end, nil, a)
+    end, a)
     local routed = {}
     local ok, err
     with_handler(function(obj, e)
@@ -679,7 +687,7 @@ test.case("a hook may be created during a destroy phase and anchored to a live o
     local log = {}
     local survivor = {}
     local root = new_logged(log, "root", function()
-        hook(logger(log, "late"), nil, survivor)
+        hook(logger(log, "late"), survivor)
     end)
     lifetime.of(root)
     destroy(root)
@@ -695,9 +703,9 @@ test.case("hooks are compacted with the other dependents and keep their order", 
     local function fill()
         for i = 1, 200 do
             if i % 20 == 0 then
-                kept[#kept + 1] = hook(logger(log, "h" .. i), nil, a)
+                kept[#kept + 1] = hook(logger(log, "h" .. i), a)
             else
-                attach({}, false, a)
+                attach({}, a)
             end
         end
     end
@@ -708,7 +716,7 @@ test.case("hooks are compacted with the other dependents and keep their order", 
     -- collected dependents left; these new ones are collected too.
     local function more()
         for _ = 1, 60 do
-            attach({}, false, a)
+            attach({}, a)
         end
     end
     more()
@@ -754,17 +762,17 @@ end)
 test.case("attach refuses the marker, through a variable or in a list, and never anchors to it", function()
     local s = lifetime.scope
     test.assert_error(function()
-        attach({}, false, s)
+        attach({}, s)
     end, "attempt to anchor to lifetime.scope through a variable")
     test.assert_error(function()
-        attach({}, false, {}, s)
+        attach({}, {}, s)
     end, "attempt to anchor to lifetime.scope through a variable")
     test.assert_error(function()
         hook(function()
-        end, nil, s)
+        end, s)
     end, "attempt to anchor to lifetime.scope through a variable")
     test.assert_error(function()
-        attach(s, false, {})
+        attach(s, {})
     end, "attempt to anchor to lifetime.scope through a variable")
     test.assert_error(function()
         destroy(s)
@@ -781,29 +789,29 @@ test.case("attach refuses the marker, through a variable or in a list, and never
     test.assert_deep_eq(lifetime.dependents(s), {})
     -- Still refused after all that.
     test.assert_error(function()
-        attach({}, false, s)
+        attach({}, s)
     end, "attempt to anchor to lifetime.scope through a variable")
 end)
 
 test.case("a scope record reached through a lifetime value cannot be destroyed or moved", function()
     local s = enter("t.lt:140")
-    local x = attach({}, false, s)
+    local x = attach({}, s)
     local record = lifetime.of(x)[1]
     test.assert_true(rawequal(record, s))
     test.assert_error(function()
         destroy(record)
     end, "bad argument #1 to 'destroy' (object expected, got scope)")
     test.assert_error(function()
-        attach(record, false, {})
+        attach(record, {})
     end, "attempt to anchor a scope value")
     -- Anchoring to it through the value works while the block is active.
-    local y = attach({}, false, lifetime.of(x))
+    local y = attach({}, lifetime.of(x))
     test.assert_deep_eq(lifetime.dependents(s), {x, y})
     exit(s, "t.lt:140")
     test.assert_eq(getmetatable(y), "dead")
     test.assert_error(function()
-        attach({}, false, record)
-    end, "attempt to anchor to a dead table")
+        attach({}, record)
+    end, "attempt to anchor to a dead scope")
 end)
 
 ------------------------------------------------------------------------
@@ -814,9 +822,9 @@ test.case("case 5: pcall unwinds the records pushed since it began, innermost fi
     local before = depth()
     local ok, err = pcall(function()
         local outer = enter("t.lt:160")
-        hold(attach(new_logged(log, "x"), false, outer))
+        hold(attach(new_logged(log, "x"), outer))
         local inner = enter("t.lt:158")
-        hold(attach(new_logged(log, "y"), false, inner))
+        hold(attach(new_logged(log, "y"), inner))
         log[#log + 1] = "raise"
         error("boom")
     end)
@@ -831,7 +839,7 @@ test.case("an unwound record's dependents die at the line of the block's end giv
     local x
     pcall(function()
         local s = enter("t.lt:177")
-        x = attach({}, false, s)
+        x = attach({}, s)
         error("boom")
     end)
     test.assert_error(function()
@@ -842,10 +850,10 @@ end)
 test.case("records of an enclosing block outside the pcall are not unwound", function()
     local log = {}
     local outside = enter("t.lt:190")
-    local keep = attach(new_logged(log, "outside"), false, outside)
+    local keep = attach(new_logged(log, "outside"), outside)
     pcall(function()
         local s = enter("t.lt:185")
-        hold(attach(new_logged(log, "inside"), false, s))
+        hold(attach(new_logged(log, "inside"), s))
         error("boom")
     end)
     test.assert_deep_eq(log, {"inside (anchor)"})
@@ -859,9 +867,9 @@ test.case("case 5: xpcall's handler runs at the raise point, before any record i
     local before = depth()
     local ok, err = xpcall(function()
         local outer = enter("t.lt:200")
-        hold(attach(new_logged(log, "x"), false, outer))
+        hold(attach(new_logged(log, "x"), outer))
         local inner = enter("t.lt:199")
-        hold(attach(new_logged(log, "y"), false, inner))
+        hold(attach(new_logged(log, "y"), inner))
         error("boom", 0)
     end, function(e)
         log[#log + 1] = "handler"
@@ -882,11 +890,11 @@ test.case("case 5: a destructor error during the unwind goes to destroyerror; th
     end, function()
         ok, err = pcall(function()
             local outer = enter("t.lt:220")
-            hold(attach(new_logged(log, "x"), false, outer))
+            hold(attach(new_logged(log, "x"), outer))
             local inner = enter("t.lt:219")
             hold(attach(new_logged(log, "d", function()
                 error("d", 0)
-            end), false, inner))
+            end), inner))
             error("boom", 0)
         end)
     end)
@@ -944,14 +952,14 @@ test.case("case 5a: a record a hidden catch left behind dies at the next exit th
     local log = {}
     local before = depth()
     local outer = enter("t.lt:240")
-    hold(attach(new_logged(log, "outer x"), false, outer))
+    hold(attach(new_logged(log, "outer x"), outer))
     -- `hidden_pcall` is the original pcall, as captured into a local before
     -- `lifetime` was required: the runtime does not see this catch.
     local ok = hidden_pcall(function()
         local r = enter("t.lt:236")
-        hold(attach(new_logged(log, "r y"), false, r))
+        hold(attach(new_logged(log, "r y"), r))
         local r2 = enter("t.lt:235")
-        hold(attach(new_logged(log, "r2 z"), false, r2))
+        hold(attach(new_logged(log, "r2 z"), r2))
         error("boom")
     end)
     test.assert_false(ok)
@@ -969,12 +977,12 @@ test.case("an exit that unwinds hidden records raises the first destructor error
     local outer = enter("t.lt:260")
     hold(attach(new_logged(log, "outer", function()
         error("outer failed", 0)
-    end), false, outer))
+    end), outer))
     hidden_pcall(function()
         local r = enter("t.lt:255")
         hold(attach(new_logged(log, "left", function()
             error("left failed", 0)
-        end), false, r))
+        end), r))
         error("boom")
     end)
     local ok, err
@@ -995,7 +1003,7 @@ test.case("a destructor body that raises with records of its own has them unwoun
     local before = depth()
     local root = new_logged(log, "root", function()
         local s = enter("t.lt:270")
-        hold(attach(new_logged(log, "inner"), false, s))
+        hold(attach(new_logged(log, "inner"), s))
         error("root failed", 0)
     end)
     lifetime.of(root)
@@ -1013,10 +1021,10 @@ test.case("case 4: a record in a coroutine survives a yield and dies at its exit
     local log = {}
     local main_before = depth()
     local main = enter("t.lt:300")
-    local main_x = attach(new_logged(log, "main x"), false, main)
+    local main_x = attach(new_logged(log, "main x"), main)
     local co = coroutine.create(function()
         local s = enter("t.lt:295")
-        hold(attach(new_logged(log, "x"), false, s))
+        hold(attach(new_logged(log, "x"), s))
         test.assert_eq(depth(), 1, "the coroutine has a stack of its own")
         coroutine.yield("yielded")
         log[#log + 1] = "resumed"
@@ -1041,12 +1049,12 @@ test.case("case 5b: a coroutine that raises has its records unwound before resum
     local log = {}
     local before = depth()
     local main = enter("t.lt:330")
-    hold(attach(new_logged(log, "main"), false, main))
+    hold(attach(new_logged(log, "main"), main))
     local co = coroutine.create(function()
         local s = enter("t.lt:325")
-        hold(attach(new_logged(log, "z"), false, s))
+        hold(attach(new_logged(log, "z"), s))
         local inner = enter("t.lt:324")
-        hold(attach(new_logged(log, "w"), false, inner))
+        hold(attach(new_logged(log, "w"), inner))
         coroutine.yield()
         error("boom", 0)
     end)
@@ -1066,7 +1074,7 @@ test.case("case 5b: a coroutine.wrap function unwinds the coroutine's records, t
     local before = depth()
     local w = coroutine.wrap(function()
         local s = enter("t.lt:345")
-        hold(attach(new_logged(log, "z"), false, s))
+        hold(attach(new_logged(log, "z"), s))
         coroutine.yield(1, nil, 3)
         error("boom", 0)
     end)
@@ -1089,7 +1097,7 @@ test.case("an error in a coroutine's destructor during its unwind goes to destro
             local s = enter("t.lt:360")
             hold(attach(new_logged({}, "z", function()
                 error("z failed", 0)
-            end), false, s))
+            end), s))
             error("boom", 0)
         end))
     end)
@@ -1103,7 +1111,7 @@ test.case("a refused resume (a running coroutine resuming itself) leaves its sta
     local co
     co = coroutine.create(function()
         local s = enter("t.lt:380")
-        hold(attach(new_logged(log, "x"), false, s))
+        hold(attach(new_logged(log, "x"), s))
         local ok, err = coroutine.resume(co)
         log[#log + 1] = tostring(ok) .. " " .. tostring(err):gsub("^.*: ", "")
         exit(s, "t.lt:380")
@@ -1135,7 +1143,7 @@ test.case("a suspended coroutine whose hook refers to it can still be collected"
             local s = enter("t.lt:400")
             hook(function()
                 return co
-            end, nil, s)
+            end, s)
             coroutine.yield()
             exit(s, "t.lt:400")
         end)

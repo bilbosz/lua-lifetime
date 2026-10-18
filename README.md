@@ -25,7 +25,22 @@ end
 
 Lua source with `@`, the hook operator `!@` and `lifetime.scope` goes in,
 plain Lua 5.1 comes out, and the generated code calls into the runtime
-module `lifetime`, which is the language's own `lifetime` table.
+module `lifetime`, which is the language's own `lifetime` table. A
+program that is not transpiled writes those calls itself, with the same
+semantics (`docs/02-semantics.md`, "The library form"):
+
+```lua
+local lifetime = require("lifetime")
+
+local function serve(socket)
+  return lifetime.block(function(scope)
+    local conn = lifetime.attach(Connection.open(socket), scope)   -- @ lifetime.scope
+    local buf = lifetime.attach(Buffer.new(64 * 1024), conn)       -- @ conn
+    lifetime.hook(function() metrics.connections = metrics.connections - 1 end, conn)  -- !@ conn
+    return handle(buf)
+  end)
+end
+```
 Ownership is deterministic: anchored lifetimes, scope exit, `lifetime.destroy`,
 the cascade order, hooks and destructors run by them. Plain reachability
 is Lua's collector, with `collectgarbage("collect")` as the point a
