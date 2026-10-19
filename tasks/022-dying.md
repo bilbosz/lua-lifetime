@@ -4,7 +4,7 @@ title: Runtime: `lifetime.dying(x)`, the dying-phase query, for a hook on severa
 status: review
 depends: [021]
 branch: task/022-dying
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/58
 commits:
 review: APPROVE (round 1)
 ---
