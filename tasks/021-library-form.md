@@ -6,7 +6,7 @@ depends: [018]
 branch: task/021-library-form
 pr:
 commits:
-review:
+review: APPROVE (round 3)
 ---
 
 ## Goal
@@ -207,3 +207,19 @@ too, as the Test cases section said. F4: `scope/pcall-empty` marked
 again under LuaJIT, with the base still raising on two earlier rows of
 the file; `scope/loop-one-object` and `scope/hook-on-scope` moved after
 `scope/resume-yield` as well, the result recorded in Performance.
+
+Round 3 (2026-10-19): APPROVE, no finding. Every round-2 finding
+verified resolved; `make test` 423/423 under lua5.1 and luajit,
+conformance 77/77, the trial, luals-check; `make lint` clean; `make
+bench BASE=master` with no `SLOWER` mark under either interpreter
+(`scope/enter-exit-empty` 0.855 / 1.071 and 1.011 / 1.004,
+`scope/pcall-empty` 0.996 / 0.962 and 0.980 / 0.992), the rows the base
+cannot run within 0.90 to 1.10 of master's own files on master's
+runtime. Traced: a record that had nothing attached; a destructor and a
+hook anchoring to the record during the exit (`dying scope`, raised at
+the block call after the cascade); a library block inside a generated
+block unwound innermost first with the tombstones' positions; a callee
+of `fn` anchoring to the record; a block in a coroutine that yields and
+raises; the marker; the caller positions of the no-anchor errors.
+Follow-ups noted, not required: a test of the caller position of those
+errors; a test of `lifetime.dependents(scope)` inside `fn`.
