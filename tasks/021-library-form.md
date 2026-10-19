@@ -136,7 +136,15 @@ interpreter. Round 2 saw the row marked again under LuaJIT (1.239 /
 1.216, then 1.127 / 1.279), since `scope/loop-one-object` and
 `scope/hook-on-scope` still raised on the base ahead of it; those two
 rows follow `scope/resume-yield` now as well, so every row a base
-without this task's `attach` can run comes first: BENCH_ROUND_3.
+without this task's `attach` can run comes first. A full `make bench
+BASE=master` on that tree (2026-10-19) exits 0 and reads
+`scope/pcall-empty` 1.028 / 1.083 under Lua 5.1 and 0.985 / 0.704 under
+LuaJIT, not marked; its two marks elsewhere, `scope/enter-exit-empty`
+under Lua 5.1 (1.141 / 1.102) and `treflove/cycle` under LuaJIT (1.131 /
+1.174), read 1.009 / 0.998 and 1.041 / 1.142 on the next invocation of
+those files (`BENCH_FILES="bench/bench-scopes.lua
+bench/bench-treflove.lua"`), so neither is a finding by the threshold
+rule of `bench/README.md`.
 
 ## Out of scope
 
