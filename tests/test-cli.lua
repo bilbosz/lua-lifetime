@@ -27,8 +27,8 @@ test.case("the extension builds to calls of the runtime, positions under the chu
     -- chunk header", "What `@` expands to", "Blocks").
     test.assert_eq(cli.build("local x  =  {} @ lifetime.scope\nf !@ ( a,b )\n", "a.lt"), table.concat({
         "local lifetime = require(\"lifetime\"); local __lt_attach, __lt_hook, __lt_enter, __lt_exit = lifetime.attach, lifetime.hook, lifetime.enter, lifetime.exit;",
-        " local __s1 = __lt_enter(\"a.lt:3\"); local x = __lt_attach({}, false, __s1)\n",
-        "__lt_hook(f, nil, a, b)\n",
+        " local __s1 = __lt_enter(\"a.lt:3\"); local x = __lt_attach({}, __s1)\n",
+        "__lt_hook(f, a, b)\n",
         "__lt_exit(__s1, \"a.lt:3\");"
     }))
 end)

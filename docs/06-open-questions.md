@@ -46,14 +46,6 @@ which could hold the record. *Leaning:* tables and tokens only until a
 real program wants a userdata anchor; LÖVE objects in Treflove are
 dependents.
 
-### How an embedding host announces program end
-
-The CLI sets the exit flag so that finalizers at state close report
-`"exit"`; the runtime's entry point is `lifetime.set_exiting(flag)` (task
-004). A host such as LÖVE closes the state itself. *Leaning:* the host
-calls `lifetime.set_exiting(true)` from its quit callback; where Treflove
-puts that call is settled by task 009.
-
 ### Program end on plain Lua 5.1 after `os.exit`
 
 `os.exit` on plain 5.1 never closes the state, so no finalizer runs and

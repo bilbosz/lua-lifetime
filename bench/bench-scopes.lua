@@ -22,6 +22,19 @@
 --   scope/hook-on-scope     a block with one hook (`f !@ lifetime.scope`):
 --                           enter, hook, exit; against calling `f` by hand
 --                           at the end of the block
+--   scope/block-one-object  the library form of scope/loop-one-object
+--                           (docs/02-semantics.md, "The library form"):
+--                           `lifetime.block(body)` of a function that
+--                           attaches one object with a `__destroy` to the
+--                           record, the function made once; against
+--                           calling a function that creates the object
+--                           and calls its body by hand
+--   scope/block-closure     the same with the function written inline, a
+--                           closure per entry capturing a local; against
+--                           making and calling the same closure
+--   scope/block-empty       `lifetime.block` of a function that attaches
+--                           nothing; against calling it directly (the
+--                           absolute cost of a library-form record)
 --   scope/pcall-empty       pcall of an empty function through the
 --                           runtime's pcall (the original xpcall with the
 --                           runtime's message handler, task 014); against
@@ -70,27 +83,6 @@ local function body(self, reason)
 end
 local MT = {__destroy = body}
 
--- scope/loop-one-object: `for … do local x = {} @ lifetime.scope … end`.
-bench.add("scope/loop-one-object", (function()
-    local enter, exit, attach = lifetime.enter, lifetime.exit, lifetime.attach
-    return function()
-        for _ = 1, 10 do
-            local s = enter("bench:1")
-            local x = attach(setmetatable({}, MT), false, s)
-            x.v = 1
-            exit(s, "bench:1")
-        end
-    end
-end)(), {
-    baseline = function()
-        for _ = 1, 10 do
-            local x = setmetatable({}, MT)
-            x.v = 1
-            body(x, "anchor")
-        end
-    end
-})
-
 -- scope/enter-exit-empty
 bench.add("scope/enter-exit-empty", (function()
     local enter, exit = lifetime.enter, lifetime.exit
@@ -104,27 +96,6 @@ end)(), {
     baseline = function()
         for _ = 1, 10 do
             local _ = closed
-        end
-    end
-})
-
--- scope/hook-on-scope: `do function() … end !@ lifetime.scope … end`.
-local function on_exit(reason)
-    closed = closed + 1
-end
-bench.add("scope/hook-on-scope", (function()
-    local enter, exit, hook = lifetime.enter, lifetime.exit, lifetime.hook
-    return function()
-        for _ = 1, 10 do
-            local s = enter("bench:3")
-            hook(on_exit, nil, s)
-            exit(s, "bench:3")
-        end
-    end
-end)(), {
-    baseline = function()
-        for _ = 1, 10 do
-            on_exit("anchor")
         end
     end
 })
@@ -196,6 +167,119 @@ end, {
     baseline = function()
         for _ = 1, 10 do
             original_resume(co_original)
+        end
+    end
+})
+
+-- scope/loop-one-object: `for … do local x = {} @ lifetime.scope … end`.
+bench.add("scope/loop-one-object", (function()
+    local enter, exit, attach = lifetime.enter, lifetime.exit, lifetime.attach
+    return function()
+        for _ = 1, 10 do
+            local s = enter("bench:1")
+            local x = attach(setmetatable({}, MT), s)
+            x.v = 1
+            exit(s, "bench:1")
+        end
+    end
+end)(), {
+    baseline = function()
+        for _ = 1, 10 do
+            local x = setmetatable({}, MT)
+            x.v = 1
+            body(x, "anchor")
+        end
+    end
+})
+
+-- scope/hook-on-scope: `do function() … end !@ lifetime.scope … end`.
+local function on_exit(reason)
+    closed = closed + 1
+end
+bench.add("scope/hook-on-scope", (function()
+    local enter, exit, hook = lifetime.enter, lifetime.exit, lifetime.hook
+    return function()
+        for _ = 1, 10 do
+            local s = enter("bench:3")
+            hook(on_exit, s)
+            exit(s, "bench:3")
+        end
+    end
+end)(), {
+    baseline = function()
+        for _ = 1, 10 do
+            on_exit("anchor")
+        end
+    end
+})
+
+-- scope/block-one-object: `lifetime.block(function(s) local x = {}
+-- @ s … end)`, the body made once (docs/02-semantics.md, "The library
+-- form"). A closure call stands on both sides.
+local block_body
+bench.add("scope/block-one-object", (function()
+    local block, attach = lifetime.block, lifetime.attach
+    block_body = function(s)
+        local x = attach(setmetatable({}, MT), s)
+        x.v = 1
+    end
+    return function()
+        for _ = 1, 10 do
+            block(block_body)
+        end
+    end
+end)(), {
+    baseline = (function()
+        local function plain_body()
+            local x = setmetatable({}, MT)
+            x.v = 1
+            body(x, "anchor")
+        end
+        return function()
+            for _ = 1, 10 do
+                plain_body()
+            end
+        end
+    end)()
+})
+
+-- scope/block-closure: the function written inline, as a program writes
+-- it, so each entry makes a closure that captures a local.
+bench.add("scope/block-closure", (function()
+    local block, attach = lifetime.block, lifetime.attach
+    return function()
+        for i = 1, 10 do
+            block(function(s)
+                local x = attach(setmetatable({}, MT), s)
+                x.v = i
+            end)
+        end
+    end
+end)(), {
+    baseline = function()
+        for i = 1, 10 do
+            local f = function()
+                local x = setmetatable({}, MT)
+                x.v = i
+                body(x, "anchor")
+            end
+            f()
+        end
+    end
+})
+
+-- scope/block-empty
+bench.add("scope/block-empty", (function()
+    local block = lifetime.block
+    return function()
+        for _ = 1, 10 do
+            block(empty)
+        end
+    end
+end)(), {
+    baseline = function()
+        for _ = 1, 10 do
+            empty()
         end
     end
 })

@@ -251,11 +251,11 @@ test.case("case 1: a function dies in its place in the cascade; the side record 
     local seen = {}
     local x1 = attach(new_logged(log, "x1", function()
         seen.x1 = alive(f)
-    end), false, a)
-    attach(f, false, a)
+    end), a)
+    attach(f, a)
     local x2 = attach(new_logged(log, "x2", function()
         seen.x2 = alive(f)
-    end), false, a)
+    end), a)
 
     local st = side[f]
     test.assert_eq(type(st), "table", "f has a record in the side table")
@@ -285,7 +285,7 @@ test.case("case 2: a coroutine dies with its anchor; coroutine functions still w
         local y = coroutine.yield(x + 1)
         return y * 2
     end)
-    attach(co, false, a)
+    attach(co, a)
     test.assert_deep_eq(lifetime.dependents(a), {co})
     test.assert_true(alive(co))
     destroy(a)
@@ -304,10 +304,10 @@ end)
 test.case("case 3: userdata die in their place in the cascade with their own __destroy and reason", function()
     local log = {}
     local a = new_logged(log, "a")
-    local x1 = attach(new_logged(log, "x1"), false, a)
-    local u = attach(new_logged_userdata(log, "u"), false, a)
-    local plain = attach(newproxy(false), false, a)
-    local x2 = attach(new_logged(log, "x2"), false, a)
+    local x1 = attach(new_logged(log, "x1"), a)
+    local u = attach(new_logged_userdata(log, "u"), a)
+    local plain = attach(newproxy(false), a)
+    local x2 = attach(new_logged(log, "x2"), a)
     test.assert_deep_eq(lifetime.dependents(a), {x1, u, plain, x2})
     test.assert_deep_eq(log, {})
     destroy(a)
@@ -330,13 +330,13 @@ test.case("case 4: destroy(f) directly; a second destroy is a no-op; @ on it rai
     destroy(f)
     discard(f)
     local err = test.assert_error(function()
-        attach(f, false, b)
+        attach(f, b)
     end, "attempt to move a dead function (" .. tostring(f) .. ", died at " .. where .. ", destroy)")
     test.assert_eq(err:sub(1, #THIS_FILE), THIS_FILE, "positioned at the caller")
     test.assert_deep_eq(lifetime.dependents(b), {})
 
     -- With a body: it runs once, with reason "destroy".
-    attach(u, false, b)
+    attach(u, b)
     test.assert_deep_eq(log, {})
     destroy(u)
     test.assert_deep_eq(log, {"u (destroy)"})
@@ -344,7 +344,7 @@ test.case("case 4: destroy(f) directly; a second destroy is a no-op; @ on it rai
     test.assert_deep_eq(log, {"u (destroy)"}, "no-op")
     test.assert_deep_eq(lifetime.dependents(b), {}, "unlinked from its anchor")
     test.assert_error(function()
-        attach(u, false, b)
+        attach(u, b)
     end, "attempt to move a dead userdata (u, died at ")
 
     -- A coroutine the runtime never saw.
@@ -353,22 +353,22 @@ test.case("case 4: destroy(f) directly; a second destroy is a no-op; @ on it rai
     destroy(co)
     test.assert_false(alive(co))
     test.assert_error(function()
-        attach(co, false, b)
+        attach(co, b)
     end, "attempt to move a dead thread (")
 
     -- `@ lifetime.reachable` and a pinned value refuse it too.
     test.assert_error(function()
-        attach(f, false, lifetime.reachable)
+        attach(f, lifetime.reachable)
     end, "attempt to move a dead function")
     test.assert_error(function()
-        attach(f, false, pin(b))
+        attach(f, pin(b))
     end, "attempt to move a dead function")
 end)
 
 test.case("discard on a function, coroutine or userdata skips its body", function()
     local log = {}
     local a = {}
-    local u = attach(new_logged_userdata(log, "u"), false, a)
+    local u = attach(new_logged_userdata(log, "u"), a)
     discard(u)
     test.assert_deep_eq(log, {})
     test.assert_false(alive(u))
@@ -389,17 +389,17 @@ test.case("lifetime.of and lifetime.format of a function, coroutine or userdata"
     test.assert_true(rawequal(lifetime.of(f), lifetime.reachable), "the default lifetime")
     test.assert_eq(lifetime.format(f), "reachable")
     test.assert_eq(side_table()[f], nil, "lifetime.of needs no record")
-    attach(f, false, a)
-    test.assert_true(lifetime.of(f) == lifetime.of(attach({}, false, a)), "(a, reachable)")
+    attach(f, a)
+    test.assert_true(lifetime.of(f) == lifetime.of(attach({}, a)), "(a, reachable)")
     test.assert_eq(lifetime.format(f), "(a, reachable)")
-    attach(f, false, a, b)
+    attach(f, a, b)
     test.assert_eq(lifetime.format(f), "(a, b, reachable)")
     local co = coroutine.create(function()
     end)
-    attach(co, false, pin(a))
+    attach(co, pin(a))
     test.assert_eq(lifetime.format(co), "a")
     test.assert_true(lifetime.of(co) == pin(a))
-    attach(f, false, lifetime.reachable)
+    attach(f, lifetime.reachable)
     test.assert_true(rawequal(lifetime.of(f), lifetime.reachable))
     test.assert_eq(lifetime.format(f), "reachable")
 
@@ -419,8 +419,8 @@ end)
 test.case("a move: the function leaves its old anchors' lists and dies with its new anchor only", function()
     local log = {}
     local a, b = new_logged(log, "a"), new_logged(log, "b")
-    local u = attach(new_logged_userdata(log, "u"), false, a)
-    attach(u, false, b)
+    local u = attach(new_logged_userdata(log, "u"), a)
+    attach(u, b)
     test.assert_deep_eq(lifetime.dependents(a), {})
     test.assert_deep_eq(lifetime.dependents(b), {u})
     destroy(a)
@@ -434,7 +434,7 @@ end)
 test.case("the list form: a function dies with whichever anchor dies first and leaves the other", function()
     local log = {}
     local a, b = new_logged(log, "a"), new_logged(log, "b")
-    local u = attach(new_logged_userdata(log, "u"), false, a, b)
+    local u = attach(new_logged_userdata(log, "u"), a, b)
     test.assert_deep_eq(lifetime.dependents(a), {u})
     test.assert_deep_eq(lifetime.dependents(b), {u})
     destroy(b)
@@ -452,7 +452,7 @@ test.case("pinned: an unreferenced coroutine held by its anchor survives collect
         local co = coroutine.create(function()
         end)
         probe[co] = true
-        attach(co, false, pin(a))
+        attach(co, pin(a))
     end)
     collect()
     collect()
@@ -471,18 +471,18 @@ test.case("scope exit: a function anchored to a scope record dies in reverse att
     local held = {}
     local s = enter("t.lt:10")
     local f
-    held[1] = attach(new_logged(log, "x1"), false, s)
+    held[1] = attach(new_logged(log, "x1"), s)
     -- u is attached before f, so f dies between x2's body and u's: x2 sees
     -- it alive, u dead (docs/02-semantics.md, "Cascading death": a scope's
     -- dependents die newest first).
     held[2] = attach(new_logged_userdata(log, "u", function()
         log[#log + 1] = "f alive: " .. tostring(alive(f))
-    end), false, s)
+    end), s)
     f = attach(function()
-    end, false, s)
+    end, s)
     held[3] = attach(new_logged(log, "x2", function()
         log[#log + 1] = "f alive: " .. tostring(alive(f))
-    end), false, s)
+    end), s)
     local list = rawget(s, "deps")
     test.assert_eq(rawget(list, "other"), true, "the record knows it has a dependent in the side table")
     test.assert_deep_eq(log, {})
@@ -490,7 +490,7 @@ test.case("scope exit: a function anchored to a scope record dies in reverse att
     test.assert_deep_eq(log, {"x2 (anchor)", "f alive: true", "u (anchor)", "f alive: false", "x1 (anchor)"})
     test.assert_false(alive(f))
     test.assert_error(function()
-        attach(f, false, {})
+        attach(f, {})
     end, "attempt to move a dead function (" .. tostring(f) .. ", died at t.lt:14, anchor)")
 
     -- The emptied list of that record is reused by the next one, whose
@@ -499,7 +499,7 @@ test.case("scope exit: a function anchored to a scope record dies in reverse att
     local side = side_table()
     local before = side_keys(side)
     local s2 = enter("t.lt:20")
-    held[4] = attach(new_logged(log, "y"), false, s2)
+    held[4] = attach(new_logged(log, "y"), s2)
     test.assert_true(rawequal(rawget(s2, "deps"), list), "the list was reused")
     test.assert_eq(rawget(list, "other"), nil, "no flag on a reused list")
     exit(s2, "t.lt:22")
@@ -514,14 +514,14 @@ test.case("No moves during destruction: an anchored function cannot be moved by 
     local log = {}
     local b, c = {}, {}
     local old = attach(function()
-    end, false, b)
+    end, b)
     local results = {}
     local a = new_logged(log, "a", function()
-        local ok, err = pcall(attach, old, false, c)
+        local ok, err = pcall(attach, old, c)
         results.old = ok or err
         local fresh = function()
         end
-        results.fresh = pcall(attach, fresh, false, c)
+        results.fresh = pcall(attach, fresh, c)
         results.fresh_fn = fresh
     end)
     destroy(a)
@@ -539,10 +539,10 @@ test.case("a dying function cannot be moved: a destructor sees it dying", functi
     local result, seen
     local a = new_logged(log, "a", function()
         seen = alive(f)
-        local ok, err = pcall(attach, f, false, b)
+        local ok, err = pcall(attach, f, b)
         result = ok or err
     end)
-    attach(f, false, a)
+    attach(f, a)
     destroy(a)
     test.assert_true(seen, "dying is alive")
     test.assert_eq(result, "attempt to move a dying function")
@@ -557,8 +557,8 @@ test.case("a body destroys a function dependent by hand, early; the later pass s
         destroy(u)
         log[#log + 1] = "u alive: " .. tostring(alive(u))
     end)
-    local x = attach(new_logged(log, "x"), false, a)
-    u = attach(new_logged_userdata(log, "u"), false, a)
+    local x = attach(new_logged(log, "x"), a)
+    u = attach(new_logged_userdata(log, "u"), a)
     destroy(a)
     test.assert_deep_eq(log, {"a (destroy)", "u (destroy)", "u alive: false", "x (anchor)"})
     test.assert_false(alive(x))
@@ -579,10 +579,10 @@ test.case("__destroy on the shared metatable of functions and coroutines runs wi
     -- "Reachability is the collector's").
     local b = {}
     with_type_metatable(f, type_logger(log, names), function()
-        attach(f, false, a)
-        attach(g, false, a)
+        attach(f, a)
+        attach(g, a)
         destroy(a)
-        destroy(attach(h, false, b))
+        destroy(attach(h, b))
     end)
     test.assert_deep_eq(log, {"a (destroy)", "g (anchor)", "f (anchor)", "h (destroy)"})
 
@@ -601,10 +601,10 @@ test.case("an error in a userdata's __destroy follows the cascade's error rule",
     local a = new_logged(log, "a")
     local u = attach(new_logged_userdata(log, "u", function()
         error("u failed", 0)
-    end), false, a)
+    end), a)
     local x = attach(new_logged(log, "x", function()
         error("x failed", 0)
-    end), false, a)
+    end), a)
     local routed = {}
     local err
     with_handler(function(obj, e)
@@ -633,7 +633,7 @@ test.case("case 5: a collected function's side entry goes with it, and its ancho
         local f = function()
         end
         probe[f] = true
-        attach(f, false, a)
+        attach(f, a)
         test.assert_true(side[f] ~= nil, "the record is in the side table")
     end)
     collect()
@@ -651,7 +651,7 @@ test.case("a dead function's record goes with it too", function()
         local f = function()
         end
         probe[f] = true
-        destroy(attach(f, false, {}))
+        destroy(attach(f, {}))
         test.assert_true(side[f] ~= nil, "the death is remembered")
     end)
     collect()
@@ -680,7 +680,7 @@ test.case("a function dependent does not keep its anchor alive; a table dependen
     names[f] = "f"
     with_type_metatable(f, type_logger(log, names), function()
         run_dropped(function()
-            attach(f, false, new_logged(log, "a"))
+            attach(f, new_logged(log, "a"))
         end)
         test.assert_deep_eq(log, {}, "nothing dies before the collection")
         test.assert_true(alive(f))
@@ -690,13 +690,13 @@ test.case("a function dependent does not keep its anchor alive; a table dependen
     test.assert_false(alive(f), "f is dead while the test still holds it")
     test.assert_eq(f(), "called", "calling a dead function is not caught")
     test.assert_error(function()
-        attach(f, false, {})
+        attach(f, {})
     end, "attempt to move a dead function (" .. tostring(f) .. ", died at collector, anchor)")
 
     -- The same with a table dependent: the dependent's field keeps `b`.
     local t = new_logged(log, "t")
     run_dropped(function()
-        attach(t, false, new_logged(log, "b"))
+        attach(t, new_logged(log, "b"))
     end)
     collect()
     collect()
@@ -704,7 +704,7 @@ test.case("a function dependent does not keep its anchor alive; a table dependen
     test.assert_true(alive(t))
     test.assert_eq(lifetime.format(t), "(b, reachable)")
     -- Once t no longer names b, b is collected and t lives on.
-    attach(t, false, lifetime.reachable)
+    attach(t, lifetime.reachable)
     test.assert_deep_eq(log, {"a (unreachable)", "f (anchor)"})
     collect()
     test.assert_deep_eq(log, {"a (unreachable)", "f (anchor)", "b (unreachable)"})
@@ -761,7 +761,7 @@ test.case("self.cb = function() ... end @ self: dropped, both die in cascade ord
             local self = new_logged(log, "self")
             self.cb = attach(function()
                 return self
-            end, false, self)
+            end, self)
             names[self.cb] = "cb"
             probe[self], probe[self.cb] = true, true
         end)
@@ -794,10 +794,10 @@ test.case("co @ lifetime.pin(a) with a dropped: both die in cascade order and ar
             end)
             names[co] = "co"
             probe[a], probe[co] = true, true
-            attach(co, false, pin(a))
+            attach(co, pin(a))
             -- The same shape with a table dependent, for comparison.
             local b = new_logged(log, "b")
-            attach(new_logged(log, "t"), false, pin(b))
+            attach(new_logged(log, "t"), pin(b))
         end)
         test.assert_deep_eq(log, {})
         collect()
@@ -824,7 +824,7 @@ test.case("a record whose anchor the collector took: of, format, @ and destroy s
         getmetatable(u).__gc = function(self)
             saved[1] = self
         end
-        attach(u, false, new_logged(log, "a"), b)
+        attach(u, new_logged(log, "a"), b)
     end)
     collect()
     test.assert_deep_eq(log, {"a (unreachable)"}, "a's cascade did not reach u")
@@ -851,7 +851,7 @@ test.case("a record whose anchor the collector took: of, format, @ and destroy s
     local c = new_logged(log, "c")
     collectgarbage("stop")
     local ok, err = pcall(function()
-        attach(u, false, c, b)
+        attach(u, c, b)
         test.assert_eq(lifetime.format(u), "(c, b, reachable)")
         test.assert_deep_eq(lifetime.dependents(c), {u})
         test.assert_deep_eq(lifetime.dependents(b), {u})
@@ -872,7 +872,7 @@ test.case("a record whose anchor the collector took: of, format, @ and destroy s
         getmetatable(v).__gc = function(self)
             saved[1] = self
         end
-        attach(v, false, new_logged(log, "d"))
+        attach(v, new_logged(log, "d"))
     end)
     collect()
     collect()
@@ -901,10 +901,10 @@ test.case("a function, coroutine or userdata the collector finds dies silently: 
     local before = side_keys(side)
     with_type_metatable(print, type_logger(log, names), function()
         run_dropped(function()
-            local u = attach(new_logged_userdata(log, "u"), false, lifetime.reachable)
-            local w = attach(new_logged_userdata(log, "w"), false, a)
+            local u = attach(new_logged_userdata(log, "u"), lifetime.reachable)
+            local w = attach(new_logged_userdata(log, "w"), a)
             local f = attach(function()
-            end, false, a)
+            end, a)
             names[f] = "f"
             probe[u], probe[w], probe[f] = true, true, true
             test.assert_eq(type(rawget(side[u], "reachable")), "boolean", "no sentinel")
@@ -940,7 +940,7 @@ test.case("compaction renumbers function dependents in the side table", function
             else
                 dep = new_logged(junk, "t" .. i)
             end
-            attach(dep, false, a)
+            attach(dep, a)
             if i % 16 == 1 or i % 16 == 4 then
                 held[#held + 1] = dep
             end
@@ -953,7 +953,7 @@ test.case("compaction renumbers function dependents in the side table", function
     local deps = rawget(state_of(a), "deps")
     test.assert_eq(rawget(deps, "seq") - rawget(deps, "lo"), 80, "not compacted yet")
     for i = 81, 130 do
-        held[#held + 1] = attach(new_logged_userdata(log, "u" .. i), false, a)
+        held[#held + 1] = attach(new_logged_userdata(log, "u" .. i), a)
     end
     test.assert_true(rawget(deps, "seq") - rawget(deps, "lo") < 130, "compacted")
     test.assert_deep_eq(lifetime.dependents(a), held, "in attachment order")
@@ -964,7 +964,7 @@ test.case("compaction renumbers function dependents in the side table", function
     local u4 = held[2]
     test.assert_eq(tostring(u4), "u4")
     local other = {}
-    attach(u4, false, other)
+    attach(u4, other)
     local expected = {}
     for i = 1, #held do
         if i ~= 2 then
@@ -1003,14 +1003,14 @@ test.case("a userdata finalized by its own __gc never unlinks a slot compaction 
         getmetatable(u1).__gc = function(self)
             destroy(self)
         end
-        attach(u1, false, a)
+        attach(u1, a)
         for _ = 1, 14 do
-            attach({}, false, a)
+            attach({}, a)
         end
         local u2 = newproxy(true)
         getmetatable(u2).__gc = function()
             for i = 1, 4 do
-                held[i] = attach({}, false, a)
+                held[i] = attach({}, a)
             end
         end
     end)
@@ -1029,9 +1029,9 @@ test.case("a table dependent never touches the side table", function()
     local a = new_logged(log, "a")
     local held = {}
     for i = 1, 10 do
-        held[i] = attach(new_logged(log, "x" .. i), false, a)
+        held[i] = attach(new_logged(log, "x" .. i), a)
     end
-    attach(held[1], false, held[2])
+    attach(held[1], held[2])
     test.assert_eq(count_added(side, before), 0, "no entry for a table dependent")
     test.assert_eq(rawget(rawget(state_of(a), "deps"), "other"), nil, "no flag on an anchor of tables")
     destroy(a)
@@ -1049,16 +1049,16 @@ test.case("case 6: errors are positioned at the caller, never inside the runtime
     destroy(dead)
     local raising = {
         function()
-            attach({}, false, print)
+            attach({}, print)
         end,
         function()
-            attach({}, false, coroutine.create(print))
+            attach({}, coroutine.create(print))
         end,
         function()
-            attach({}, false, newproxy())
+            attach({}, newproxy())
         end,
         function()
-            attach(dead, false, a)
+            attach(dead, a)
         end,
         function()
             lifetime.of(dead)
@@ -1087,15 +1087,15 @@ test.case("case 6: errors are positioned at the caller, never inside the runtime
         test.assert_eq(err:find("init.lua", 1, true), nil, "case " .. i .. ": " .. err)
     end
     test.assert_error(function()
-        attach({}, false, print)
+        attach({}, print)
     end, "attempt to anchor to a function value")
     test.assert_error(function()
-        attach({}, false, newproxy())
+        attach({}, newproxy())
     end, "attempt to anchor to a userdata value")
     test.assert_error(function()
         attach(function()
         end)
-    end, "bad argument #3 to 'lifetime.attach' (anchor expected, got no value)")
+    end, "bad argument #2 to 'lifetime.attach' (anchor expected, got no value)")
 
     -- What was a `not implemented` error is a destruction now: through
     -- `pcall` directly, the calls succeed.
@@ -1151,13 +1151,13 @@ test.case("the error texts for a function, a coroutine and a userdata, exactly",
     local results = {}
     local a = new_logged(log, "a", function()
         for i = 1, 3 do
-            results[#results + 1] = select(2, pcall(attach, dying[i], false, b))
-            results[#results + 1] = select(2, pcall(attach, moved[i], false, b))
+            results[#results + 1] = select(2, pcall(attach, dying[i], b))
+            results[#results + 1] = select(2, pcall(attach, moved[i], b))
         end
     end)
     for i = 1, 3 do
-        attach(dying[i], false, a)
-        attach(moved[i], false, b)
+        attach(dying[i], a)
+        attach(moved[i], b)
     end
     destroy(a)
     test.assert_deep_eq(results, {
@@ -1174,22 +1174,22 @@ test.case("the error texts for a function, a coroutine and a userdata, exactly",
         local x, t, name = entry[1], entry[2], entry[3]
         local where = here(); destroy(x)
         local tail = " a dead " .. t .. " (" .. name .. ", died at " .. where .. ", destroy)"
-        test.assert_deep_eq({pcall(attach, x, false, b)}, {false, "attempt to move" .. tail})
-        test.assert_deep_eq({pcall(attach, x, false, lifetime.reachable)}, {false, "attempt to move" .. tail})
+        test.assert_deep_eq({pcall(attach, x, b)}, {false, "attempt to move" .. tail})
+        test.assert_deep_eq({pcall(attach, x, lifetime.reachable)}, {false, "attempt to move" .. tail})
         test.assert_deep_eq({pcall(lifetime.of, x)}, {false, "attempt to index" .. tail})
         test.assert_deep_eq({pcall(lifetime.format, x)}, {false, "attempt to index" .. tail})
     end
 
     -- Dead by an anchor's death: the reason and the `<where>` of the cascade.
     local g = attach(function()
-    end, false, b)
+    end, b)
     local where = here(); destroy(b)
-    test.assert_deep_eq({pcall(attach, g, false, {})}, {false, "attempt to move a dead function (" .. tostring(g) .. ", died at " .. where .. ", anchor)"})
+    test.assert_deep_eq({pcall(attach, g, {})}, {false, "attempt to move a dead function (" .. tostring(g) .. ", died at " .. where .. ", anchor)"})
 
     -- As an anchor.
-    test.assert_deep_eq({pcall(attach, {}, false, f)}, {false, "attempt to anchor to a function value"})
-    test.assert_deep_eq({pcall(attach, {}, false, co)}, {false, "attempt to anchor to a thread value"})
-    test.assert_deep_eq({pcall(attach, {}, false, u)}, {false, "attempt to anchor to a userdata value"})
+    test.assert_deep_eq({pcall(attach, {}, f)}, {false, "attempt to anchor to a function value"})
+    test.assert_deep_eq({pcall(attach, {}, co)}, {false, "attempt to anchor to a thread value"})
+    test.assert_deep_eq({pcall(attach, {}, u)}, {false, "attempt to anchor to a userdata value"})
 end)
 
 test.case("the default destroyerror flushes standard output before writing its report", function()
@@ -1199,7 +1199,7 @@ print("before")
 local t = setmetatable({}, {__destroy = function()
     error("t failed", 0)
 end})
-lifetime.attach(t, false, lifetime.reachable)
+lifetime.attach(t, lifetime.reachable)
 t = nil
 collectgarbage("collect")
 print("after")
@@ -1222,7 +1222,7 @@ print("before")
 local t = setmetatable({}, {__destroy = function()
     error("t failed", 0)
 end})
-lifetime.attach(t, false, lifetime.reachable)
+lifetime.attach(t, lifetime.reachable)
 t = nil
 collectgarbage("collect")
 print("after")

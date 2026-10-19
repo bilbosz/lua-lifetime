@@ -26,14 +26,15 @@
 --
 -- * The header, at the start of line 1, binds the runtime and the
 --   runtime functions the chunk calls to locals ("The generated chunk
---   header"): `lifetime`, then `__lt_attach`, `__lt_hook`, `__lt_enter`
---   and `__lt_exit` when it uses them, and `__lt_pack` with `__lt_unpack`
---   when a `return` passes a call's or `...`'s values through an
---   epilogue.
--- * `e @ a` is `__lt_attach(e, false, a)`, `f !@ a` is `__lt_hook(f,
---   name, a)` with the name of the binding target or `nil`, and
---   `lifetime.scope` in anchor position is the record local of the
---   innermost enclosing block ("What `@` expands to").
+--   header"): `lifetime`, then `__lt_attach`, `__lt_hook`,
+--   `__lt_named_hook`, `__lt_enter` and `__lt_exit` when it uses them,
+--   and `__lt_pack` with `__lt_unpack` when a `return` passes a call's or
+--   `...`'s values through an epilogue.
+-- * `e @ a` is `__lt_attach(e, a)`, `f !@ a` is `__lt_hook(f, a)`, a
+--   hook bound to a name is `__lt_named_hook("h", f, a)` with the name of
+--   the binding target, and `lifetime.scope` in anchor position is the
+--   record local of the innermost enclosing block ("What `@` expands
+--   to").
 -- * A block that anchors to `lifetime.scope` directly gets `local __sN =
 --   __lt_enter("<chunk>:<line of its end>")` at its start and
 --   `__lt_exit(__sN, "<chunk>:<line>")` on fall-through and before every
@@ -138,6 +139,7 @@ local function new_state(info, dialect)
         scope = nil,
         shadow = 0,
         named = false,
+        named_hook = false,
         attach = false,
         hook = false,
         record = false,
@@ -762,36 +764,39 @@ end
 EXPR.Raw = emit_raw
 
 -- docs/04-transpiler.md, "What `@` expands to": `e @ (a1, …, an)` is
--- `__lt_attach(e, false, a1, …, an)` and `f !@ (a1, …, an)` is
--- `__lt_hook(f, name, a1, …, an)`, `name` being the quoted name of the
--- binding target or `nil` (docs/02-semantics.md, "Named hooks"). The call
--- starts on the line of the left operand; the comma after it takes the
--- line of the operator, the list's parentheses and commas theirs. `x @
--- (a)` and `x @ a` come out alike. An anchor item is one value
--- (docs/02-semantics.md, "Acquiring a lifetime": "Evaluate each
--- element"), so a call or `...` as the last item is parenthesised to one.
+-- `__lt_attach(e, a1, …, an)`, `f !@ (a1, …, an)` is `__lt_hook(f, a1,
+-- …, an)`, and a hook bound to a name is `__lt_named_hook("h", f, a1,
+-- …, an)`, `"h"` the quoted name of the binding target
+-- (docs/02-semantics.md, "Named hooks"). The call starts on the line of
+-- the left operand; the comma after it takes the line of the operator,
+-- the list's commas and closing parenthesis theirs. `x @ (a)` and `x @
+-- a` come out alike. An anchor item is one value (docs/02-semantics.md,
+-- "Acquiring a lifetime": "Evaluate each element"), so a call or `...`
+-- as the last item is parenthesised to one.
 local function emit_anchor(st, e, hook)
     local lines = e.lines
-    if hook then
+    if hook and e.name then
+        st.named_hook = true
+        put(st, "__lt_named_hook", e.line)
+        put(st, "(", nil, true, true)
+        put(st, quote(e.name))
+        put(st, ",", nil, true)
+    elseif hook then
         st.hook = true
         put(st, "__lt_hook", e.line)
+        put(st, "(", nil, true, true)
     else
         st.attach = true
         put(st, "__lt_attach", e.line)
+        put(st, "(", nil, true, true)
     end
-    put(st, "(", nil, true, true)
     emit_expr(st, e.expr)
-    put(st, ",", lines and lines[1], true)
-    if hook then
-        put(st, e.name and quote(e.name) or "nil")
-    else
-        put(st, "false")
-    end
     local anchors, list = e.anchors, e.list and lines
     local n = #anchors
     for i = 1, n do
-        -- Item i follows the list's `(` (i = 1) or its (i - 1)-th comma.
-        put(st, ",", list and lines[i + 1], true)
+        -- Item 1 follows the operator (and the list's `(`); item i the
+        -- list's (i - 1)-th comma.
+        put(st, ",", i == 1 and (lines and lines[1]) or (list and lines[i + 1]), true)
         local item = anchors[i]
         local tag = item.tag
         if i == n and (tag == "Call" or tag == "Invoke" or tag == "Vararg") then
@@ -1228,7 +1233,7 @@ end
 -- uses no extension syntax and does not name `lifetime`. "There are no
 -- builtins".
 local function header(st)
-    if not (st.attach or st.hook or st.record or st.named) then
+    if not (st.attach or st.hook or st.named_hook or st.record or st.named) then
         return nil
     end
     local parts = {"local lifetime = require(\"lifetime\");"}
@@ -1242,6 +1247,9 @@ local function header(st)
     end
     if st.hook then
         bind("hook")
+    end
+    if st.named_hook then
+        bind("named_hook")
     end
     if st.record then
         bind("enter")

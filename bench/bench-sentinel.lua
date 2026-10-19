@@ -6,8 +6,12 @@
 --   sentinel/anchor-100   100 objects with a `__destroy` anchored with the
 --                         implicit `reachable` term (each needs a
 --                         sentinel), then lifetime.destroy(anchor); against the
---                         same 100 objects attached pinned (`attach`'s pin
---                         flag, as `@ lifetime.pin(a)` is: no proxy)
+--                         same 100 objects attached pinned, through a
+--                         `lifetime.pin(anchor)` value made once (no
+--                         proxy). A lifetime value takes `attach`'s general
+--                         path, not the one-anchor fast path, so the ratio
+--                         is the sentinel's cost over the general path's
+--                         (task 021: `attach` has no pin flag).
 --   sentinel/collect-100  100 objects with a `__destroy` registered with
 --                         `@ lifetime.reachable`, dropped, then one
 --                         collectgarbage("collect") that runs their 100
@@ -51,8 +55,9 @@ local MT = {__destroy = body}
 local function anchor_n(pin)
     local attach = lifetime.attach
     local anchor, objects = {}, {}
+    local a = pin and lifetime.pin(anchor) or anchor
     for i = 1, N do
-        objects[i] = attach(setmetatable({}, MT), pin, anchor)
+        objects[i] = attach(setmetatable({}, MT), a)
     end
     lifetime.destroy(anchor)
     return objects
@@ -73,7 +78,7 @@ local function make_registered()
         error("no sentinel in this runtime")
     end
     for _ = 1, N do
-        attach(setmetatable({}, MT), false, reachable)
+        attach(setmetatable({}, MT), reachable)
     end
 end
 
@@ -97,7 +102,7 @@ end, {
 
 -- sentinel/alive-10. Each returns its count, so the checks are not dead
 -- code.
-local seen = lifetime.attach({}, false, lifetime.reachable)
+local seen = lifetime.attach({}, lifetime.reachable)
 bench.add("sentinel/alive-10", function()
     local alive = lifetime.alive
     local n = 0
@@ -126,19 +131,19 @@ local function tree(register)
     local function make()
         local obj = setmetatable({}, MT)
         if register then
-            attach(obj, false, reachable)
+            attach(obj, reachable)
         end
         return obj
     end
     local root = make()
     local held, n = {}, 0
     for _ = 1, 10 do
-        local child = attach(make(), false, root)
+        local child = attach(make(), root)
         n = n + 1
         held[n] = child
         for _ = 1, 10 do
             n = n + 1
-            held[n] = attach(make(), false, child)
+            held[n] = attach(make(), child)
         end
     end
     lifetime.destroy(root)

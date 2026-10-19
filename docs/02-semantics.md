@@ -264,7 +264,9 @@ of `xd` replaced by syntax through decision 5. `xd`'s "The caller's scope"
   iteration. A function body is a scope; its parameters live in it. The
   main chunk's scope ends when the chunk finishes ("Program end").
 - `lifetime.scope` is syntax, not a value ([05-decisions.md](05-decisions.md),
-  "The scope anchor is spelled `lifetime.scope`"). In anchor position,
+  "The scope anchor is spelled `lifetime.scope`"); a program that is not
+  transpiled gets a block's record from `lifetime.block` instead ("The
+  library form"). In anchor position,
   after `@` or `!@` or as an item of the list form, the transpiler
   matches the spelling `lifetime.scope` (the Names `lifetime` and `scope`
   joined by `.`, whatever `lifetime` names at that point) and resolves it
@@ -443,7 +445,8 @@ lifetime.destroy(hook)       -- no-op: a dead hook does nothing
   names it. A hook bound any other way (`t[k] = f !@ a`, an argument, a
   statement on its own) is anonymous and `tostring` gives `hook: 0x…`.
 - The name is fixed at creation: storing the hook somewhere else later
-  does not rename it.
+  does not rename it. A program that is not transpiled names a hook with
+  `lifetime.named_hook(name, f, …)` ("The library form").
 - Holding a handle does not lengthen the hook's life; dropping it does not
   shorten it. A hook dies by its anchors, by `lifetime.destroy`, or by `lifetime.discard`.
 - After it runs the hook is dead: a hook runs at most once.
@@ -779,8 +782,10 @@ error.
 2. **The host closes the state.** Lua finalizes every object that still has
    a pending finalizer, newest first ("Host"); the runtime runs each one's
    cascade with reason `"exit"` when it has been told the program is ending
-   (`lifetime run` tells it; how an embedding host tells it is open,
-   [06-open-questions.md](06-open-questions.md)), else `"unreachable"`.
+   (`lifetime run` tells it; an embedding host calls
+   `lifetime.set_exiting(true)` from its quit path, LÖVE's `love.quit`
+   in Treflove, [05-decisions.md](05-decisions.md), "A LÖVE host
+   announces program end from `love.quit`"), else `"unreachable"`.
 
 Newest first means an instance dies before the metatable it was created
 with, so `__destroy` can still be found. `os.exit` on plain Lua 5.1 does
@@ -793,7 +798,9 @@ not close the state, so step 2 does not run after it; LuaJIT's
 5, 7 and 11 to the six names decision 11 lists, plus `lifetime.token`
 and `lifetime.is_state`
 ([05-decisions.md](05-decisions.md), "Tokens are created by
-`lifetime.token`").*
+`lifetime.token`"), plus the four entry points of "The library form"
+below, which the generated code calls and a program that is not
+transpiled writes itself.*
 
 | Name | Meaning |
 | --- | --- |
@@ -806,6 +813,10 @@ and `lifetime.is_state`
 | `lifetime.is_state(k)` | `true` when `k` is the key of the state record the runtime keeps inside every table it has seen ("`__destroy` and reasons", rule 7), `false` for anything else. `pairs` and `next` see that field as Lua shows it; a serializer or an emptiness check skips it with this test ([05-decisions.md](05-decisions.md), "The state record's key is a private table"). |
 | `lifetime.dependents(obj)` | A fresh array of the live objects and hooks whose formula mentions `obj`, in attachment order. |
 | `lifetime.format(v)` | A string rendering of a lifetime value, an object's formula, a token or a hook: `(conn, reachable)`, `conn` (pinned), `reachable`, `token period`, `scope`, `hook cleanup` for a named hook and `hook` for an anonymous one. Object anchors render through `tostring`, so a dead anchor in a snapshot renders as `dead <name>`. |
+| `lifetime.attach(obj, a1, …, an)` | `obj @ (a1, …, an)` as a call; returns `obj` ("The library form"). |
+| `lifetime.hook(f, a1, …, an)` | `f !@ (a1, …, an)` as a call ("The library form"). |
+| `lifetime.named_hook(name, f, a1, …, an)` | The same hook carrying `name` ("Named hooks", "The library form"). |
+| `lifetime.block(fn, …)` | Runs `fn(scope, …)` in a block of its own, `scope` being the block's record to anchor to, and returns what `fn` returns ("The library form"). |
 
 A **lifetime value** is a table with the private metatable `"lifetime"`:
 no fields, no lifetime of its own. It holds its anchors strongly, so
@@ -817,6 +828,72 @@ token`), as writing that anchor directly would ([05-decisions.md](05-decisions.m
 structure. `lifetime.of(x)` on the default lifetime returns
 `lifetime.reachable`, which when spliced refers to the reachability of the
 object being anchored, not of `x`.
+
+### The library form
+
+*This repository's decision ([05-decisions.md](05-decisions.md), "The
+runtime is usable as a library"), at the human's request for the
+lua-lifetime branch of Treflove, whose chunks LÖVE loads itself.*
+
+A program that is not transpiled writes the calls the transpiler would
+have emitted. They are fields of the `lifetime` table with the semantics
+of the syntax, and the syntax compiles to them
+([04-transpiler.md](04-transpiler.md), "What `@` expands to"):
+
+| Syntax | Library form |
+| --- | --- |
+| `e @ a` | `lifetime.attach(e, a)` |
+| `e @ (a, b)` | `lifetime.attach(e, a, b)` |
+| `e @ lifetime.pin(a)` | `lifetime.attach(e, lifetime.pin(a))` |
+| `e @ lifetime.reachable` | `lifetime.attach(e, lifetime.reachable)` |
+| `f !@ a` | `lifetime.hook(f, a)` |
+| `local h = f !@ a` | `local h = lifetime.named_hook("h", f, a)` |
+| `do local x = e @ lifetime.scope … end` | `lifetime.block(function(scope) local x = lifetime.attach(e, scope) … end)` |
+
+- `lifetime.attach(obj, a1, …, an)` performs steps 1 to 4 of "Acquiring
+  a lifetime" and returns `obj`; the implicit `reachable` term is added
+  as for `@`, so `lifetime.attach(x, lifetime.pin(a))` is the pinned
+  spelling. The errors are those of `@`; with no anchor at all it is
+  `bad argument #2 to 'lifetime.attach' (anchor expected, got no
+  value)`. Every error is raised at the caller.
+- `lifetime.hook(f, a1, …, an)` is `f !@ (a1, …, an)`, an anonymous hook;
+  `lifetime.named_hook(name, f, a1, …, an)` is the same hook carrying
+  `name`, which must be a string (`bad argument #1 to
+  'lifetime.named_hook' (string expected, got nil)`). The anchor errors
+  are those of `!@`, the "no value" one numbered from the first anchor
+  (`#2`, and `#3` for `named_hook`).
+- `lifetime.block(fn, …)` calls `fn(scope, …)` and returns every value
+  `fn` returns, trailing `nil`s included, through no table. `scope` is
+  the block's record, what `lifetime.scope` names in a transpiled block:
+  the anchor for `lifetime.attach` and `lifetime.hook` inside `fn`, and
+  inside what `fn` calls, which means the same as nesting a block would.
+  When `fn` returns, the record's dependents die in reverse attachment
+  order with reason `"anchor"` ("Cascading death"), and a destructor
+  error is raised at the `lifetime.block` call after the whole cascade
+  ("Errors in destructors"). When `fn` raises, the record is unwound at
+  the raise point like any block's ("Scopes: `lifetime.scope`"). `fn`
+  may yield. `lifetime.block(5)` is `bad argument #1 to 'lifetime.block'
+  (function expected, got number)`.
+- The record is a value here, which the syntax never gives: it is valid
+  inside `fn` only. Once `fn` has returned the record is dead, whether or
+  not anything was attached to it, and `lifetime.attach` or
+  `lifetime.hook` on it raises `attempt to anchor to a dead scope`. The
+  marker `lifetime.scope` is untouched by this and still cannot be
+  anchored to.
+- `<where>` in the tombstone of a dependent is the position of `fn`, its
+  chunk and the line of its `function`, since no `end` of a block can be
+  named ("Tombstones").
+- The other entry points treat the record as the marker: `lifetime.destroy`,
+  `lifetime.discard` and `lifetime.of` refuse it, inside `fn` and once it
+  is dead alike (`bad argument #1 to 'destroy' (object expected, got
+  scope)`); `lifetime.dependents(scope)` lists what is attached to it,
+  `lifetime.format(scope)` is `scope`, and `lifetime.alive(scope)` is
+  `true` inside `fn` and `false` once it has returned. A `lifetime.pin`
+  value made from the record names it the same way once it is dead:
+  `attempt to anchor to a dead scope`.
+- A block that attaches nothing costs the record and a closure call;
+  `lifetime.block` makes no `pcall` and no table for the results
+  ([03-runtime.md](03-runtime.md), "Performance").
 
 **Error texts** follow `xd/docs/04-syntax.md`, "Error texts": a runtime
 error in the lifetime vocabulary reads `attempt to <verb> … <type> value`;

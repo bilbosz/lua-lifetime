@@ -107,7 +107,7 @@ test.case("a table never anchored gets no state record", function()
     test.assert_eq(lifetime.format(t), "reachable")
     test.assert_eq(field_count(t), 1, "dependents and format leave the table alone")
     -- Being used as an anchor makes it seen; the dependent too.
-    local x = attach({}, false, a)
+    local x = attach({}, a)
     test.assert_true(state_of(a) ~= nil)
     test.assert_true(state_of(x) ~= nil)
     test.assert_eq(state_of(t), nil)
@@ -115,8 +115,8 @@ end)
 
 test.case("a pairs loop finds exactly one key for which is_state is true; the key is the same in every table", function()
     local a, b = {}, {}
-    local x = attach({v = 1}, false, a)
-    attach(b, false, a)
+    local x = attach({v = 1}, a)
+    attach(b, a)
     local keys = {}
     for k in pairs(x) do
         if lifetime.is_state(k) then
@@ -150,8 +150,8 @@ test.suite("runtime: attach")
 test.case("attach returns obj, links at the end of each anchor's list, keeps the anchors in the record", function()
     local a, c = {}, {}
     local b = {}
-    test.assert_true(rawequal(attach(b, false, a), b))
-    local d = attach({}, false, a, c)
+    test.assert_true(rawequal(attach(b, a), b))
+    local d = attach({}, a, c)
     test.assert_deep_eq(lifetime.dependents(a), {b, d})
     test.assert_deep_eq(lifetime.dependents(c), {d})
     test.assert_deep_eq(lifetime.dependents(d), {})
@@ -160,20 +160,20 @@ end)
 
 test.case("a move replaces the formula: unlinks from the old anchors, joins the end of the new lists", function()
     local a, b, c = {}, {}, {}
-    local x = attach({}, false, a)
-    local y = attach({}, false, a, b)
-    local z = attach({}, false, b)
-    attach(x, false, b, c)
+    local x = attach({}, a)
+    local y = attach({}, a, b)
+    local z = attach({}, b)
+    attach(x, b, c)
     test.assert_deep_eq(lifetime.dependents(a), {y})
     test.assert_deep_eq(lifetime.dependents(b), {y, z, x})
     test.assert_deep_eq(lifetime.dependents(c), {x})
     -- Re-attaching to the same anchor moves to the end of its list.
-    attach(y, false, b)
+    attach(y, b)
     test.assert_deep_eq(lifetime.dependents(a), {})
     test.assert_deep_eq(lifetime.dependents(b), {z, x, y})
     -- The record keeps no stale anchors after shrinking.
     local st = state_of(x)
-    attach(x, false, a)
+    attach(x, a)
     test.assert_eq(st.n, 1)
     test.assert_eq(rawget(st, 3), nil)
     test.assert_eq(rawget(st, 4), nil)
@@ -183,9 +183,9 @@ end)
 test.case("a move carries the object's own dependents with it", function()
     local log = {}
     local a, b = {}, {}
-    local x = attach(new_logged(log, "x"), false, a)
-    local y = attach(new_logged(log, "y"), false, x)
-    attach(x, false, b)
+    local x = attach(new_logged(log, "x"), a)
+    local y = attach(new_logged(log, "y"), x)
+    attach(x, b)
     test.assert_deep_eq(lifetime.dependents(x), {y})
     destroy(a)
     test.assert_deep_eq(log, {})
@@ -195,8 +195,8 @@ end)
 
 test.case("x @ lifetime.reachable releases the object: no anchors, default formula", function()
     local a = {}
-    local x = attach({}, false, a)
-    attach(x, false, lifetime.reachable)
+    local x = attach({}, a)
+    attach(x, lifetime.reachable)
     test.assert_deep_eq(lifetime.dependents(a), {})
     test.assert_true(rawequal(lifetime.of(x), lifetime.reachable))
     test.assert_eq(lifetime.format(x), "reachable")
@@ -205,41 +205,41 @@ end)
 test.case("step 1: the object must be an object", function()
     local a = {}
     test.assert_error(function()
-        attach(5, false, a)
+        attach(5, a)
     end, "attempt to anchor a number value")
     test.assert_error(function()
-        attach(nil, false, a)
+        attach(nil, a)
     end, "attempt to anchor a nil value")
     test.assert_error(function()
-        attach("s", false, a)
+        attach("s", a)
     end, "attempt to anchor a string value")
     test.assert_error(function()
-        attach(lifetime.reachable, false, a)
+        attach(lifetime.reachable, a)
     end, "attempt to anchor a lifetime value")
 end)
 
 test.case("step 2: each anchor must be a live table or a lifetime value", function()
     local x = {}
     test.assert_error(function()
-        attach(x, false, nil)
+        attach(x, nil)
     end, "attempt to anchor to a nil value")
     test.assert_error(function()
-        attach(x, false, 5)
+        attach(x, 5)
     end, "attempt to anchor to a number value")
     test.assert_error(function()
-        attach(x, false, print)
+        attach(x, print)
     end, "attempt to anchor to a function value")
     test.assert_error(function()
-        attach(x, false, coroutine.create(function() end))
+        attach(x, coroutine.create(function() end))
     end, "attempt to anchor to a thread value")
     local a = {}
     test.assert_error(function()
-        attach(x, false, a, nil)
+        attach(x, a, nil)
     end, "attempt to anchor to a nil value")
     local dead = {}
     destroy(dead)
     test.assert_error(function()
-        attach(x, false, a, dead)
+        attach(x, a, dead)
     end, "attempt to anchor to a dead table")
     -- A failed attach changes nothing.
     test.assert_deep_eq(lifetime.dependents(a), {})
@@ -248,12 +248,12 @@ end)
 
 test.case("the error position is the attach call's", function()
     local err = test.assert_error(function()
-        attach(5, false, {})
+        attach(5, {})
     end, "attempt to anchor a number value")
     test.assert_eq(err:sub(1, #THIS_FILE), THIS_FILE)
     local line = debug.getinfo(1, "l").currentline
     err = test.assert_error(function()
-        attach({}, false, {}, nil)
+        attach({}, {}, nil)
     end, "attempt to anchor to a nil value")
     test.assert_eq(err:sub(1, #THIS_FILE + 1 + #tostring(line + 2)), THIS_FILE .. ":" .. (line + 2))
 end)
@@ -264,9 +264,9 @@ test.case("anchoring to a dying object raises; a fresh object anchored elsewhere
     local fresh
     local a = new_logged(log, "a", function(self)
         test.assert_error(function()
-            attach({}, false, self)
+            attach({}, self)
         end, "attempt to anchor to a dying table")
-        fresh = attach({}, false, other)
+        fresh = attach({}, other)
     end)
     destroy(a)
     test.assert_deep_eq(log, {"a (destroy)"})
@@ -278,15 +278,15 @@ test.suite("runtime: no moves during destruction")
 test.case("case 5: moving an older anchored table raises; a table created in the phase can be anchored and moved", function()
     local log = {}
     local other, elsewhere = {}, {}
-    local b = attach({}, false, elsewhere)
+    local b = attach({}, elsewhere)
     local fresh
     local errs = {}
     local A = new_logged(log, "A", function(self)
-        errs[1] = select(2, pcall(attach, self.b, false, other))
-        fresh = attach({}, false, other)
-        attach(fresh, false, elsewhere)
+        errs[1] = select(2, pcall(attach, self.b, other))
+        fresh = attach({}, other)
+        attach(fresh, elsewhere)
         -- An older table on the default formula may be anchored.
-        attach(self.plain, false, other)
+        attach(self.plain, other)
     end)
     A.b = b
     A.plain = {}
@@ -298,7 +298,7 @@ test.case("case 5: moving an older anchored table raises; a table created in the
     test.assert_deep_eq(lifetime.dependents(other), {plain})
     test.assert_deep_eq(lifetime.dependents(elsewhere), {b, fresh})
     -- After the phase the old table moves freely again.
-    attach(b, false, other)
+    attach(b, other)
     test.assert_deep_eq(lifetime.dependents(other), {plain, b})
 end)
 
@@ -307,10 +307,10 @@ test.case("a dying object cannot be moved, so a body cannot rescue a sibling", f
     local safe = {}
     local err
     local a = new_logged(log, "a")
-    local sibling = attach(new_logged(log, "sibling"), false, a)
+    local sibling = attach(new_logged(log, "sibling"), a)
     getmetatable(a).__destroy = function(self, reason)
         log[#log + 1] = "a (" .. reason .. ")"
-        err = select(2, pcall(attach, sibling, false, safe))
+        err = select(2, pcall(attach, sibling, safe))
     end
     destroy(a)
     test.assert_true(err:find("attempt to move a dying table", 1, true) ~= nil, err)
@@ -324,10 +324,10 @@ test.case("an object created in an outer phase is not exempt in a nested one", f
     local other = {}
     local made, err
     local inner = new_logged(log, "inner", function()
-        err = select(2, pcall(attach, made, false, other))
+        err = select(2, pcall(attach, made, other))
     end)
     local outer = new_logged(log, "outer", function()
-        made = attach({}, false, other)
+        made = attach({}, other)
         destroy(inner)
     end)
     destroy(outer)
@@ -340,9 +340,9 @@ test.suite("runtime: destroy and the cascade")
 test.case("case 1: the worked example without the hook: c, d, then a, b", function()
     local log = {}
     local a = new_logged(log, "a")
-    local b = attach(new_logged(log, "b"), false, a)
+    local b = attach(new_logged(log, "b"), a)
     local c = new_logged(log, "c")
-    local d = attach(new_logged(log, "d"), false, a, c)
+    local d = attach(new_logged(log, "d"), a, c)
     test.assert_deep_eq(log, {})
     local where_c = here(); destroy(c)
     test.assert_deep_eq(log, {"c (destroy)", "d (anchor)"})
@@ -368,10 +368,10 @@ test.case("the same example as one cascade: decide first, then newest first, a d
     local root = {}
     -- Every dependent carries the `reachable` term: the test holds it
     -- (CLAUDE.md, rule 6), or the collector could take it first.
-    local a = attach(new_logged(log, "a"), false, root)
-    local b = attach(new_logged(log, "b"), false, a)
-    local c = attach(new_logged(log, "c"), false, root)
-    local d = attach(new_logged(log, "d"), false, a, c)
+    local a = attach(new_logged(log, "a"), root)
+    local b = attach(new_logged(log, "b"), a)
+    local c = attach(new_logged(log, "c"), root)
+    local d = attach(new_logged(log, "d"), a, c)
     destroy(root)
     test.assert_deep_eq(log, {"c (anchor)", "d (anchor)", "a (anchor)", "b (anchor)"})
     test.assert_eq(getmetatable(b), getmetatable(d))
@@ -386,7 +386,7 @@ test.case("case 2: the body runs before the dependents and sees them alive", fun
         __destroy = function(self, reason)
             log[#log + 1] = "buf (" .. reason .. ") n=" .. self.n
         end
-    }), false, conn)
+    }), conn)
     local where = here(); destroy(conn)
     test.assert_deep_eq(log, {"conn (destroy)", "conn sees 1", "buf (anchor) n=1"})
     test.assert_error(function()
@@ -401,12 +401,12 @@ test.case("dependents die newest first, each with its whole subtree before the n
     -- one: an unreferenced dependent may be collected before `destroy`
     -- (CLAUDE.md, rule 6: "If a test needs a strong reference to keep an
     -- object alive, the test holds it").
-    local x = attach(new_logged(log, "x"), false, root)
-    local x1 = attach(new_logged(log, "x1"), false, x)
-    local x2 = attach(new_logged(log, "x2"), false, x)
-    local y = attach(new_logged(log, "y"), false, root)
-    local y1 = attach(new_logged(log, "y1"), false, y)
-    local z = attach(new_logged(log, "z"), false, root)
+    local x = attach(new_logged(log, "x"), root)
+    local x1 = attach(new_logged(log, "x1"), x)
+    local x2 = attach(new_logged(log, "x2"), x)
+    local y = attach(new_logged(log, "y"), root)
+    local y1 = attach(new_logged(log, "y1"), y)
+    local z = attach(new_logged(log, "z"), root)
     destroy(root)
     test.assert_deep_eq(log, {"root (destroy)", "z (anchor)", "y (anchor)", "y1 (anchor)", "x (anchor)", "x2 (anchor)", "x1 (anchor)"})
     for _, dead in ipairs({x1, x2, y1, z}) do
@@ -417,8 +417,8 @@ end)
 test.case("destroying an object does not affect its anchors", function()
     local log = {}
     local a = new_logged(log, "a")
-    local x = attach(new_logged(log, "x"), false, a)
-    local y = attach(new_logged(log, "y"), false, a)
+    local x = attach(new_logged(log, "x"), a)
+    local y = attach(new_logged(log, "y"), a)
     destroy(x)
     test.assert_deep_eq(log, {"x (destroy)"})
     test.assert_eq(type(getmetatable(a)), "table", "a keeps its metatable")
@@ -435,10 +435,10 @@ test.case("case 3: destroy by hand inside a body runs the dependent now; the lat
     end)
     -- The test holds every dependent with the term (CLAUDE.md, rule 6).
     local held = {}
-    held.first = attach(new_logged(log, "first"), false, A)
-    A.child = attach(new_logged(log, "child"), false, A)
-    held.grandchild = attach(new_logged(log, "grandchild"), false, A.child)
-    held.last = attach(new_logged(log, "last"), false, A)
+    held.first = attach(new_logged(log, "first"), A)
+    A.child = attach(new_logged(log, "child"), A)
+    held.grandchild = attach(new_logged(log, "grandchild"), A.child)
+    held.last = attach(new_logged(log, "last"), A)
     destroy(A)
     test.assert_deep_eq(log, {"A (destroy)", "child (destroy)", "grandchild (anchor)", "A after destroy(child)", "last (anchor)", "first (anchor)"})
     assert_all_dead({held.first, held.grandchild, held.last})
@@ -451,7 +451,7 @@ test.case("destroy and discard on a dying object whose destruction has begun, or
         destroy(self)
         discard(self)
     end)
-    local b = attach(new_logged(log, "b"), false, a) -- held: rule 6
+    local b = attach(new_logged(log, "b"), a) -- held: rule 6
     destroy(a)
     test.assert_deep_eq(log, {"a (destroy)", "b (anchor)"})
     destroy(a)
@@ -463,10 +463,10 @@ end)
 test.case("a dependent's body may destroy its anchor's other dependents; each dies once", function()
     local log = {}
     local root = new_logged(log, "root")
-    local older = attach(new_logged(log, "older"), false, root)
+    local older = attach(new_logged(log, "older"), root)
     local newer = attach(new_logged(log, "newer", function()
         destroy(older)
-    end), false, root) -- held: rule 6
+    end), root) -- held: rule 6
     destroy(root)
     test.assert_deep_eq(log, {"root (destroy)", "newer (anchor)", "older (destroy)"})
     test.assert_eq(getmetatable(newer), "dead")
@@ -499,8 +499,8 @@ end)
 test.case("discard skips the object's own body only", function()
     local log = {}
     local a = new_logged(log, "a")
-    local b = attach(new_logged(log, "b"), false, a)
-    local c = attach(new_logged(log, "c"), false, b) -- held: rule 6
+    local b = attach(new_logged(log, "b"), a)
+    local c = attach(new_logged(log, "c"), b) -- held: rule 6
     local where = here(); discard(a)
     test.assert_deep_eq(log, {"b (anchor)", "c (anchor)"})
     test.assert_eq(getmetatable(c), "dead")
@@ -513,15 +513,15 @@ end)
 test.case("a cycle of anchors: each object dies once", function()
     local log = {}
     local x = new_logged(log, "x")
-    local y = attach(new_logged(log, "y"), false, x)
-    attach(x, false, y)
+    local y = attach(new_logged(log, "y"), x)
+    attach(x, y)
     destroy(x)
     test.assert_deep_eq(log, {"x (destroy)", "y (anchor)"})
     -- The first anchor is held until the move: an anchor with the term and
     -- a dependent is found by the collector like any object (rule 6).
     local first_anchor = {}
-    local self_anchored = attach(new_logged(log, "s"), false, first_anchor)
-    attach(self_anchored, false, self_anchored)
+    local self_anchored = attach(new_logged(log, "s"), first_anchor)
+    attach(self_anchored, self_anchored)
     test.assert_deep_eq(lifetime.dependents(first_anchor), {})
     destroy(self_anchored)
     test.assert_deep_eq(log, {"x (destroy)", "y (anchor)", "s (destroy)"})
@@ -532,7 +532,7 @@ test.case("__destroy is read from the metatable at the moment of death", functio
     local mt = {}
     local x = setmetatable({}, mt)
     local a = {}
-    attach(x, false, a)
+    attach(x, a)
     mt.__destroy = function(_, reason)
         log[#log + 1] = "late (" .. reason .. ")"
     end
@@ -560,7 +560,7 @@ test.case("a __newindex on the object does not stop the runtime", function()
         end
     })
     local a = {}
-    attach(x, false, a)
+    attach(x, a)
     test.assert_deep_eq(lifetime.dependents(a), {x})
     destroy(a)
     test.assert_eq(getmetatable(x), "dead")
@@ -581,10 +581,10 @@ test.case("an __index on anchors and dependents is never consulted by the runtim
         })
     end
     local a, b = guarded("a"), guarded("b")
-    local x = attach(guarded("x"), false, a)
-    local y = attach(guarded("y"), false, a, b)
-    attach(x, false, b)
-    attach(x, false, a)
+    local x = attach(guarded("x"), a)
+    local y = attach(guarded("y"), a, b)
+    attach(x, b)
+    attach(x, a)
     destroy(a)
     test.assert_deep_eq(log, {"a (destroy)", "x (anchor)", "y (anchor)"})
     destroy(b)
@@ -601,7 +601,7 @@ test.case("a tombstone is empty, has the dead metatable and raises with name, wh
         end
     })
     local a = {}
-    attach(x, false, a)
+    attach(x, a)
     local where = here(); destroy(a)
     test.assert_eq(user_keys(x), 0, "every field cleared, the array part included")
     test.assert_eq(field_count(x), 1, "only the state record is left")
@@ -674,7 +674,7 @@ test.case("attach on a dead object raises the tombstone's message", function()
     local x = {}
     local where = here(); destroy(x)
     test.assert_error(function()
-        attach(x, false, {})
+        attach(x, {})
     end, "attempt to index a dead table (" .. tostring(x):sub(6) .. ", died at " .. where .. ", destroy)")
 end)
 
@@ -693,11 +693,11 @@ end
 test.case("case 4: the first error is re-raised after the cascade; later ones go to destroyerror in order", function()
     local log, routed = {}, {}
     local root = {}
-    local one = attach(raising(log, "one", "one"), false, root)
-    local two = attach(raising(log, "two", "two"), false, root)
+    local one = attach(raising(log, "one", "one"), root)
+    local two = attach(raising(log, "two", "two"), root)
     -- Held, as every dependent with the term in these cases (rule 6).
-    local three = attach(raising(log, "three", "three"), false, root)
-    local newest = attach(new_logged(log, "newest"), false, root)
+    local three = attach(raising(log, "three", "three"), root)
+    local newest = attach(new_logged(log, "newest"), root)
     local ok, err
     with_handler(function(obj, e)
         routed[#routed + 1] = {obj, e}
@@ -721,7 +721,7 @@ end)
 test.case("the root's own error is the first and is re-raised; the object is dead anyway", function()
     local log = {}
     local root = raising(log, "root", "boom")
-    local dep = attach(new_logged(log, "dep"), false, root) -- held: rule 6
+    local dep = attach(new_logged(log, "dep"), root) -- held: rule 6
     local ok, err = pcall(destroy, root)
     test.assert_false(ok)
     test.assert_eq(err, "boom")
@@ -746,8 +746,8 @@ end)
 test.case("the default destroyerror writes `destroyerror: <message>` and a traceback to stderr", function()
     local root = {}
     local held = {} -- rule 6
-    held[1] = attach(raising({}, "a", "first"), false, root)
-    held[2] = attach(raising({}, "b", "second"), false, root)
+    held[1] = attach(raising({}, "a", "first"), root)
+    held[2] = attach(raising({}, "b", "second"), root)
     local ok, err
     local written = with_handler(nil, function()
         ok, err = pcall(destroy, root)
@@ -763,9 +763,9 @@ test.case("a raising handler: both errors go to stderr and the cascade continues
     local log = {}
     local root = {}
     local held = {} -- rule 6
-    held[1] = attach(new_logged(log, "survivor"), false, root)
-    held[2] = attach(raising(log, "a", "first"), false, root)
-    held[3] = attach(raising(log, "b", "second"), false, root)
+    held[1] = attach(new_logged(log, "survivor"), root)
+    held[2] = attach(raising(log, "a", "first"), root)
+    held[3] = attach(raising(log, "b", "second"), root)
     local ok, err
     local written = with_handler(function()
         error("handler broke", 0)
@@ -782,8 +782,8 @@ end)
 test.case("a destroyerror that is not callable: both errors go to stderr", function()
     local root = {}
     local held = {} -- rule 6
-    held[1] = attach(raising({}, "a", "first"), false, root)
-    held[2] = attach(raising({}, "b", "second"), false, root)
+    held[1] = attach(raising({}, "a", "first"), root)
+    held[2] = attach(raising({}, "b", "second"), root)
     local written = with_handler(42, function()
         pcall(destroy, root)
     end)
@@ -795,8 +795,8 @@ test.case("destroyerror is read raw from _G", function()
     local routed = {}
     local root = {}
     local held = {} -- rule 6
-    held[1] = attach(raising({}, "a", "first"), false, root)
-    held[2] = attach(raising({}, "b", "second"), false, root)
+    held[1] = attach(raising({}, "a", "first"), root)
+    held[2] = attach(raising({}, "b", "second"), root)
     local saved_mt = getmetatable(_G)
     with_handler(function(_, e)
         routed[#routed + 1] = e
@@ -826,19 +826,20 @@ test.case("of returns a value with the metatable lifetime; format renders the fo
             return "b"
         end
     })
-    local x = attach({}, false, a)
+    local x = attach({}, a)
     local v = lifetime.of(x)
     test.assert_eq(getmetatable(v), "lifetime")
     test.assert_eq(lifetime.format(v), "(a, reachable)")
     test.assert_eq(lifetime.format(x), "(a, reachable)")
-    attach(x, false, a, b)
+    attach(x, a, b)
     test.assert_eq(lifetime.format(lifetime.of(x)), "(a, b, reachable)")
     -- A snapshot: the earlier value did not change.
     test.assert_eq(lifetime.format(v), "(a, reachable)")
-    -- Pinned (the `pin` flag, as hooks use it): no term.
-    local p = attach({}, true, a)
+    -- Pinned (`lifetime.pin`, the only spelling since the library form
+    -- took the pin flag off `attach`): no term.
+    local p = attach({}, lifetime.pin(a))
     test.assert_eq(lifetime.format(lifetime.of(p)), "a")
-    attach(p, true, a, b)
+    attach(p, lifetime.pin(a, b))
     test.assert_eq(lifetime.format(lifetime.of(p)), "(a, b)")
     -- The default lifetime of a seen object.
     local seen = {}
@@ -871,15 +872,15 @@ end)
 
 test.case("a value is spliced: its anchors and its term; the implicit term is added unless every element is pinned", function()
     local a, b = {}, {}
-    local x = attach({}, false, a)
-    local y = attach({}, false, lifetime.of(x), b)
+    local x = attach({}, a)
+    local y = attach({}, lifetime.of(x), b)
     test.assert_deep_eq(lifetime.dependents(a), {x, y})
     test.assert_deep_eq(lifetime.dependents(b), {y})
     test.assert_eq(lifetime.format(y), "(" .. tostring(a) .. ", " .. tostring(b) .. ", reachable)")
-    local p = attach({}, true, a)
-    local q = attach({}, false, lifetime.of(p))
+    local p = attach({}, lifetime.pin(a))
+    local q = attach({}, lifetime.of(p))
     test.assert_eq(lifetime.format(q), tostring(a), "a pinned value carries no term")
-    local r = attach({}, false, lifetime.of(p), b)
+    local r = attach({}, lifetime.of(p), b)
     test.assert_eq(lifetime.format(r), "(" .. tostring(a) .. ", " .. tostring(b) .. ", reachable)", "a table adds the term")
 end)
 
@@ -889,31 +890,31 @@ test.case("a value mentioning a dead anchor raises; format renders the dead anch
             return "a"
         end
     })
-    local x = attach({}, false, a)
+    local x = attach({}, a)
     local v = lifetime.of(x)
     destroy(a)
     test.assert_error(function()
-        attach({}, false, v)
+        attach({}, v)
     end, "attempt to anchor to a dead table")
     test.assert_eq(lifetime.format(v), "(dead a, reachable)")
 end)
 
 test.case("== on two values compares structure", function()
     local a, b = {}, {}
-    local x = attach({}, false, a, b)
-    local y = attach({}, false, b, a)
-    local z = attach({}, true, a, b)
+    local x = attach({}, a, b)
+    local y = attach({}, b, a)
+    local z = attach({}, lifetime.pin(a, b))
     test.assert_true(lifetime.of(x) == lifetime.of(x))
     test.assert_true(lifetime.of(x) == lifetime.of(y))
     test.assert_false(lifetime.of(x) == lifetime.of(z))
-    test.assert_false(lifetime.of(x) == lifetime.of(attach({}, false, a)))
+    test.assert_false(lifetime.of(x) == lifetime.of(attach({}, a)))
 end)
 
 test.case("dependents returns live dependents in attachment order, a fresh array each time", function()
     local a = {}
-    local x = attach({}, false, a)
-    local y = attach({}, false, a)
-    local z = attach({}, false, a)
+    local x = attach({}, a)
+    local y = attach({}, a)
+    local z = attach({}, a)
     local first = lifetime.dependents(a)
     test.assert_deep_eq(first, {x, y, z})
     destroy(y)
@@ -932,8 +933,8 @@ test.case("dependents of a dying anchor, from its body: every dependent alive", 
             seen = lifetime.dependents(self)
         end
     })
-    local x = attach({}, false, a)
-    local y = attach({}, false, a)
+    local x = attach({}, a)
+    local y = attach({}, a)
     destroy(a)
     test.assert_deep_eq(seen, {x, y})
 end)
@@ -943,9 +944,9 @@ test.suite("runtime: weakness and compaction")
 test.case("case 6: a dependent kept only by its anchor's list is collected", function()
     local a = {}
     local probe = setmetatable({}, {__mode = "k"})
-    local kept = attach({}, false, a)
+    local kept = attach({}, a)
     do
-        local dropped = attach({}, false, a)
+        local dropped = attach({}, a)
         probe[dropped] = true
     end
     collectgarbage("collect")
@@ -958,7 +959,7 @@ test.case("an anchor's record holds no strong reference to it: an unreferenced a
     local probe = setmetatable({}, {__mode = "k"})
     do
         local a = {}
-        local x = attach({}, false, a)
+        local x = attach({}, a)
         probe[a], probe[x] = true, true
     end
     collectgarbage("collect")
@@ -973,7 +974,7 @@ test.case("holes from collected dependents are compacted: the range stays bounde
     -- last temporaries alive when it returns.
     local function fill()
         for i = 1, 2000 do
-            local x = attach({i = i}, false, a)
+            local x = attach({i = i}, a)
             if i % 100 == 0 then
                 kept[#kept + 1] = x
             end
@@ -1014,11 +1015,11 @@ test.case("explicit unlinks in any order keep the order; a list emptied by moves
     local a, b = {}, {}
     local xs = {}
     for i = 1, 40 do
-        xs[i] = attach({i = i}, false, a)
+        xs[i] = attach({i = i}, a)
     end
     -- Move every odd one away: holes in the middle.
     for i = 1, 40, 2 do
-        attach(xs[i], false, b)
+        attach(xs[i], b)
     end
     local expected = {}
     for i = 2, 40, 2 do
@@ -1027,12 +1028,12 @@ test.case("explicit unlinks in any order keep the order; a list emptied by moves
     test.assert_deep_eq(lifetime.dependents(a), expected)
     -- New links go after the old ones, compaction or not.
     for i = 41, 80 do
-        xs[i] = attach({i = i}, false, a)
+        xs[i] = attach({i = i}, a)
         expected[#expected + 1] = xs[i]
     end
     test.assert_deep_eq(lifetime.dependents(a), expected)
     for _, x in ipairs(expected) do
-        attach(x, false, b)
+        attach(x, b)
     end
     local deps = state_of(a).deps
     test.assert_eq(deps.lo, 1)
@@ -1042,7 +1043,7 @@ end)
 
 test.case("no compaction during a destroy phase", function()
     local a = {}
-    local held_dependent = attach({}, false, a)
+    local held_dependent = attach({}, a)
     local done
     local root = setmetatable({}, {
         __destroy = function()
@@ -1050,11 +1051,11 @@ test.case("no compaction during a destroy phase", function()
             local seq_before = deps.seq
             -- Fresh objects linked during the phase, then dropped: holes.
             for _ = 1, 200 do
-                attach({}, false, a)
+                attach({}, a)
             end
             collectgarbage("collect")
             collectgarbage("collect")
-            attach({}, false, a)
+            attach({}, a)
             done = deps.seq == seq_before + 201
         end
     })

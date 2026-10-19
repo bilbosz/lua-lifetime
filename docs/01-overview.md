@@ -14,7 +14,11 @@ calls into.
   `lifetime.alive`, `lifetime.dependents`, `lifetime.format`,
   `lifetime.destroy` and `lifetime.discard`. It keeps every object's anchors and
   dependents, runs cascades in a defined order, and tombstones what died.
-  See [03-runtime.md](03-runtime.md).
+  See [03-runtime.md](03-runtime.md). A program that is not transpiled
+  uses it as a library: `lifetime.attach`, `lifetime.hook`,
+  `lifetime.named_hook` and `lifetime.block` are the calls the
+  transpiler would have written ([02-semantics.md](02-semantics.md),
+  "The library form").
 - **Not a language.** The language is Lua's; `lua-lifetime` adds ownership
   to it. `xd` is the language where lifetimes come first, and this
   repository carries `xd`'s model to Lua as it is today.

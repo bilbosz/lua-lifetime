@@ -321,10 +321,10 @@ test.case("the extension builds to the typed shape of docs/04", function()
         ""
     }, "\n")
     test.assert_eq(round_trip(source, "a.tlt"), table.concat({
-        "local lifetime = require(\"lifetime\"); local __lt_attach, __lt_hook, __lt_enter, __lt_exit = lifetime.attach, lifetime.hook, lifetime.enter, lifetime.exit; " .. dialect.pack_header .. " local function serve(sock: Socket): string, integer local __s1 = __lt_enter(\"a.tlt:6\");",
-        "    local conn: Conn = __lt_attach(Conn.open(sock), false, __s1)",
-        "    local h = __lt_hook(function(reason: lifetime.Reason) print(reason) end, \"h\", conn)",
-        "    local buf = __lt_attach(Buffer.new(1), false, conn, h)",
+        "local lifetime = require(\"lifetime\"); local __lt_attach, __lt_named_hook, __lt_enter, __lt_exit = lifetime.attach, lifetime.named_hook, lifetime.enter, lifetime.exit; " .. dialect.pack_header .. " local function serve(sock: Socket): string, integer local __s1 = __lt_enter(\"a.tlt:6\");",
+        "    local conn: Conn = __lt_attach(Conn.open(sock), __s1)",
+        "    local h = __lt_named_hook(\"h\", function(reason: lifetime.Reason) print(reason) end, conn)",
+        "    local buf = __lt_attach(Buffer.new(1), conn, h)",
         "    local __r, __n = __lt_pack(pair(buf)); __lt_exit(__s1, \"a.tlt:5\"); return __lt_unpack(__r, 1, __n) as (string, integer)",
         "end",
         ""
@@ -358,14 +358,14 @@ test.case("the `lifetime.scope` inside a where clause or a cast counts for its b
     local output = round_trip("local record R\n    where (self.x @ lifetime.scope) ~= nil\n    x: integer\nend\n")
     test.assert_true(output:find("__lt_enter", 1, true) ~= nil, output)
     output = round_trip("local y = ({} @ lifetime.scope) as R\n")
-    test.assert_true(output:find("(__lt_attach({}, false, __s1)) as R", 1, true) ~= nil, output)
+    test.assert_true(output:find("(__lt_attach({}, __s1)) as R", 1, true) ~= nil, output)
 end)
 
 test.suite("teal cli")
 
 test.case("cli.build picks the Teal dialect from the extension or the argument", function()
     local source = "local x: integer = 1 @ lifetime.scope\n"
-    local expected = "local lifetime = require(\"lifetime\"); local __lt_attach, __lt_enter, __lt_exit = lifetime.attach, lifetime.enter, lifetime.exit; local __s1 = __lt_enter(\"a.tlt:2\"); local x: integer = __lt_attach(1, false, __s1)\n__lt_exit(__s1, \"a.tlt:2\");"
+    local expected = "local lifetime = require(\"lifetime\"); local __lt_attach, __lt_enter, __lt_exit = lifetime.attach, lifetime.enter, lifetime.exit; local __s1 = __lt_enter(\"a.tlt:2\"); local x: integer = __lt_attach(1, __s1)\n__lt_exit(__s1, \"a.tlt:2\");"
     test.assert_eq(cli.build(source, "a.tlt"), expected)
     test.assert_eq(cli.build(source, "a.tlt", "teal"), expected)
     test.assert_eq(cli.lang_of("a.tlt"), "teal")
