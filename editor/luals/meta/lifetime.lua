@@ -76,9 +76,9 @@ function lifetime.named_hook(name, f, ...) end
 ---with reason `"anchor"`; an error in `fn` unwinds them at the raise
 ---point. The record is dead once `fn` has returned.
 ---@generic R
----@param fn fun(scope: lifetime.Scope, ...: any): R
+---@param fn fun(scope: lifetime.Scope, ...: any): R?
 ---@param ... any Arguments passed to `fn` after the record
----@return R
+---@return R?
 function lifetime.block(fn, ...) end
 
 ---A fresh token on the default lifetime; `name` is for display only.
