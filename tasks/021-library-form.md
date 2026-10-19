@@ -1,11 +1,11 @@
 ---
 id: 021
 title: The runtime as a library: `lifetime.attach(obj, a1, …)`, `lifetime.hook(f, a1, …)`, `lifetime.named_hook` and `lifetime.block` for programs that are not transpiled
-status: review
+status: done
 depends: [018]
 branch: task/021-library-form
 pr: https://github.com/bilbosz/lua-lifetime/pull/57
-commits:
+commits: 28862a279a8da01c5e47fd95ad386a420dbbd6ba
 review: APPROVE (round 3)
 ---
 
