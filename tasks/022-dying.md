@@ -6,7 +6,7 @@ depends: [021]
 branch: task/022-dying
 pr:
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -99,3 +99,20 @@ Spec change and implementation in one task branch, as task 021 was done
 (the Treflove comparison branch needed both in one sitting); the decision
 is recorded in `docs/05-decisions.md`. Self-checked: `make test` under
 `lua5.1` and `luajit`, `make lint`, `make luals-check`.
+
+Round 1 (reviewer agent, 2026-10-19): APPROVE, no blocking finding.
+`make test` 427/427 under lua5.1 and luajit, conformance 77/77, the
+trial, luals-check; `make lint` clean; `make bench BASE=<task 021's
+tree>` alone, both interpreters: no confirmed mark (`treflove/cycle`
+1.116/1.125 under LuaJIT once, 0.945/1.092 on the next invocation:
+noise). Traced by hand: the decide phase marks every object before the
+first body; the collector's cascade, a second root, a function
+dependent, a hook reading itself, a token, a captured record, a nested
+destroy, the exit sweep. Two non-blocking findings, both tests, added
+after the review: F1, the captured record is asserted dead, not dying,
+after the block returned; F2, a function dependent with a per-type
+`__destroy` reads `dying` through the side table, true inside its body
+and false after. Notes passed on: the Treflove trial's `input.lt` still
+reads the form's hand-kept flag (a follow-up chore); two reviewers'
+`make bench BASE=` in one tree overwrite each other's `build/base` (a
+follow-up chore for the dispatch).

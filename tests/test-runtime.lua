@@ -1151,14 +1151,49 @@ test.case("dying of a token under a hook, of a block's record inside its exit an
     test.assert_deep_eq(log, {"tok dying: true"})
     test.assert_false(lifetime.dying(tok))
 
-    local seen
+    local seen, captured
     lifetime.block(function(scope)
+        captured = scope
         lifetime.hook(function()
             seen = lifetime.dying(scope)
         end, scope)
         test.assert_false(lifetime.dying(scope), "not dying inside the block")
     end)
     test.assert_true(seen, "the record is dying while its exit runs")
+    test.assert_false(lifetime.dying(captured), "dead once the block has returned, not dying")
+    test.assert_false(lifetime.alive(captured))
+end)
+
+test.case("dying of a function dependent reads the side table: true inside its destructor, false after", function()
+    local log, seen = {}, {}
+    local a = new_logged(log, "a")
+    local f = function()
+    end
+    -- a function's `__destroy` is its type's (docs/02-semantics.md,
+    -- "`__destroy` and reasons", rule 1): set for the test, restored after
+    local saved = debug.getmetatable(f)
+    debug.setmetatable(f, {
+        __destroy = function(self, reason)
+            log[#log + 1] = "fn (" .. reason .. ")"
+            seen.f_in_f, seen.a_in_f = lifetime.dying(self), lifetime.dying(a)
+        end
+    })
+    local ok, err = pcall(function()
+        attach(f, lifetime.pin(a))
+        test.assert_false(lifetime.dying(f))
+        destroy(a)
+        test.assert_deep_eq(log, {"a (destroy)", "fn (anchor)"})
+        test.assert_deep_eq(seen, {
+            f_in_f = true,
+            a_in_f = true
+        })
+        test.assert_false(lifetime.dying(f), "remembered dead in the side table, not dying")
+        test.assert_false(lifetime.alive(f))
+    end)
+    debug.setmetatable(f, saved)
+    if not ok then
+        error(err, 0)
+    end
 end)
 
 test.case("dying is false for nil, false, a lifetime value, the scope marker, an unseen table and a plain function; a value is an error", function()
