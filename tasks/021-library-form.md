@@ -4,7 +4,7 @@ title: The runtime as a library: `lifetime.attach(obj, a1, …)`, `lifetime.hook
 status: review
 depends: [018]
 branch: task/021-library-form
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/57
 commits:
 review: APPROVE (round 3)
 ---
