@@ -20,7 +20,7 @@ function Connection.open(sock)
   return setmetatable({ sock = sock }, Connection)
 end
 
-function Connection.__destroy(self)
+function Connection.__lifetime_destroy(self)
   print("closing connection")
   self.sock:close()
 end
@@ -32,7 +32,7 @@ function Buffer.new(n)
   return setmetatable({ bytes = n }, Buffer)
 end
 
-function Buffer.__destroy(self)
+function Buffer.__lifetime_destroy(self)
   print("freeing buffer of " .. self.bytes .. " bytes")
 end
 

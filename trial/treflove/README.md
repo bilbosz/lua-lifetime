@@ -49,7 +49,7 @@ stand-ins, so the real login code of `login/login.lua` and
 
 Each edit carries a `-- lua-lifetime:` comment in the file.
 
-- **`utils/class.lt`**: the instance metatable gets `__destroy =
+- **`utils/class.lt`**: the instance metatable gets `__lifetime_destroy =
   function(obj, reason) if obj.release then obj:release(reason) end end`
   (the note's line without `remaining`, which decision 10 removed), and
   `__call` registers every instance with `obj @ lifetime.reachable` right
@@ -98,11 +98,11 @@ Each edit carries a `-- lua-lifetime:` comment in the file.
 
 ## What `class()` and `table.to_string` needed
 
-- **`class()`**: the `__destroy` forwarder in `obj_mt` is what the slice
+- **`class()`**: the `__lifetime_destroy` forwarder in `obj_mt` is what the slice
   needs, and all it needs. The registration of "Registration is `x @
   lifetime.reachable`" (`obj @ lifetime.reachable` in `__call`, after
   `setmetatable`, since the sentinel is armed at the first `@` that finds
-  a `__destroy`, `docs/03-runtime.md`, "The sentinel") is needed by no
+  a `__lifetime_destroy`, `docs/03-runtime.md`, "The sentinel") is needed by no
   object of the slice: every instance with a `release()` is anchored
   (`@ connection`, `@ self`, `@ session`, `@ period`) or used as an anchor
   (the connection, the form, the inputs) before it could be collected, and
@@ -259,7 +259,7 @@ dependent's at each `@`, climbing through the anchor's own anchors
 connection's proxy ends up the newest too. Before task 017 the runtime
 did not exchange, the registered run finalized every procedure first,
 with `"unreachable"`, and `Login:release`'s nested call met a tombstone
-and went to `destroyerror`; registering in the constructor turned the
+and went to `lifetime_destroyerror`; registering in the constructor turned the
 collected order upside down. That is no longer the case.
 
 ## Findings
@@ -274,7 +274,7 @@ and by claim of the note.
    is a tombstone in its array or table until something removes it. The
    back stack and the form's inputs remove theirs in a hook, by identity,
    while the element is dying, as the note says.
-3. **Lesson 3 holds unchanged**: one `__destroy` per merged-index
+3. **Lesson 3 holds unchanged**: one `__lifetime_destroy` per merged-index
    metatable. `FormScreen` (`Screen` + `KeyboardEventListener`) gets one
    `release()`; the `Input` mixin gets a hook in its `init` instead.
 4. **Lesson 4 reverses**, for every death the program causes and for a
@@ -284,7 +284,7 @@ and by claim of the note.
    or not the class library registers in its constructor, and the nested
    call works (test case 3). The trial first found the registered run
    finalizing the procedures first, the nested call meeting a tombstone
-   and going to `destroyerror` (task 009, "Spec issues found", item 1);
+   and going to `lifetime_destroyerror` (task 009, "Spec issues found", item 1);
    `docs/05-decisions.md`, "Anchors are finalized before their
    dependents", settled it and task 017 implemented it.
 5. **Lesson 5 holds**: a destructor run by the collector runs at an

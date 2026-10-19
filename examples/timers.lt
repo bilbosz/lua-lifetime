@@ -9,7 +9,7 @@
 -- carries the `reachable` term implicitly (decision 4); the queue refers
 -- to every pending entry, so none dies by the collector. `Hint` is seen by
 -- the runtime because it is an anchor, so the collector runs its
--- destructor (docs/02-semantics.md, "`__destroy` and reasons", rule 7).
+-- destructor (docs/02-semantics.md, "`__lifetime_destroy` and reasons", rule 7).
 --
 -- From the Treflove comparison (xd/docs/09-lessons-from-treflove.md, idiom
 -- G): a timer entry is anchored to the object that scheduled it, so the
@@ -44,7 +44,7 @@ end
 
 local Hint = {}
 Hint.__index = Hint
-Hint.__destroy = function(self, reason) print("hint " .. self.name .. " closed (" .. reason .. ")") end
+Hint.__lifetime_destroy = function(self, reason) print("hint " .. self.name .. " closed (" .. reason .. ")") end
 function Hint:show()
   print("show " .. self.name)
   after(2, function() self:hide() end) @ self     -- cancelled with self

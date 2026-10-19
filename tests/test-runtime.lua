@@ -1,6 +1,6 @@
 -- tests/test-runtime.lua: lifetime/init.lua, task 002. Anchors and the
 -- state record, `attach`, `destroy`, `discard`, the cascade in the order
--- of decision 10, tombstones, `destroyerror`, lifetime values, `of`,
+-- of decision 10, tombstones, `lifetime_destroyerror`, lifetime values, `of`,
 -- `dependents`, `format`, `is_state`, `dying` (task 022).
 --
 -- Every destruction test logs into a table and compares the whole
@@ -18,7 +18,7 @@ local function here()
     return THIS_FILE .. ":" .. debug.getinfo(2, "l").currentline
 end
 
--- A logging object: `__tostring` gives `name`, `__destroy` appends
+-- A logging object: `__tostring` gives `name`, `__lifetime_destroy` appends
 -- `name (reason)` to `log`, and `extra(self, reason)` runs inside the body
 -- when given.
 local function new_logged(log, name, extra)
@@ -26,7 +26,7 @@ local function new_logged(log, name, extra)
     mt.__tostring = function()
         return name
     end
-    mt.__destroy = function(self, reason)
+    mt.__lifetime_destroy = function(self, reason)
         log[#log + 1] = name .. " (" .. reason .. ")"
         if extra then
             extra(self, reason)
@@ -75,10 +75,10 @@ local function assert_all_dead(list)
     end
 end
 
--- Run `fn` with `_G.destroyerror` set to `handler` (nil for the default)
+-- Run `fn` with `_G.lifetime_destroyerror` set to `handler` (nil for the default)
 -- and `io.stderr` replaced by a buffer; returns what was written.
 local function with_handler(handler, fn)
-    local saved_handler, saved_stderr = rawget(_G, "destroyerror"), io.stderr
+    local saved_handler, saved_stderr = rawget(_G, "lifetime_destroyerror"), io.stderr
     local written = {}
     rawset(io, "stderr", {
         write = function(self, ...)
@@ -88,9 +88,9 @@ local function with_handler(handler, fn)
             return self
         end
     })
-    rawset(_G, "destroyerror", handler)
+    rawset(_G, "lifetime_destroyerror", handler)
     local ok, err = pcall(fn)
-    rawset(_G, "destroyerror", saved_handler)
+    rawset(_G, "lifetime_destroyerror", saved_handler)
     rawset(io, "stderr", saved_stderr)
     if not ok then
         error(err, 0)
@@ -308,7 +308,7 @@ test.case("a dying object cannot be moved, so a body cannot rescue a sibling", f
     local err
     local a = new_logged(log, "a")
     local sibling = attach(new_logged(log, "sibling"), a)
-    getmetatable(a).__destroy = function(self, reason)
+    getmetatable(a).__lifetime_destroy = function(self, reason)
         log[#log + 1] = "a (" .. reason .. ")"
         err = select(2, pcall(attach, sibling, safe))
     end
@@ -383,7 +383,7 @@ test.case("case 2: the body runs before the dependents and sees them alive", fun
         log[#log + 1] = "conn sees " .. self.buf.n
     end)
     conn.buf = attach(setmetatable({n = 1}, {
-        __destroy = function(self, reason)
+        __lifetime_destroy = function(self, reason)
             log[#log + 1] = "buf (" .. reason .. ") n=" .. self.n
         end
     }), conn)
@@ -527,24 +527,24 @@ test.case("a cycle of anchors: each object dies once", function()
     test.assert_deep_eq(log, {"x (destroy)", "y (anchor)", "s (destroy)"})
 end)
 
-test.case("__destroy is read from the metatable at the moment of death", function()
+test.case("__lifetime_destroy is read from the metatable at the moment of death", function()
     local log = {}
     local mt = {}
     local x = setmetatable({}, mt)
     local a = {}
     attach(x, a)
-    mt.__destroy = function(_, reason)
+    mt.__lifetime_destroy = function(_, reason)
         log[#log + 1] = "late (" .. reason .. ")"
     end
     destroy(a)
     test.assert_deep_eq(log, {"late (anchor)"})
 end)
 
-test.case("a protected metatable: __destroy still runs and the table is still tombstoned", function()
+test.case("a protected metatable: __lifetime_destroy still runs and the table is still tombstoned", function()
     local log = {}
     local x = setmetatable({}, {
         __metatable = "mine",
-        __destroy = function(_, reason)
+        __lifetime_destroy = function(_, reason)
             log[#log + 1] = "x (" .. reason .. ")"
         end
     })
@@ -575,7 +575,7 @@ test.case("an __index on anchors and dependents is never consulted by the runtim
             __index = function()
                 error("__index consulted")
             end,
-            __destroy = function(_, reason)
+            __lifetime_destroy = function(_, reason)
                 log[#log + 1] = name .. " (" .. reason .. ")"
             end
         })
@@ -683,14 +683,14 @@ test.suite("runtime: errors in destructors")
 -- A table whose body raises `message` (unpositioned) after logging.
 local function raising(log, name, message)
     return setmetatable({}, {
-        __destroy = function()
+        __lifetime_destroy = function()
             log[#log + 1] = name
             error(message, 0)
         end
     })
 end
 
-test.case("case 4: the first error is re-raised after the cascade; later ones go to destroyerror in order", function()
+test.case("case 4: the first error is re-raised after the cascade; later ones go to lifetime_destroyerror in order", function()
     local log, routed = {}, {}
     local root = {}
     local one = attach(raising(log, "one", "one"), root)
@@ -743,7 +743,7 @@ test.case("a destroy inside a body is a cascade of its own: its error raises to 
     test.assert_deep_eq(caught, {false, "inner failed"})
 end)
 
-test.case("the default destroyerror writes `destroyerror: <message>` and a traceback to stderr", function()
+test.case("the default lifetime_destroyerror writes `lifetime_destroyerror: <message>` and a traceback to stderr", function()
     local root = {}
     local held = {} -- rule 6
     held[1] = attach(raising({}, "a", "first"), root)
@@ -754,7 +754,7 @@ test.case("the default destroyerror writes `destroyerror: <message>` and a trace
     end)
     test.assert_false(ok)
     test.assert_eq(err, "second")
-    test.assert_eq(written:sub(1, #"destroyerror: first\n"), "destroyerror: first\n")
+    test.assert_eq(written:sub(1, #"lifetime_destroyerror: first\n"), "lifetime_destroyerror: first\n")
     test.assert_true(written:find("stack traceback:", 1, true) ~= nil, written)
     assert_all_dead(held)
 end)
@@ -775,11 +775,11 @@ test.case("a raising handler: both errors go to stderr and the cascade continues
     test.assert_false(ok)
     test.assert_eq(err, "second")
     test.assert_deep_eq(log, {"b", "a", "survivor (anchor)"})
-    test.assert_eq(written, "destroyerror: first\ndestroyerror: error in destroyerror (handler broke)\n")
+    test.assert_eq(written, "lifetime_destroyerror: first\nlifetime_destroyerror: error in lifetime_destroyerror (handler broke)\n")
     assert_all_dead(held)
 end)
 
-test.case("a destroyerror that is not callable: both errors go to stderr", function()
+test.case("a lifetime_destroyerror that is not callable: both errors go to stderr", function()
     local root = {}
     local held = {} -- rule 6
     held[1] = attach(raising({}, "a", "first"), root)
@@ -787,11 +787,11 @@ test.case("a destroyerror that is not callable: both errors go to stderr", funct
     local written = with_handler(42, function()
         pcall(destroy, root)
     end)
-    test.assert_true(written:find("destroyerror: first\ndestroyerror: error in destroyerror (", 1, true) == 1, written)
+    test.assert_true(written:find("lifetime_destroyerror: first\nlifetime_destroyerror: error in lifetime_destroyerror (", 1, true) == 1, written)
     assert_all_dead(held)
 end)
 
-test.case("destroyerror is read raw from _G", function()
+test.case("lifetime_destroyerror is read raw from _G", function()
     local routed = {}
     local root = {}
     local held = {} -- rule 6
@@ -929,7 +929,7 @@ end)
 test.case("dependents of a dying anchor, from its body: every dependent alive", function()
     local seen
     local a = setmetatable({}, {
-        __destroy = function(self)
+        __lifetime_destroy = function(self)
             seen = lifetime.dependents(self)
         end
     })
@@ -998,7 +998,7 @@ test.case("holes from collected dependents are compacted: the range stays bounde
     local log = {}
     for i, x in ipairs(kept) do
         setmetatable(x, {
-            __destroy = function()
+            __lifetime_destroy = function()
                 log[#log + 1] = i
             end
         })
@@ -1046,7 +1046,7 @@ test.case("no compaction during a destroy phase", function()
     local held_dependent = attach({}, a)
     local done
     local root = setmetatable({}, {
-        __destroy = function()
+        __lifetime_destroy = function()
             local deps = state_of(a).deps
             local seq_before = deps.seq
             -- Fresh objects linked during the phase, then dropped: holes.
@@ -1169,11 +1169,11 @@ test.case("dying of a function dependent reads the side table: true inside its d
     local a = new_logged(log, "a")
     local f = function()
     end
-    -- a function's `__destroy` is its type's (docs/02-semantics.md,
-    -- "`__destroy` and reasons", rule 1): set for the test, restored after
+    -- a function's `__lifetime_destroy` is its type's (docs/02-semantics.md,
+    -- "`__lifetime_destroy` and reasons", rule 1): set for the test, restored after
     local saved = debug.getmetatable(f)
     debug.setmetatable(f, {
-        __destroy = function(self, reason)
+        __lifetime_destroy = function(self, reason)
             log[#log + 1] = "fn (" .. reason .. ")"
             seen.f_in_f, seen.a_in_f = lifetime.dying(self), lifetime.dying(a)
         end
@@ -1207,6 +1207,63 @@ test.case("dying is false for nil, false, a lifetime value, the scope marker, an
     local ok, err = pcall(lifetime.dying, 5)
     test.assert_false(ok)
     test.assert_true(tostring(err):find("bad argument #1 to 'lifetime.dying' %(object expected, got number%)$") ~= nil, tostring(err))
+end)
+
+test.suite("the names: __lifetime_destroy and lifetime_destroyerror")
+
+test.case("a metatable with __destroy and no __lifetime_destroy is a plain table to the runtime; the metamethod is read at the moment of death", function()
+    local log = {}
+    local mt = {
+        __destroy = function()
+            log[#log + 1] = "old name ran"
+        end
+    }
+    local a = attach(setmetatable({}, mt), lifetime.reachable)
+    destroy(a)
+    test.assert_deep_eq(log, {}, "the old name is not a destructor")
+    test.assert_false(lifetime.alive(a))
+
+    -- "looked up on the object's metatable at the moment of death"
+    local late_mt = {}
+    local b = attach(setmetatable({}, late_mt), lifetime.reachable)
+    late_mt.__lifetime_destroy = function(_, reason)
+        log[#log + 1] = "b (" .. reason .. ")"
+    end
+    destroy(b)
+    test.assert_deep_eq(log, {"b (destroy)"})
+end)
+
+test.case("a destructor error after the first of a cascade goes to lifetime_destroyerror, never to a global destroyerror", function()
+    local seen, old_seen = {}, {}
+    local saved_new, saved_old = rawget(_G, "lifetime_destroyerror"), rawget(_G, "destroyerror")
+    rawset(_G, "lifetime_destroyerror", function(_, err)
+        seen[#seen + 1] = tostring(err)
+    end)
+    rawset(_G, "destroyerror", function(_, err)
+        old_seen[#old_seen + 1] = tostring(err)
+    end)
+    local ok, err = pcall(function()
+        local root = {}
+        attach(setmetatable({}, {
+            __lifetime_destroy = function()
+                error("first", 0)
+            end
+        }), root)
+        attach(setmetatable({}, {
+            __lifetime_destroy = function()
+                error("second", 0)
+            end
+        }), root)
+        local caught = select(2, pcall(destroy, root))
+        test.assert_eq(caught, "second", "the newest dependent dies first; its error is the first and is raised")
+        test.assert_deep_eq(seen, {"first"}, "the later error went to lifetime_destroyerror")
+        test.assert_deep_eq(old_seen, {}, "the old name is not consulted")
+    end)
+    rawset(_G, "lifetime_destroyerror", saved_new)
+    rawset(_G, "destroyerror", saved_old)
+    if not ok then
+        error(err, 0)
+    end
 end)
 
 return test

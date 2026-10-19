@@ -2,7 +2,7 @@
 -- (docs/07-conformance.md). Decisions of xd/docs/10-lua-lifetime-decisions.md
 -- that change the output:
 --   - decision 10: a hook on an object runs after that object's
---     `__destroy`, among its other dependents (part 2, and the program
+--     `__lifetime_destroy`, among its other dependents (part 2, and the program
 --     end, where `keep` now runs after the registry's destructor);
 --   - decision 10 (with decision 7): there is no `remaining` argument, so
 --     the hooks of parts 2 and 3 print the reason only;
@@ -19,7 +19,7 @@ local Thing = {}
 Thing.__index = Thing
 Thing.__tostring = function(self) return self.id end
 function Thing.new(id) return setmetatable({ id = id }, Thing) end
-function Thing.__destroy(self, reason) print("destroyed " .. self.id .. " (" .. reason .. ")") end
+function Thing.__lifetime_destroy(self, reason) print("destroyed " .. self.id .. " (" .. reason .. ")") end
 
 local registry = Thing.new("registry")
 
@@ -33,7 +33,7 @@ end
 --> destroyed t (anchor)
 --> first deferred, runs last
 
--- 2. A hook attached to an object runs after the object's own __destroy.
+-- 2. A hook attached to an object runs after the object's own __lifetime_destroy.
 --    The object is dying, not dead, so the upvalue `conn` still works.
 do
   local conn = Thing.new("conn") @ lifetime.scope

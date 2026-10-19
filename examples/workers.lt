@@ -13,7 +13,7 @@
 --     "The implicit `reachable` term and `lifetime.pin`");
 --   - decision 10: when the block ends, w3's destructor runs first, then
 --     its counting hook, which destroys the channel's token; `xd` closed
---     the channel first. `__destroy` has no `remaining`;
+--     the channel first. `__lifetime_destroy` has no `remaining`;
 --   - decision 5: the scope cannot be stored in `owner`, and
 --     `lifetime.scope` in the loop body is the iteration's, so the workers
 --     are anchored to a token that is anchored to the block;
@@ -28,11 +28,11 @@ local Worker = {}
 Worker.__index = Worker
 Worker.__tostring = function(self) return "w" .. self.id end    -- names in lifetime.format
 function Worker.new(id) return setmetatable({ id = id }, Worker) end
-function Worker.__destroy(self) print("worker " .. self.id .. " done") end
+function Worker.__lifetime_destroy(self) print("worker " .. self.id .. " done") end
 
 local Channel = {}
 Channel.__index = Channel
-function Channel.__destroy(self, reason)
+function Channel.__lifetime_destroy(self, reason)
   print("channel closed (" .. reason .. ")")
 end
 

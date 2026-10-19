@@ -105,7 +105,7 @@ of operator", then "`local hook = function() print("exited") end !@
 scope`"). `f !@ a` is `xd`'s `defer f @ a` written as one infix operator
 with the precedence and right operand of `@`: `@` attaches an object to a
 lifetime, `!@` attaches an action. The rest of `defer` carries over: the
-hook is pinned by its anchors, runs after its anchor's `__destroy`, is
+hook is pinned by its anchors, runs after its anchor's `__lifetime_destroy`, is
 called with the reason, and is moved, destroyed and discarded like any
 object. The extension adds no reserved word, so `defer` is an ordinary
 name again (Treflove's `events/defer-manager.lua` names a local `defer`).
@@ -373,7 +373,7 @@ unwind at the raise point"; the rest of this entry stands.
 error path"; [04-transpiler.md](04-transpiler.md), "The error path:
 unwinding at the raise point"
 
-## Errors in finalizer-run destructors go to `destroyerror`
+## Errors in finalizer-run destructors go to `lifetime_destroyerror`
 
 Decided by the human on 2026-10-09, settling the open point of decision 2
 of file 10. A destructor the collector runs (reason `"unreachable"`, or
@@ -381,12 +381,12 @@ of file 10. A destructor the collector runs (reason `"unreachable"`, or
 propagate an error raised in `__gc` into whatever allocation happened to
 trigger the collection. The sentinel's finalizer therefore runs the
 cascade in protected mode and routes every error of it, the first
-included, to `destroyerror`, which is what rule 5 of "Errors in
+included, to `lifetime_destroyerror`, which is what rule 5 of "Errors in
 destructors" already does for an error raised while another propagates.
 Letting it propagate was rejected because the error would surface at an
 unrelated line with no way to catch it where it was caused.
 → [02-semantics.md](02-semantics.md), "Errors in destructors and
-`destroyerror`"; [03-runtime.md](03-runtime.md), "The sentinel"
+`lifetime_destroyerror`"; [03-runtime.md](03-runtime.md), "The sentinel"
 
 ## Lifetime values are immutable snapshots
 
@@ -408,17 +408,17 @@ table" (the one-way gate); the human carries it back to `xd`.
 ## Registration is `x @ lifetime.reachable`
 
 Confirmed by the human on 2026-10-09. Under decision 2 the runtime can
-only notify objects it has seen; a plain table with a `__destroy` that
+only notify objects it has seen; a plain table with a `__lifetime_destroy` that
 was never anchored, hooked, created by `lifetime.token` or passed to
 `destroy`, `discard` or `lifetime.of` is collected silently, as Lua
 collects it, unlike in `xd`, where every object is found. `x @
 lifetime.reachable` is the registration, and a class library registers
 its instances in its constructor (one line in Treflove's
 `utils/class.lua`; task 009 measures it). Finding every object with a
-`__destroy` was rejected because it would need the runtime to see every
+`__lifetime_destroy` was rejected because it would need the runtime to see every
 `setmetatable`. This is a consequence of decision 2 that file 10 does not
 state; the human carries it back to `xd`.
-→ [02-semantics.md](02-semantics.md), "`__destroy` and reasons", rule 7
+→ [02-semantics.md](02-semantics.md), "`__lifetime_destroy` and reasons", rule 7
 
 ## The state record's key is a private table
 
@@ -587,7 +587,7 @@ carries a sentinel, so such a hook could never run and `lifetime.format`
 rendered its formula as `()`. The spec sentence wins: a hook whose
 formula is the term alone has no anchor to die with, so it carries the
 sentinel and runs with reason `"unreachable"` when the collector finds
-it, as a registered table with a `__destroy` does; `format` renders
+it, as a registered table with a `__lifetime_destroy` does; `format` renders
 `reachable`. Every other hook is pinned by an anchor and carries no
 sentinel, as before. Task 004 implements it with the sentinel.
 → [02-semantics.md](02-semantics.md), "Hooks: the `!@` operator";
@@ -621,7 +621,7 @@ change every value of the type. Such an object never carries a sentinel
 (the proxy's metatable would have to hold the object, a cycle through
 the weak key, and it has no dependents or hooks of its own, since it is
 never an anchor), so one the collector finds dies silently: a
-`__destroy` on its type's metatable runs on `destroy` and on an anchor's
+`__lifetime_destroy` on its type's metatable runs on `destroy` and on an anchor's
 death, not at collection.
 
 **Weak anchors.** The side record names the dependent's anchors, and
@@ -692,7 +692,7 @@ still emits nothing for the error path.
 
 One case keeps no order: a stack overflow, where the host runs the
 handler with little stack. A destructor that overflows again is caught
-by the cascade's protected call and routed to `destroyerror`, the
+by the cascade's protected call and routed to `lifetime_destroyerror`, the
 unwinding goes on; the unwinding code itself overflowing ends the
 handler, the protected call returns `false` with the host's message
 (`error in error handling` on Lua 5.1, `stack overflow` on LuaJIT), and
@@ -805,7 +805,7 @@ corrected without a dependency graph of its own. Task 009 had shown the
 cost of the old rule: with Treflove's `class()` registering every
 instance at construction, a collected connection tree was finalized
 newest first, so every procedure died before its session and the
-session's nested `release()` met a tombstone and went to `destroyerror`,
+session's nested `release()` met a tombstone and went to `lifetime_destroyerror`,
 while the same tree without registration died in ownership order.
 
 What the hosts give: finalizers run in reverse creation order of the
@@ -844,7 +844,7 @@ registered and unregistered runs then agree.
 Consequences: `examples/move.lt` and `examples/pinned_parent.lt` print
 `child (anchor)` after the root instead of `child (unreachable)` before
 it, and the Treflove trial's "collected" scenario loses its
-`destroyerror`; those `.expected` files, the examples' comments, their
+`lifetime_destroyerror`; those `.expected` files, the examples' comments, their
 rows in 07 and the trial's expected log are updated by task 017, in the
 pull request that carries the runtime change, so that `master` stays
 green at every merge (rule 2: the spec says the old expectation was
@@ -1032,3 +1032,22 @@ implemented it.
 → [02-semantics.md](02-semantics.md), "Tombstones and `lifetime.alive`",
 "Hooks: the `!@` operator", "The `lifetime` table";
 [03-runtime.md](03-runtime.md), "The state of an object"
+
+## The metamethod is `__lifetime_destroy`, the handler `lifetime_destroyerror`
+
+At the human's request (2026-10-19), the two names a program defines for
+the runtime carry the library's name: the destructor metamethod is
+`__lifetime_destroy` (it was `__destroy`, the name of `xd/docs/03-
+destruction.md`, "The `__destroy` metamethod"), and the global error
+handler the runtime looks up raw in `_G` is `lifetime_destroyerror` (it
+was `destroyerror`). Both names were generic enough to collide with a
+program's own metamethods or globals, and nothing else in the extension
+takes a name from the program: the syntax adds no keywords (`defer`,
+`token`, `scope` and `caller` are ordinary names), the generated chunk
+binds the runtime to locals, and the type tests are the string values of
+`getmetatable`. The human carries the change back to `xd`. The default
+handler's prefix follows the name (`lifetime_destroyerror: <message>`),
+so `examples/destroy_errors.lt.expected` changes with it; the semantics
+are untouched. Task 023 implemented it.
+→ [02-semantics.md](02-semantics.md), "`__lifetime_destroy` and reasons",
+"Errors in destructors and `lifetime_destroyerror`"

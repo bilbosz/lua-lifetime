@@ -8,7 +8,7 @@ local record Res
   name: string
 end
 local Res_mt = {
-  __destroy = function(self: Res, reason: lifetime.Reason) print("close " .. self.name .. " (" .. reason .. ")") end
+  __lifetime_destroy = function(self: Res, reason: lifetime.Reason) print("close " .. self.name .. " (" .. reason .. ")") end
 } as metatable<Res>
 local function new(name: string): Res print("open " .. name); return setmetatable({ name = name } as Res, Res_mt) end
 global log: Res = new("log") @ lifetime.reachable  -- default lifetime: lives until the program ends

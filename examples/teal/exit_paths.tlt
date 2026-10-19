@@ -16,7 +16,7 @@ local record Res
     name: string
 end
 local Res_mt = {
-    __destroy = function(self: Res, reason: lifetime.Reason)
+    __lifetime_destroy = function(self: Res, reason: lifetime.Reason)
         print("destroy " .. self.name .. " (" .. reason .. ")")
     end
 } as metatable<Res>

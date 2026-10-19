@@ -21,7 +21,7 @@ local lifetime = require("lifetime")
 local attach, destroy, discard = lifetime.attach, lifetime.destroy, lifetime.discard
 local enter, exit, hook, named_hook = lifetime.enter, lifetime.exit, lifetime.hook, lifetime.named_hook
 
--- A logging object: `__tostring` gives `name`, `__destroy` appends
+-- A logging object: `__tostring` gives `name`, `__lifetime_destroy` appends
 -- `name (reason)` to `log`, and `extra(self, reason)` runs inside the body
 -- when given.
 local function new_logged(log, name, extra)
@@ -29,7 +29,7 @@ local function new_logged(log, name, extra)
     mt.__tostring = function()
         return name
     end
-    mt.__destroy = function(self, reason)
+    mt.__lifetime_destroy = function(self, reason)
         log[#log + 1] = name .. " (" .. reason .. ")"
         if extra then
             extra(self, reason)
@@ -154,10 +154,10 @@ end
 local hidden_pcall = original(pcall, "pcall")
 local hidden_resume = original(coroutine.resume, "resume")
 
--- Run `fn` with `_G.destroyerror` set to `handler` and `io.stderr`
+-- Run `fn` with `_G.lifetime_destroyerror` set to `handler` and `io.stderr`
 -- replaced by a buffer; returns what was written.
 local function with_handler(handler, fn)
-    local saved_handler, saved_stderr = rawget(_G, "destroyerror"), io.stderr
+    local saved_handler, saved_stderr = rawget(_G, "lifetime_destroyerror"), io.stderr
     local written = {}
     rawset(io, "stderr", {
         write = function(self, ...)
@@ -167,9 +167,9 @@ local function with_handler(handler, fn)
             return self
         end
     })
-    rawset(_G, "destroyerror", handler)
+    rawset(_G, "lifetime_destroyerror", handler)
     local ok, err = pcall(fn)
-    rawset(_G, "destroyerror", saved_handler)
+    rawset(_G, "lifetime_destroyerror", saved_handler)
     rawset(io, "stderr", saved_stderr)
     if not ok then
         error(err, 0)
@@ -309,7 +309,7 @@ test.case("a record whose dependents were moved away or destroyed has nothing le
     test.assert_deep_eq(lifetime.dependents(keep), {moved})
 end)
 
-test.case("the first destructor error is raised at the exit, after the whole cascade; later ones go to destroyerror", function()
+test.case("the first destructor error is raised at the exit, after the whole cascade; later ones go to lifetime_destroyerror", function()
     local log = {}
     local before = depth()
     local s = enter("t.lt:80")
@@ -437,7 +437,7 @@ test.case("case 1: hooks on a scope interleave with its dependents, last attache
     test.assert_eq(getmetatable(g), "dead")
 end)
 
-test.case("case 2: a hook on an object runs after its __destroy, while the object is still usable", function()
+test.case("case 2: a hook on an object runs after its __lifetime_destroy, while the object is still usable", function()
     local log = {}
     local conn = new_logged(log, "conn")
     conn.id = "conn"
@@ -881,7 +881,7 @@ test.case("case 5: xpcall's handler runs at the raise point, before any record i
     test.assert_eq(depth(), before)
 end)
 
-test.case("case 5: a destructor error during the unwind goes to destroyerror; the original error comes out", function()
+test.case("case 5: a destructor error during the unwind goes to lifetime_destroyerror; the original error comes out", function()
     local log = {}
     local routed = {}
     local ok, err
@@ -1087,7 +1087,7 @@ test.case("case 5b: a coroutine.wrap function unwinds the coroutine's records, t
     test.assert_eq(depth(), before)
 end)
 
-test.case("an error in a coroutine's destructor during its unwind goes to destroyerror", function()
+test.case("an error in a coroutine's destructor during its unwind goes to lifetime_destroyerror", function()
     local routed = {}
     local ok, err
     with_handler(function(_, e)

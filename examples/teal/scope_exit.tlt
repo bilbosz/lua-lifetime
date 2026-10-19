@@ -12,7 +12,7 @@ local record Res
 end
 local Res_mt = {
     __index = Res,
-    __destroy = function(self: Res, reason: lifetime.Reason)
+    __lifetime_destroy = function(self: Res, reason: lifetime.Reason)
         print("destroy " .. self.name .. " (" .. reason .. ")")
     end,
     __tostring = function(self: Res): string

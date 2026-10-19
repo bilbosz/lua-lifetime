@@ -23,7 +23,7 @@ function Channel.new()
   return setmetatable({ queue = {} }, Channel)
 end
 
-function Channel.__destroy(self)
+function Channel.__lifetime_destroy(self)
   print("channel closed with " .. #self.queue .. " undelivered messages")
 end
 

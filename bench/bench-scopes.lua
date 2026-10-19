@@ -11,7 +11,7 @@
 -- the line of the block's end and `exit` with the line of the exit.
 --
 --   scope/loop-one-object   a loop body owning one object with a
---                           `__destroy` (`local x = {} @ lifetime.scope`):
+--                           `__lifetime_destroy` (`local x = {} @ lifetime.scope`):
 --                           enter, attach, exit; against creating the
 --                           object and calling its body by hand at the end
 --                           of the iteration
@@ -25,7 +25,7 @@
 --   scope/block-one-object  the library form of scope/loop-one-object
 --                           (docs/02-semantics.md, "The library form"):
 --                           `lifetime.block(body)` of a function that
---                           attaches one object with a `__destroy` to the
+--                           attaches one object with a `__lifetime_destroy` to the
 --                           record, the function made once; against
 --                           calling a function that creates the object
 --                           and calls its body by hand
@@ -81,7 +81,7 @@ local closed = 0
 local function body(self, reason)
     closed = closed + 1
 end
-local MT = {__destroy = body}
+local MT = {__lifetime_destroy = body}
 
 -- scope/enter-exit-empty
 bench.add("scope/enter-exit-empty", (function()

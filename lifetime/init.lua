@@ -7,7 +7,7 @@
 -- tokens.
 --
 -- Task 002: anchors, the state record, `attach`, `destroy`, `discard`,
--- the two-phase cascade, tombstones, `destroyerror`, lifetime values
+-- the two-phase cascade, tombstones, `lifetime_destroyerror`, lifetime values
 -- (`of`, `reachable`, `format`), `dependents`, `is_state`. Task 003:
 -- scope records (`enter`, `exit`), the per-coroutine scope stack and the
 -- replacements for `pcall`, `xpcall`, `coroutine.resume` and
@@ -103,7 +103,7 @@ local spare_deps, spare_strong = false, false
 local phase_depth, phase_id, phase_counter = 0, 0, 0
 
 -- The error rule of one cascade (docs/02-semantics.md, "Errors in
--- destructors and `destroyerror`"): whether an error is held, and which.
+-- destructors and `lifetime_destroyerror`"): whether an error is held, and which.
 -- Saved and restored around a nested cascade, which is one of its own.
 local held, held_error = false, nil
 
@@ -1048,7 +1048,7 @@ end
 -- An anchor's first link gives it dependents, so an anchor with the
 -- `reachable` term needs a sentinel from now on (docs/03-runtime.md, "The
 -- sentinel": "a table whose formula has the `reachable` term and that has
--- a `__destroy`, dependents or hooks"; "a token with the `reachable`
+-- a `__lifetime_destroy`, dependents or hooks"; "a token with the `reachable`
 -- term", under the same rule). A scope record needs one only when it is
 -- on a coroutine's stack: the main thread's stack is the runtime's own
 -- root, so a record on it is never unreachable while active ("a scope
@@ -1158,29 +1158,29 @@ local function unlink(ast, s, pinned)
 end
 
 ------------------------------------------------------------------------
--- destroyerror
+-- lifetime_destroyerror
 ------------------------------------------------------------------------
 
--- docs/02-semantics.md, "Errors in destructors and `destroyerror`": "The
--- default writes `destroyerror: <message>` and a traceback to `stderr`."
+-- docs/02-semantics.md, "Errors in destructors and `lifetime_destroyerror`": "The
+-- default writes `lifetime_destroyerror: <message>` and a traceback to `stderr`."
 -- Standard output is flushed first, so that when both streams go to one
 -- place the report comes after what the program printed before the error
 -- (task 007, review round 2, carried to task 012), as the report of
 -- `lifetime run` does.
-local function default_destroyerror(obj, err)
+local function default_lifetime_destroyerror(obj, err)
     io.stdout:flush()
-    io.stderr:write(debug_traceback("destroyerror: " .. tostring(err), 3), "\n")
+    io.stderr:write(debug_traceback("lifetime_destroyerror: " .. tostring(err), 3), "\n")
 end
 
--- "`destroyerror(obj, err)` is a global function, looked up raw in `_G`
+-- "`lifetime_destroyerror(obj, err)` is a global function, looked up raw in `_G`
 -- at the moment an error is routed ... If the handler itself raises, or
 -- the global is not callable, the runtime writes both errors to `stderr`
--- (the second as `destroyerror: error in destroyerror (<message>)`) and
+-- (the second as `lifetime_destroyerror: error in lifetime_destroyerror (<message>)`) and
 -- continues." Without the global the default runs.
-local function call_destroyerror(obj, err)
-    local handler = rawget(_G, "destroyerror")
+local function call_lifetime_destroyerror(obj, err)
+    local handler = rawget(_G, "lifetime_destroyerror")
     if handler == nil then
-        default_destroyerror(obj, err)
+        default_lifetime_destroyerror(obj, err)
         return
     end
     local depth = stack.n
@@ -1190,18 +1190,18 @@ local function call_destroyerror(obj, err)
             unwind(stack, depth)
         end
         io.stdout:flush()
-        io.stderr:write("destroyerror: ", tostring(err), "\n", "destroyerror: error in destroyerror (", tostring(err2), ")\n")
+        io.stderr:write("lifetime_destroyerror: ", tostring(err), "\n", "lifetime_destroyerror: error in lifetime_destroyerror (", tostring(err2), ")\n")
     end
 end
 
 -- The error rule: the first error of the cascade is held and re-raised
--- after it; every later one goes to `destroyerror`.
+-- after it; every later one goes to `lifetime_destroyerror`.
 local function route(obj, err)
     if not held then
         held, held_error = true, err
         return
     end
-    call_destroyerror(obj, err)
+    call_lifetime_destroyerror(obj, err)
 end
 
 ------------------------------------------------------------------------
@@ -1293,8 +1293,8 @@ end
 
 -- docs/02-semantics.md, "Cascading death", step 2, **Destroy**, for a
 -- dependent that is not a table (a function, coroutine or userdata):
--- (1) its body, `__destroy` read from "the shared per-type metatable read
--- by `debug.getmetatable`, as in Lua" ("`__destroy` and reasons", rule
+-- (1) its body, `__lifetime_destroy` read from "the shared per-type metatable read
+-- by `debug.getmetatable`, as in Lua" ("`__lifetime_destroy` and reasons", rule
 -- 1), in protected mode as for a table; (2) no dependents, since it is
 -- never an anchor ("Vocabulary"); (3) instead of a tombstone, which it
 -- cannot become ("Tombstones and `lifetime.alive`": "A dead function,
@@ -1311,7 +1311,7 @@ local function destroy_side(obj, st, reason, where, skip_body)
     st.phase_id = 0
     if not skip_body then
         local mt = debug_getmetatable(obj)
-        local body = mt ~= nil and rawget(mt, "__destroy")
+        local body = mt ~= nil and rawget(mt, "__lifetime_destroy")
         if body then
             local depth = stack.n
             local ok, err = pcall(body, obj, reason)
@@ -1347,9 +1347,9 @@ local function destroy_object(obj, st, reason, where, skip_body)
     -- hand from a body) skips it.
     st.phase_id = 0
 
-    -- 2.1: `__destroy` read from the metatable at the moment of death
-    -- (docs/02-semantics.md, "`__destroy` and reasons", rule 1), called
-    -- as `__destroy(obj, reason)`, or a hook's function as `fn(reason)`
+    -- 2.1: `__lifetime_destroy` read from the metatable at the moment of death
+    -- (docs/02-semantics.md, "`__lifetime_destroy` and reasons", rule 1), called
+    -- as `__lifetime_destroy(obj, reason)`, or a hook's function as `fn(reason)`
     -- ("Hooks: the `!@` operator": "The function is called as
     -- `fn(reason)`"), in protected mode to route its error. That
     -- protected call is a catch the runtime sees: records the body pushed
@@ -1366,7 +1366,7 @@ local function destroy_object(obj, st, reason, where, skip_body)
                 body_failed(obj, err, depth)
             end
         else
-            local body = mt ~= nil and rawget(mt, "__destroy")
+            local body = mt ~= nil and rawget(mt, "__lifetime_destroy")
             if body then
                 local depth = stack.n
                 local ok, err = pcall(body, obj, reason)
@@ -1507,8 +1507,8 @@ end
 --
 -- `propagating` is the finalizer's: "the sentinel's finalizer runs the
 -- cascade in protected mode and every error of it goes to
--- `destroyerror`, the first included" (docs/02-semantics.md, "Errors in
--- destructors and `destroyerror`"), so the cascade starts as if an error
+-- `lifetime_destroyerror`, the first included" (docs/02-semantics.md, "Errors in
+-- destructors and `lifetime_destroyerror`"), so the cascade starts as if an error
 -- were already propagating, and raises nothing.
 local function cascade(root, st, reason, where, skip_body, propagating)
     local id = phase_counter + 1
@@ -1560,7 +1560,7 @@ end
 -- destruction has begun). A function, coroutine or userdata gets its
 -- record in `side` ("`destroy` ... works on any object the runtime can
 -- see"; passing it to `destroy` is what makes the runtime see it,
--- "`__destroy` and reasons", rule 7), so that its death is remembered.
+-- "`__lifetime_destroy` and reasons", rule 7), so that its death is remembered.
 -- Every error is raised at the caller of `destroy` or `discard` (level 3
 -- from here; task 002, review finding F3).
 local function destroy_target(obj, fname)
@@ -1681,15 +1681,15 @@ local function check_anchor(a, level)
 end
 
 -- Whether the metatable `mt` of an object (`debug.getmetatable`, the
--- real one even when protected) has a `__destroy`, for the sentinel
+-- real one even when protected) has a `__lifetime_destroy`, for the sentinel
 -- (docs/03-runtime.md, "The sentinel": "a table whose formula has the
--- `reachable` term and that has a `__destroy`"). `__destroy` is read
--- again at the moment of death; a `__destroy` added later than this
+-- `reachable` term and that has a `__lifetime_destroy`"). `__lifetime_destroy` is read
+-- again at the moment of death; a `__lifetime_destroy` added later than this
 -- check runs on `destroy` and on an anchor's death, but not at
 -- collection ("allocated lazily: on the first `@` that makes the object
 -- need one, not at `setmetatable`").
 local function has_destroy(mt)
-    return mt ~= nil and rawget(mt, "__destroy") ~= nil
+    return mt ~= nil and rawget(mt, "__lifetime_destroy") ~= nil
 end
 
 -- Link `obj` (record `st`) to the anchors of element `a`, from pair
@@ -1729,11 +1729,11 @@ end
 -- have to hold the object (`owner`), which from the side table's value
 -- is a cycle through the weak key, and the object has nothing a cascade
 -- at collection could run: no dependents and no hooks, since it is never
--- an anchor; a `__destroy` on its type's metatable runs on `destroy` and
+-- an anchor; a `__lifetime_destroy` on its type's metatable runs on `destroy` and
 -- with an anchor's death, not at collection (docs/02-semantics.md,
 -- "Reachability is the collector's": "Such a dependent carries no
 -- sentinel either: one the collector finds dies silently, its type's
--- `__destroy` not run"; docs/03-runtime.md, "The state of an object").
+-- `__lifetime_destroy` not run"; docs/03-runtime.md, "The state of an object").
 -- The `reachable` field is therefore only ever `true` or `false`, and a
 -- collected object's record goes with the weak key.
 -- The argument error of an entry point called with no anchor: the anchors
@@ -2029,7 +2029,7 @@ function lifetime.attach(obj, ...)
                     -- and the anchor's own anchors are `climb`'s.
                     local deps = ast.deps
                     local smt = false
-                    if mt ~= nil and rawget(mt, "__destroy") ~= nil then
+                    if mt ~= nil and rawget(mt, "__lifetime_destroy") ~= nil then
                         local n = armed_n + 1
                         smt = kept[n]
                         if smt then
@@ -2212,9 +2212,9 @@ end
 -- docs/02-semantics.md, "The `lifetime` table": "`lifetime.of(obj)`:
 -- `obj`'s current formula as a lifetime value, a snapshot ... Error on
 -- `nil`, a value, a dead object." Passing an object to `of` makes the
--- runtime see it ("`__destroy` and reasons", rule 7); on the default
+-- runtime see it ("`__lifetime_destroy` and reasons", rule 7); on the default
 -- lifetime it returns `lifetime.reachable`. Seen with the term and a
--- `__destroy`, the object gets its sentinel now, so that the collector
+-- `__lifetime_destroy`, the object gets its sentinel now, so that the collector
 -- finds it (rule 7: the runtime can notify the objects it has seen).
 --
 -- A function, coroutine or userdata answers from its record in `side`; a
@@ -2500,7 +2500,7 @@ end
 -- with a state record, the metatable `"token"`, and the name (or `nil`)
 -- for `tostring` and `lifetime.format`. It starts on the default
 -- lifetime; ... it gets a sentinel under the same rule as a table": a
--- token has no `__destroy`, so it gets one with its first dependent or
+-- token has no `__lifetime_destroy`, so it gets one with its first dependent or
 -- hook (`link`), or when anchored with the term while it has some.
 function lifetime.token(name)
     if name ~= nil and type(name) ~= "string" then
@@ -2652,7 +2652,7 @@ end
 -- is one destroy phase ("No moves during destruction"). The error rule is
 -- the caller's: `held` is set up by `exit` (the first error is raised at
 -- the exit) or by `unwind` (an error is propagating, so every error goes
--- to `destroyerror`).
+-- to `lifetime_destroyerror`).
 --
 -- A record with one entry, the most common block, is walked without a
 -- loop, for the reason given at the tombstone step of `destroy_object`.
@@ -2877,10 +2877,10 @@ end
 
 -- The error path: every record of `s` above `depth` dies, innermost
 -- first, each popped before its cascade. An error is propagating, so
--- every destructor error goes to `destroyerror` and the original error
+-- every destructor error goes to `lifetime_destroyerror` and the original error
 -- continues (docs/02-semantics.md, "Errors in destructors": "Every error
 -- raised while an error is already propagating (... or any destructor
--- running because a scope is unwinding) goes to `destroyerror`"). The
+-- running because a scope is unwinding) goes to `lifetime_destroyerror`"). The
 -- `<where>` of the dependents is the line of the block's `end` given to
 -- `enter`.
 unwind = function(s, depth)
@@ -2919,7 +2919,7 @@ end
 -- record's sentinel the collector runs first (a record without
 -- dependents has none), so the order does not depend on the order in
 -- which the records got their sentinels. Every destructor error goes to
--- `destroyerror` ("Errors in destructors": the finalizer's rule); the
+-- `lifetime_destroyerror` ("Errors in destructors": the finalizer's rule); the
 -- dependents die with reason `"anchor"` at `collector`.
 local function collect_record(rec)
     local outer_held, outer_error = held, held_error
@@ -2941,7 +2941,7 @@ end
 
 -- docs/03-runtime.md, "The sentinel": "The finalizer runs `cascade(obj,
 -- "unreachable", "collector")` in protected mode, routing every error of
--- the cascade to `destroyerror` ..., if the object is still
+-- the cascade to `lifetime_destroyerror` ..., if the object is still
 -- `"dying"`-eligible (not already dead through an earlier walk of the
 -- same collection ...), with the exit flag of "Program end" turning the
 -- reason into `"exit"`." An object that a running cascade has decided
@@ -2967,7 +2967,7 @@ local function run_finalizer(p)
                 if stack.n > depth then
                     unwind(stack, depth)
                 end
-                call_destroyerror(owner, err)
+                call_lifetime_destroyerror(owner, err)
             end
         end
         return
@@ -2984,7 +2984,7 @@ local function run_finalizer(p)
         if stack.n > depth then
             unwind(stack, depth)
         end
-        call_destroyerror(owner, err)
+        call_lifetime_destroyerror(owner, err)
     end
 end
 
@@ -3112,7 +3112,7 @@ end
 -- there is one, runs first and its result replaces the error value; then
 -- the runtime unwinds every record above the depth it read, innermost
 -- first, with the error counted as propagating (02, "Errors in
--- destructors": destructor errors go to `destroyerror`); then it returns
+-- destructors": destructor errors go to `lifetime_destroyerror`); then it returns
 -- the error value" (`unwind` counts the error as propagating). "The
 -- user's `h` is called in protected mode so that a raise from it still
 -- unwinds the records before the runtime re-raises it, which gives the

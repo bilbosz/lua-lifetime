@@ -33,7 +33,7 @@ local function serve(socket)
   function() metrics.connections = metrics.connections - 1 end !@ conn
   handle(header)
 end
--- at the end of serve: conn.__destroy runs first, then its dependents,
+-- at the end of serve: conn.__lifetime_destroy runs first, then its dependents,
 -- most recently attached first: the hook, then header, then buf.
 ```
 
@@ -41,7 +41,7 @@ end
 destroys it. `buf` and `header` are anchored to `conn`: they cannot outlive
 it, and the order in which they go is fixed. The hook is a dependent too.
 Everything the block created is gone before the caller sees the return,
-and the socket is closed by `Connection.__destroy`, not by a `close()` call
+and the socket is closed by `Connection.__lifetime_destroy`, not by a `close()` call
 somebody has to remember. [02-semantics.md](02-semantics.md) states the
 rules this example relies on.
 

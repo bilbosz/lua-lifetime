@@ -14,7 +14,7 @@ local lifetime = require("lifetime")
 local attach, hook, named_hook, block = lifetime.attach, lifetime.hook, lifetime.named_hook, lifetime.block
 local destroy, alive = lifetime.destroy, lifetime.alive
 
--- A logging object: `__tostring` gives `name`, `__destroy` appends
+-- A logging object: `__tostring` gives `name`, `__lifetime_destroy` appends
 -- `name (reason)` to `log`, and `extra(self, reason)` runs inside the body
 -- when given.
 local function new_logged(log, name, extra)
@@ -22,7 +22,7 @@ local function new_logged(log, name, extra)
     mt.__tostring = function()
         return name
     end
-    mt.__destroy = function(self, reason)
+    mt.__lifetime_destroy = function(self, reason)
         log[#log + 1] = name .. " (" .. reason .. ")"
         if extra then
             extra(self, reason)

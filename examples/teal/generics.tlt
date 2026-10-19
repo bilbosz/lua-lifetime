@@ -24,7 +24,7 @@ local record Figure is Named
 end
 local Figure_mt = {
    __index = Figure,
-   __destroy = function(self: Figure, reason: lifetime.Reason)
+   __lifetime_destroy = function(self: Figure, reason: lifetime.Reason)
       print("destroy " .. self.name .. " (" .. reason .. ")")
    end
 } as metatable<Figure>

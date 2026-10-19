@@ -24,7 +24,7 @@
 local Obj = {}
 Obj.__index = Obj
 function Obj.new(name) return setmetatable({ name = name }, Obj) @ lifetime.reachable end
-function Obj.__destroy(self, reason) print("destroyed " .. self.name .. " (" .. reason .. ")") end
+function Obj.__lifetime_destroy(self, reason) print("destroyed " .. self.name .. " (" .. reason .. ")") end
 
 local function count(t)
   local n = 0

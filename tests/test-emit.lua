@@ -280,7 +280,7 @@ end
 -- A constructor of objects whose destructor appends to `log`.
 local function logger(log)
     local mt = {
-        __destroy = function(self, reason)
+        __lifetime_destroy = function(self, reason)
             log[#log + 1] = self.name .. " " .. reason
         end
     }
@@ -347,7 +347,7 @@ test.case("lifetime named as a global is bound by the header, and nothing else",
     -- The header binds the runtime that `require` finds; the program's own
     -- `destroy` is not shadowed by it.
     local lifetime = require("lifetime")
-    local destroyed, mine = run(build("local function destroy(t) return t end\nlocal t = setmetatable({}, {__destroy = function() end})\nlifetime.destroy(destroy(t))\nreturn t, destroy(1)"))
+    local destroyed, mine = run(build("local function destroy(t) return t end\nlocal t = setmetatable({}, {__lifetime_destroy = function() end})\nlifetime.destroy(destroy(t))\nreturn t, destroy(1)"))
     test.assert_eq(getmetatable(destroyed), "dead")
     test.assert_eq(mine, 1)
     test.assert_true(run(build("return lifetime")) == lifetime)

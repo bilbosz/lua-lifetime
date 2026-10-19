@@ -8,10 +8,10 @@
 -- weak anchors"), the weak record that does not keep an anchor alive
 -- (docs/02-semantics.md, "Reachability is the collector's"), error positions (task 002, review finding
 -- F3), and the two runtime follow-ups of task 007's review (the default
--- `destroyerror` flushes standard output; a `coroutine.wrap` error).
+-- `lifetime_destroyerror` flushes standard output; a `coroutine.wrap` error).
 --
 -- A function or a coroutine has no body of its own unless its type's
--- shared metatable has a `__destroy`, so where a test needs the order of
+-- shared metatable has a `__lifetime_destroy`, so where a test needs the order of
 -- deaths it logs through a `newproxy(true)` userdata, whose metatable is
 -- its own, or reads `lifetime.alive` of the function from the bodies of
 -- the tables around it. Every destruction test compares the whole log and
@@ -48,7 +48,7 @@ local function run_dropped(make)
     end
 end
 
--- A logging table: `__tostring` gives `name`, `__destroy` appends `name
+-- A logging table: `__tostring` gives `name`, `__lifetime_destroy` appends `name
 -- (reason)` to `log`, and `extra(self, reason)` runs inside the body when
 -- given.
 local function new_logged(log, name, extra)
@@ -56,7 +56,7 @@ local function new_logged(log, name, extra)
     mt.__tostring = function()
         return name
     end
-    mt.__destroy = function(self, reason)
+    mt.__lifetime_destroy = function(self, reason)
         log[#log + 1] = name .. " (" .. reason .. ")"
         if extra then
             extra(self, reason)
@@ -66,7 +66,7 @@ local function new_logged(log, name, extra)
 end
 
 -- The same as a userdata: a `newproxy(true)` whose own metatable has the
--- `__destroy` (docs/02-semantics.md, "`__destroy` and reasons", rule 1:
+-- `__lifetime_destroy` (docs/02-semantics.md, "`__lifetime_destroy` and reasons", rule 1:
 -- "the shared per-type metatable read by `debug.getmetatable`", which for
 -- a userdata is its own).
 local function new_logged_userdata(log, name, extra)
@@ -75,7 +75,7 @@ local function new_logged_userdata(log, name, extra)
     mt.__tostring = function()
         return name
     end
-    mt.__destroy = function(self, reason)
+    mt.__lifetime_destroy = function(self, reason)
         log[#log + 1] = name .. " (" .. reason .. ")"
         if extra then
             extra(self, reason)
@@ -156,10 +156,10 @@ local function refers_to(record, x)
     return false
 end
 
--- Run `fn` with `_G.destroyerror` set to `handler` and `io.stderr`
+-- Run `fn` with `_G.lifetime_destroyerror` set to `handler` and `io.stderr`
 -- replaced by a buffer; returns what was written.
 local function with_handler(handler, fn)
-    local saved_handler, saved_stderr = rawget(_G, "destroyerror"), io.stderr
+    local saved_handler, saved_stderr = rawget(_G, "lifetime_destroyerror"), io.stderr
     local written = {}
     rawset(io, "stderr", {
         write = function(self, ...)
@@ -169,9 +169,9 @@ local function with_handler(handler, fn)
             return self
         end
     })
-    rawset(_G, "destroyerror", handler)
+    rawset(_G, "lifetime_destroyerror", handler)
     local ok, err = pcall(fn)
-    rawset(_G, "destroyerror", saved_handler)
+    rawset(_G, "lifetime_destroyerror", saved_handler)
     rawset(io, "stderr", saved_stderr)
     if not ok then
         error(err, 0)
@@ -191,7 +191,7 @@ local function with_type_metatable(sample, mt, fn)
     end
 end
 
--- A shared `__destroy` for the functions or coroutines of a test: it logs
+-- A shared `__lifetime_destroy` for the functions or coroutines of a test: it logs
 -- `<name> (<reason>)` for an object named in `names`, a weak-keyed table
 -- so that naming an object does not keep it alive, and ignores every other
 -- object of the type: a leftover anchor of an earlier test that the
@@ -200,7 +200,7 @@ end
 -- 012, review round 2).
 local function type_logger(log, names)
     return {
-        __destroy = function(obj, reason)
+        __lifetime_destroy = function(obj, reason)
             local name = names[obj]
             if name then
                 log[#log + 1] = name .. " (" .. reason .. ")"
@@ -301,7 +301,7 @@ test.case("case 2: a coroutine dies with its anchor; coroutine functions still w
     test.assert_false(alive(co))
 end)
 
-test.case("case 3: userdata die in their place in the cascade with their own __destroy and reason", function()
+test.case("case 3: userdata die in their place in the cascade with their own __lifetime_destroy and reason", function()
     local log = {}
     local a = new_logged(log, "a")
     local x1 = attach(new_logged(log, "x1"), a)
@@ -316,7 +316,7 @@ test.case("case 3: userdata die in their place in the cascade with their own __d
     test.assert_false(alive(plain))
     -- Not caught: the metatable and its methods are untouched.
     test.assert_eq(tostring(u), "u")
-    test.assert_eq(type(getmetatable(u).__destroy), "function")
+    test.assert_eq(type(getmetatable(u).__lifetime_destroy), "function")
 end)
 
 test.case("case 4: destroy(f) directly; a second destroy is a no-op; @ on it raises at the caller", function()
@@ -564,7 +564,7 @@ test.case("a body destroys a function dependent by hand, early; the later pass s
     test.assert_false(alive(x))
 end)
 
-test.case("__destroy on the shared metatable of functions and coroutines runs with the reason", function()
+test.case("__lifetime_destroy on the shared metatable of functions and coroutines runs with the reason", function()
     local log = {}
     local names = setmetatable({}, {__mode = "k"})
     local f, g, h = function()
@@ -596,7 +596,7 @@ test.case("__destroy on the shared metatable of functions and coroutines runs wi
     test.assert_deep_eq(log, {"co (destroy)"})
 end)
 
-test.case("an error in a userdata's __destroy follows the cascade's error rule", function()
+test.case("an error in a userdata's __lifetime_destroy follows the cascade's error rule", function()
     local log = {}
     local a = new_logged(log, "a")
     local u = attach(new_logged_userdata(log, "u", function()
@@ -615,7 +615,7 @@ test.case("an error in a userdata's __destroy follows the cascade's error rule",
         test.assert_false(ok)
     end)
     test.assert_eq(err, "x failed", "the first error is raised at the destroy")
-    test.assert_deep_eq(routed, {"u failed"}, "the second goes to destroyerror")
+    test.assert_deep_eq(routed, {"u failed"}, "the second goes to lifetime_destroyerror")
     test.assert_deep_eq(log, {"a (destroy)", "x (anchor)", "u (anchor)"})
     test.assert_false(alive(x))
     test.assert_false(alive(u))
@@ -717,7 +717,7 @@ test.case("the asymmetry as transpiled code: the deaths at the collectgarbage st
     local lexer, parser, emit = require("lifetime.lexer"), require("lifetime.parser"), require("lifetime.emit")
     local source = table.concat({
         "local log, names = ...",
-        "local mt = {__destroy = function(self, reason) log[#log + 1] = self.name .. ' (' .. reason .. ')' end,",
+        "local mt = {__lifetime_destroy = function(self, reason) log[#log + 1] = self.name .. ' (' .. reason .. ')' end,",
         "    __tostring = function(self) return self.name end}",
         "local a = setmetatable({name = 'a'}, mt)",
         "local f = function() end @ a",
@@ -888,10 +888,10 @@ end)
 test.case("a function, coroutine or userdata the collector finds dies silently: no sentinel, no body", function()
     -- docs/02-semantics.md, "Reachability is the collector's": "Such a
     -- dependent carries no sentinel either: one the collector finds dies
-    -- silently, its type's `__destroy` not run, as an unseen table does";
+    -- silently, its type's `__lifetime_destroy` not run, as an unseen table does";
     -- docs/05-decisions.md, "Non-table dependents: remembered after death,
-    -- weak anchors". A userdata with a `__destroy` of its own, one on a
-    -- held anchor, and a function with a `__destroy` on the shared
+    -- weak anchors". A userdata with a `__lifetime_destroy` of its own, one on a
+    -- held anchor, and a function with a `__lifetime_destroy` on the shared
     -- metatable, all with the `reachable` term and referenced by nothing.
     local side = side_table()
     local log = {}
@@ -1192,11 +1192,11 @@ test.case("the error texts for a function, a coroutine and a userdata, exactly",
     test.assert_deep_eq({pcall(attach, {}, u)}, {false, "attempt to anchor to a userdata value"})
 end)
 
-test.case("the default destroyerror flushes standard output before writing its report", function()
+test.case("the default lifetime_destroyerror flushes standard output before writing its report", function()
     local output = run_merged([[
 local lifetime = require("lifetime")
 print("before")
-local t = setmetatable({}, {__destroy = function()
+local t = setmetatable({}, {__lifetime_destroy = function()
     error("t failed", 0)
 end})
 lifetime.attach(t, lifetime.reachable)
@@ -1205,21 +1205,21 @@ collectgarbage("collect")
 print("after")
 ]])
     local before = output:find("before\n", 1, true)
-    local report = output:find("destroyerror: t failed", 1, true)
+    local report = output:find("lifetime_destroyerror: t failed", 1, true)
     local after = output:find("after\n", 1, true)
     test.assert_true(before ~= nil and report ~= nil and after ~= nil, output)
     test.assert_true(before < report, "the report comes after what was printed before it: " .. output)
     test.assert_true(report < after, output)
 end)
 
-test.case("the fallback report of a failing destroyerror flushes standard output too", function()
+test.case("the fallback report of a failing lifetime_destroyerror flushes standard output too", function()
     local output = run_merged([[
 local lifetime = require("lifetime")
-destroyerror = function()
+lifetime_destroyerror = function()
     error("handler failed", 0)
 end
 print("before")
-local t = setmetatable({}, {__destroy = function()
+local t = setmetatable({}, {__lifetime_destroy = function()
     error("t failed", 0)
 end})
 lifetime.attach(t, lifetime.reachable)
@@ -1228,7 +1228,7 @@ collectgarbage("collect")
 print("after")
 ]])
     local before = output:find("before\n", 1, true)
-    local report = output:find("destroyerror: t failed\ndestroyerror: error in destroyerror (handler failed)", 1, true)
+    local report = output:find("lifetime_destroyerror: t failed\nlifetime_destroyerror: error in lifetime_destroyerror (handler failed)", 1, true)
     local after = output:find("after\n", 1, true)
     test.assert_true(before ~= nil and report ~= nil and after ~= nil, output)
     test.assert_true(before < report and report < after, output)

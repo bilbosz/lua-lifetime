@@ -4,7 +4,7 @@
 -- die, most recently attached first (docs/02-semantics.md, "Cascading
 -- death"). The output is connection.lt.expected byte for byte.
 --
--- The Teal idiom for a destructor: `__destroy` is not a Lua metamethod,
+-- The Teal idiom for a destructor: `__lifetime_destroy` is not a Lua metamethod,
 -- so `metatable<T>` does not know it; the metatable is a table literal
 -- cast with `as metatable<T>` (docs/04-transpiler.md, "The Teal front
 -- end").
@@ -23,7 +23,7 @@ local record Connection
 end
 local Connection_mt = {
   __index = Connection,
-  __destroy = function(self: Connection, _reason: lifetime.Reason)
+  __lifetime_destroy = function(self: Connection, _reason: lifetime.Reason)
     print("closing connection")
     self.sock:close()
   end
@@ -37,7 +37,7 @@ local record Buffer
   bytes: integer
 end
 local Buffer_mt = {
-  __destroy = function(self: Buffer, _reason: lifetime.Reason)
+  __lifetime_destroy = function(self: Buffer, _reason: lifetime.Reason)
     print("freeing buffer of " .. self.bytes .. " bytes")
   end
 } as metatable<Buffer>

@@ -20,7 +20,7 @@ local attach, enter, exit = lifetime.attach, lifetime.enter, lifetime.exit
 -- (Lua 5.1): what a few cases record per host.
 local LUAJIT = rawget(_G, "jit") ~= nil
 
--- A logging object: `__tostring` gives `name`, `__destroy` appends
+-- A logging object: `__tostring` gives `name`, `__lifetime_destroy` appends
 -- `name (reason)` to `log`, and `extra(self, reason)` runs inside the body
 -- after it logs, when given.
 local function new_logged(log, name, extra)
@@ -28,7 +28,7 @@ local function new_logged(log, name, extra)
     mt.__tostring = function()
         return name
     end
-    mt.__destroy = function(self, reason)
+    mt.__lifetime_destroy = function(self, reason)
         log[#log + 1] = name .. " (" .. reason .. ")"
         if extra then
             extra(self, reason)
@@ -74,10 +74,10 @@ end
 
 local hidden_pcall = original(pcall, "pcall")
 
--- Run `fn` with `_G.destroyerror` set to `handler` and `io.stderr`
+-- Run `fn` with `_G.lifetime_destroyerror` set to `handler` and `io.stderr`
 -- replaced by a buffer; returns what was written.
 local function with_handler(handler, fn)
-    local saved_handler, saved_stderr = rawget(_G, "destroyerror"), io.stderr
+    local saved_handler, saved_stderr = rawget(_G, "lifetime_destroyerror"), io.stderr
     local written = {}
     rawset(io, "stderr", {
         write = function(self, ...)
@@ -87,9 +87,9 @@ local function with_handler(handler, fn)
             return self
         end
     })
-    rawset(_G, "destroyerror", handler)
+    rawset(_G, "lifetime_destroyerror", handler)
     local ok, err = hidden_pcall(fn)
-    rawset(_G, "destroyerror", saved_handler)
+    rawset(_G, "lifetime_destroyerror", saved_handler)
     rawset(io, "stderr", saved_stderr)
     if not ok then
         error(err, 0)
@@ -378,7 +378,7 @@ test.case("case 5: a function given arguments has the records it pushed unwound 
     test.assert_eq(depth(), before)
 end)
 
-test.case("case 6: a destructor error during the unwinding goes to destroyerror; the call's own value comes out", function()
+test.case("case 6: a destructor error during the unwinding goes to lifetime_destroyerror; the call's own value comes out", function()
     local log, routed = {}, {}
     local x
     local ok, err

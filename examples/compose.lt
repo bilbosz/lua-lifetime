@@ -3,7 +3,7 @@
 -- xd/docs/10-lua-lifetime-decisions.md that cause it:
 --   - decision 10: when the request's scope ends, the request's own
 --     destructor runs before `thing`, its dependent; `xd` had `thing`
---     first. `__destroy` has no `remaining`;
+--     first. `__lifetime_destroy` has no `remaining`;
 --   - decision 11: `lifetime.all(lifetime.of(thing), request)` is the list
 --     `(lifetime.of(thing), request)`, and `lifetime.format` renders the
 --     spliced formula as one flat list with the implicit `reachable` term
@@ -27,7 +27,7 @@ local Thing = {}
 Thing.__index = Thing
 Thing.__tostring = function(self) return self.id end     -- names in lifetime.format
 function Thing.new(id) return setmetatable({ id = id }, Thing) end
-function Thing.__destroy(self, reason)
+function Thing.__lifetime_destroy(self, reason)
   print("destroyed " .. self.id .. " (" .. reason .. ")")
 end
 

@@ -34,7 +34,7 @@ local function count(t) local n = 0 for _ in pairs(t) do n = n + 1 end return n 
 
 local Input = {}
 Input.__index = Input
-Input.__destroy = function(self, reason) print("input " .. self.name .. " destroyed (" .. reason .. ")") end
+Input.__lifetime_destroy = function(self, reason) print("input " .. self.name .. " destroyed (" .. reason .. ")") end
 local function input(name) return setmetatable({ name = name }, Input) end
 
 -- Hazard 2: an array with a dead element keeps the tombstone.
@@ -56,7 +56,7 @@ collectgarbage("collect")
 -- Idiom B: a hook unlinks from the array; the weak table needs nothing.
 local Form = {}
 Form.__index = Form
-Form.__destroy = function(self, reason)
+Form.__lifetime_destroy = function(self, reason)
   self.closing = true
   print("form destroyed (" .. reason .. "), " .. #self.inputs .. " inputs still listed")
 end

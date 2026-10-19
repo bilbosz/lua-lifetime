@@ -4,7 +4,7 @@
 -- `lifetime.dependents(a)`. Each baseline is plain Lua doing the same
 -- work by hand: an owner keeping its children in an array and closing
 -- them with an explicit loop, newest first, calling the same body the
--- runtime calls as `__destroy`.
+-- runtime calls as `__lifetime_destroy`.
 --
 --   runtime/attach-destroy-100  an anchor, 100 dependents attached, then
 --                               lifetime.destroy(anchor); against an array of 100
@@ -39,7 +39,7 @@ local closed = 0
 local function body(self, reason)
     closed = closed + 1
 end
-local CHILD_MT = {__destroy = body}
+local CHILD_MT = {__lifetime_destroy = body}
 
 -- runtime/attach-destroy-100. The children are held, as the baseline's
 -- array holds them: a dependent with the `reachable` term that nothing
