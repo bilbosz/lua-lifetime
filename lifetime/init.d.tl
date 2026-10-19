@@ -69,6 +69,10 @@ local record lifetime
    -- object that is alive or dying, false for a tombstone, nil or false.
    alive: function(x: any): boolean
 
+   -- The complementary check: true while `x` is dying (its death decided
+   -- by a cascade, its tombstone not yet made), false otherwise.
+   dying: function(x: any): boolean
+
    -- Is `k` the key of the state record the runtime keeps inside every
    -- table it has seen? `pairs` shows that field; a serializer skips it.
    is_state: function(k: any): boolean

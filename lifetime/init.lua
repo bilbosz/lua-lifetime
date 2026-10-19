@@ -2586,6 +2586,30 @@ function lifetime.alive(x)
     error("bad argument #1 to 'lifetime.alive' (object expected, got " .. t .. ")", 2)
 end
 
+-- docs/02-semantics.md, "Tombstones and `lifetime.alive`": "`lifetime.dying(x)`
+-- is the complementary check: `true` from the moment a cascade has decided
+-- `x`'s death until `x` is a tombstone ... `false` for a live object, for
+-- a tombstone ..., for a block's record outside its exit, and for `nil` or
+-- `false`". One read of the record's phase (docs/03-runtime.md, "The state
+-- of an object"); the argument rule and the error text are `alive`'s. A
+-- block's record is its own state record (`rec[STATE] == rec`), so it
+-- reads like any table.
+function lifetime.dying(x)
+    if type(x) == "table" then
+        local st = rawget(x, STATE)
+        return st ~= nil and st.phase == "dying"
+    end
+    if not x then
+        return false
+    end
+    local t = type(x)
+    if t == "function" or t == "thread" or t == "userdata" then
+        local st = side[x]
+        return st ~= nil and st.phase == "dying"
+    end
+    error("bad argument #1 to 'lifetime.dying' (object expected, got " .. t .. ")", 2)
+end
+
 ------------------------------------------------------------------------
 -- Scope records
 ------------------------------------------------------------------------

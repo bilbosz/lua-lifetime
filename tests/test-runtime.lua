@@ -1,7 +1,7 @@
 -- tests/test-runtime.lua: lifetime/init.lua, task 002. Anchors and the
 -- state record, `attach`, `destroy`, `discard`, the cascade in the order
 -- of decision 10, tombstones, `destroyerror`, lifetime values, `of`,
--- `dependents`, `format`, `is_state`.
+-- `dependents`, `format`, `is_state`, `dying` (task 022).
 --
 -- Every destruction test logs into a table and compares the whole
 -- sequence, with the reason, and checks the log before and after the
@@ -1062,6 +1062,151 @@ test.case("no compaction during a destroy phase", function()
     destroy(root)
     test.assert_true(done)
     test.assert_eq(lifetime.dependents(a)[1], held_dependent)
+end)
+
+test.suite("dying")
+
+-- Empties `log` in place: the logged objects captured the table.
+local function clear(log)
+    for i = #log, 1, -1 do
+        log[i] = nil
+    end
+end
+
+test.case("dying is true from the decide phase to the tombstone, false before and after", function()
+    local log, seen = {}, {}
+    local a, b
+    a = new_logged(log, "a", function(self)
+        seen.a_in_a, seen.b_in_a = lifetime.dying(self), lifetime.dying(b)
+        seen.alive_b_in_a = lifetime.alive(b)
+    end)
+    b = attach(new_logged(log, "b", function(self)
+        seen.b_in_b, seen.a_in_b = lifetime.dying(self), lifetime.dying(a)
+    end), a)
+    test.assert_false(lifetime.dying(a))
+    test.assert_false(lifetime.dying(b))
+    destroy(a)
+    test.assert_deep_eq(log, {"a (destroy)", "b (anchor)"})
+    test.assert_deep_eq(seen, {
+        a_in_a = true,
+        b_in_a = true,
+        alive_b_in_a = true,
+        b_in_b = true,
+        a_in_b = true
+    }, "every object of the cascade is dying from the first body on")
+    test.assert_false(lifetime.dying(a), "a tombstone is dead, not dying")
+    test.assert_false(lifetime.dying(b))
+    test.assert_false(lifetime.alive(a))
+end)
+
+test.case("a hook on (form, input) asks dying whether the form is going too", function()
+    local log = {}
+    local function link(form, input)
+        return lifetime.hook(function()
+            if lifetime.dying(form) then
+                log[#log + 1] = "form going: nothing to unlink"
+            else
+                log[#log + 1] = "unlink " .. tostring(input) .. " from " .. tostring(form)
+            end
+        end, form, input)
+    end
+
+    -- the input first
+    local form, input = new_logged(log, "form"), new_logged(log, "input")
+    link(form, input)
+    destroy(input)
+    test.assert_deep_eq(log, {"input (destroy)", "unlink input from form"})
+    test.assert_true(lifetime.alive(form))
+
+    -- the form first
+    clear(log)
+    form, input = new_logged(log, "form"), new_logged(log, "input")
+    link(form, input)
+    destroy(form)
+    test.assert_deep_eq(log, {"form (destroy)", "form going: nothing to unlink"})
+    test.assert_true(lifetime.alive(input))
+    test.assert_deep_eq(lifetime.dependents(input), {}, "the hook died with the form")
+
+    -- both in one cascade: the form's body first, then its dependents
+    clear(log)
+    local period = lifetime.token("period")
+    form = attach(new_logged(log, "form"), period)
+    input = attach(new_logged(log, "input"), form)
+    link(form, input)
+    destroy(period)
+    test.assert_deep_eq(log, {"form (anchor)", "form going: nothing to unlink", "input (anchor)"})
+    test.assert_false(lifetime.alive(form))
+    test.assert_false(lifetime.alive(input))
+end)
+
+test.case("dying of a token under a hook, of a block's record inside its exit and not inside the block", function()
+    local log = {}
+    local tok = lifetime.token("t")
+    local h = lifetime.hook(function()
+        log[#log + 1] = "tok dying: " .. tostring(lifetime.dying(tok))
+    end, tok)
+    test.assert_false(lifetime.dying(h))
+    test.assert_false(lifetime.dying(tok))
+    destroy(tok)
+    test.assert_deep_eq(log, {"tok dying: true"})
+    test.assert_false(lifetime.dying(tok))
+
+    local seen, captured
+    lifetime.block(function(scope)
+        captured = scope
+        lifetime.hook(function()
+            seen = lifetime.dying(scope)
+        end, scope)
+        test.assert_false(lifetime.dying(scope), "not dying inside the block")
+    end)
+    test.assert_true(seen, "the record is dying while its exit runs")
+    test.assert_false(lifetime.dying(captured), "dead once the block has returned, not dying")
+    test.assert_false(lifetime.alive(captured))
+end)
+
+test.case("dying of a function dependent reads the side table: true inside its destructor, false after", function()
+    local log, seen = {}, {}
+    local a = new_logged(log, "a")
+    local f = function()
+    end
+    -- a function's `__destroy` is its type's (docs/02-semantics.md,
+    -- "`__destroy` and reasons", rule 1): set for the test, restored after
+    local saved = debug.getmetatable(f)
+    debug.setmetatable(f, {
+        __destroy = function(self, reason)
+            log[#log + 1] = "fn (" .. reason .. ")"
+            seen.f_in_f, seen.a_in_f = lifetime.dying(self), lifetime.dying(a)
+        end
+    })
+    local ok, err = pcall(function()
+        attach(f, lifetime.pin(a))
+        test.assert_false(lifetime.dying(f))
+        destroy(a)
+        test.assert_deep_eq(log, {"a (destroy)", "fn (anchor)"})
+        test.assert_deep_eq(seen, {
+            f_in_f = true,
+            a_in_f = true
+        })
+        test.assert_false(lifetime.dying(f), "remembered dead in the side table, not dying")
+        test.assert_false(lifetime.alive(f))
+    end)
+    debug.setmetatable(f, saved)
+    if not ok then
+        error(err, 0)
+    end
+end)
+
+test.case("dying is false for nil, false, a lifetime value, the scope marker, an unseen table and a plain function; a value is an error", function()
+    test.assert_false(lifetime.dying(nil))
+    test.assert_false(lifetime.dying(false))
+    test.assert_false(lifetime.dying(lifetime.reachable))
+    test.assert_false(lifetime.dying(lifetime.pin({})))
+    test.assert_false(lifetime.dying(lifetime.scope))
+    test.assert_false(lifetime.dying({}))
+    test.assert_false(lifetime.dying(print))
+    local ok, err = pcall(lifetime.dying, 5)
+    test.assert_false(ok)
+    test.assert_true(tostring(err):find("bad argument #1 to 'lifetime.dying' %(object expected, got number%)$") ~= nil, tostring(err))
 end)
 
 return test
