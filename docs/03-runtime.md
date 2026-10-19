@@ -293,7 +293,7 @@ or epilogue of their own.
 
 **The library form.** `lifetime.block(fn, …)` (02, "The library form")
 is `enter` and `exit` around a call: it makes the record itself, with
-`line = false` and the function in `fn` instead of the emitter's
+`line = false` and the function in `body` instead of the emitter's
 position, pushes it, calls `fn(record, …)` and passes the results
 through a vararg frame that runs `exit(record, false)` before returning
 them, so no table is made for them and no `pcall` stands between the
@@ -307,8 +307,12 @@ library form hands the record out as a value, `exit` marks a record
 dead even when nothing was attached to it (one store on that path),
 and `check_anchor` names a dead or dying record a `scope`: `attempt to
 anchor to a dead scope`, or `to a dying scope` from a destructor that
-runs during the block's exit. The generated code never reaches a popped
-record, so nothing else changes for it.
+runs during the block's exit, through a lifetime value as well as
+directly. `destroy`, `discard` and `of` test for a record (`n` absent,
+the marker's phase) before they test for death, so a dead record is
+refused as the marker is instead of being reported as a dead object or
+silently skipped. The generated code never reaches a popped record, so
+nothing else changes for it.
 
 **The scope stack and the error path.** Scope exit on an error is the
 runtime's, not generated code's ([05-decisions.md](05-decisions.md),

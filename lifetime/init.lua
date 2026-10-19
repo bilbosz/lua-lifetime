@@ -799,7 +799,8 @@ end
 -- on identity, so it is computed here, on the error path, instead of
 -- allocating a string per tombstone. A hook's record has the field `fn`
 -- (`false` once dead) and renders through `hook_name`; a token's has
--- `token` and renders through `token_name`.
+-- `token` and renders through `token_name`. A block's record keeps its
+-- function under `body`, so it never reads as a hook here.
 local function name_of(obj, st)
     if st.fn ~= nil then
         return hook_name(obj, st)
@@ -1584,14 +1585,17 @@ local function destroy_target(obj, fname)
     local st = rawget(obj, STATE)
     if st then
         local phase = st.phase
-        if phase == "dead" or (phase == "dying" and st.phase_id == 0) then
-            return nil
-        end
         -- docs/02-semantics.md, "Scopes: `lifetime.scope`": "`destroy` of
-        -- a scope is impossible"; the marker is not an object either.
+        -- a scope is impossible"; the marker is not an object either, nor
+        -- is a block's record, dead or not ("The library form": "The other
+        -- entry points treat the record as the marker"), so the test comes
+        -- before the no-op on a dead object.
         local what = (phase == "marker" or st.n == nil) and not_an_object(obj)
         if what then
             error("bad argument #1 to '" .. fname .. "' (object expected, got " .. what .. ")", 3)
+        end
+        if phase == "dead" or (phase == "dying" and st.phase_id == 0) then
+            return nil
         end
         return st
     end
@@ -1668,7 +1672,7 @@ local function check_anchor(a, level)
             local ast_i = rawget(a[i], STATE)
             local phase = ast_i and ast_i.phase
             if phase then
-                error("attempt to anchor to a " .. phase .. (ast_i.token and " token" or " table"), level)
+                error("attempt to anchor to a " .. phase .. (ast_i.token and " token" or ast_i.n == nil and " scope" or " table"), level)
             end
         end
         return a.reachable
@@ -2237,12 +2241,16 @@ function lifetime.of(obj)
     local st = rawget(obj, STATE)
     if st then
         local phase = st.phase
-        if phase == "dead" then
-            error(dead_message(obj, st, "index"), 2)
-        end
+        -- The marker and a block's record are not objects, alive, dying or
+        -- dead alike (docs/02-semantics.md, "The library form": "The other
+        -- entry points treat the record as the marker"), so they are tested
+        -- for before the death is.
         local what = (phase == "marker" or st.n == nil) and not_an_object(obj)
         if what then
             error("bad argument #1 to 'lifetime.of' (object expected, got " .. what .. ")", 2)
+        end
+        if phase == "dead" then
+            error(dead_message(obj, st, "index"), 2)
         end
         return value_of(st)
     end
@@ -2664,7 +2672,7 @@ end
 -- "Technical decisions"), and only for such a record: the emitter's
 -- records always carry their position.
 local function block_where(rec)
-    local info = debug_getinfo(rec.fn, "S")
+    local info = debug_getinfo(rec.body, "S")
     return info.short_src .. ":" .. info.linedefined
 end
 
@@ -2835,7 +2843,7 @@ function lifetime.block(fn, ...)
     end
     local s = stack
     local n = s.n + 1
-    local rec = {deps = false, strong = false, phase = false, line = false, depth = n, stack = s, fn = fn}
+    local rec = {deps = false, strong = false, phase = false, line = false, depth = n, stack = s, body = fn}
     rec[STATE] = rec
     setmetatable(rec, SCOPE_MT)
     s[n] = rec

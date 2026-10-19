@@ -83,27 +83,6 @@ local function body(self, reason)
 end
 local MT = {__destroy = body}
 
--- scope/loop-one-object: `for … do local x = {} @ lifetime.scope … end`.
-bench.add("scope/loop-one-object", (function()
-    local enter, exit, attach = lifetime.enter, lifetime.exit, lifetime.attach
-    return function()
-        for _ = 1, 10 do
-            local s = enter("bench:1")
-            local x = attach(setmetatable({}, MT), s)
-            x.v = 1
-            exit(s, "bench:1")
-        end
-    end
-end)(), {
-    baseline = function()
-        for _ = 1, 10 do
-            local x = setmetatable({}, MT)
-            x.v = 1
-            body(x, "anchor")
-        end
-    end
-})
-
 -- scope/enter-exit-empty
 bench.add("scope/enter-exit-empty", (function()
     local enter, exit = lifetime.enter, lifetime.exit
@@ -117,27 +96,6 @@ end)(), {
     baseline = function()
         for _ = 1, 10 do
             local _ = closed
-        end
-    end
-})
-
--- scope/hook-on-scope: `do function() … end !@ lifetime.scope … end`.
-local function on_exit(reason)
-    closed = closed + 1
-end
-bench.add("scope/hook-on-scope", (function()
-    local enter, exit, hook = lifetime.enter, lifetime.exit, lifetime.hook
-    return function()
-        for _ = 1, 10 do
-            local s = enter("bench:3")
-            hook(on_exit, s)
-            exit(s, "bench:3")
-        end
-    end
-end)(), {
-    baseline = function()
-        for _ = 1, 10 do
-            on_exit("anchor")
         end
     end
 })
@@ -209,6 +167,48 @@ end, {
     baseline = function()
         for _ = 1, 10 do
             original_resume(co_original)
+        end
+    end
+})
+
+-- scope/loop-one-object: `for … do local x = {} @ lifetime.scope … end`.
+bench.add("scope/loop-one-object", (function()
+    local enter, exit, attach = lifetime.enter, lifetime.exit, lifetime.attach
+    return function()
+        for _ = 1, 10 do
+            local s = enter("bench:1")
+            local x = attach(setmetatable({}, MT), s)
+            x.v = 1
+            exit(s, "bench:1")
+        end
+    end
+end)(), {
+    baseline = function()
+        for _ = 1, 10 do
+            local x = setmetatable({}, MT)
+            x.v = 1
+            body(x, "anchor")
+        end
+    end
+})
+
+-- scope/hook-on-scope: `do function() … end !@ lifetime.scope … end`.
+local function on_exit(reason)
+    closed = closed + 1
+end
+bench.add("scope/hook-on-scope", (function()
+    local enter, exit, hook = lifetime.enter, lifetime.exit, lifetime.hook
+    return function()
+        for _ = 1, 10 do
+            local s = enter("bench:3")
+            hook(on_exit, s)
+            exit(s, "bench:3")
+        end
+    end
+end)(), {
+    baseline = function()
+        for _ = 1, 10 do
+            on_exit("anchor")
         end
     end
 })

@@ -84,7 +84,9 @@ a destructor body. The sentence most likely to be misread: "The record
 is a value here, which the syntax never gives: it is valid inside `fn`
 only"; the dead-record case covers it, for a record that had dependents
 and for one that had none (`lifetime.exit` now marks an empty record
-dead too).
+dead too), and asserts that `of`, `destroy` and `discard` refuse the
+record inside the function and once it is dead alike (`got scope`), and
+that a `lifetime.pin` value made from it names the dead record a scope.
 
 ## Performance
 
@@ -130,7 +132,11 @@ artifact of the base process raising early). After the reorder, the
 same invocation reads `scope/pcall-empty` 0.924 / 0.956 under Lua 5.1
 and 1.340 / 0.852 under LuaJIT (median 1.095), not marked, and the whole
 `make bench BASE=master` exits 0 with no `SLOWER` mark under either
-interpreter.
+interpreter. Round 2 saw the row marked again under LuaJIT (1.239 /
+1.216, then 1.127 / 1.279), since `scope/loop-one-object` and
+`scope/hook-on-scope` still raised on the base ahead of it; those two
+rows follow `scope/resume-yield` now as well, so every row a base
+without this task's `attach` can run comes first: BENCH_ROUND_3.
 
 ## Out of scope
 
@@ -175,3 +181,21 @@ process raising on the `block-*` rows; those rows moved after
 is in Performance now. F6: this file's metadata (`branch`, `status`,
 this log). Questions: docs/03 names the dying record too; docs/02 "The
 library form" says what the other entry points do with the record.
+
+Round 2 (2026-10-19): REQUEST_CHANGES. Every round-1 finding
+resolved. F1 (blocking): the sentence added in round 1 for the other
+entry points held inside `fn` only: `lifetime.of` on the dead record
+reached the dead-object branch first and formatted a tombstone message
+through `name_of`, which took the record's `fn` field for a hook's;
+`destroy` and `discard` on it were silent no-ops. Fixed: `of` and
+`destroy_target` test for the marker or a record before they test for
+death, so the dead record is refused as the live one is; the record's
+function is kept under `body`; docs/02 and docs/03 say so; the
+dead-record test covers the three entry points inside the function and
+after it. F2: a dead record reached through a `lifetime.pin` value was
+named `dead table`; `check_anchor`'s value branch names a scope now,
+tested. F3: the dead-record test covers a record that had dependents
+too, as the Test cases section said. F4: `scope/pcall-empty` marked
+again under LuaJIT, with the base still raising on two earlier rows of
+the file; `scope/loop-one-object` and `scope/hook-on-scope` moved after
+`scope/resume-yield` as well, the result recorded in Performance.

@@ -288,6 +288,43 @@ test.case("the record is dead after the block: anchoring to it raises attempt to
     test.assert_error(function()
         attach({}, saved, {})
     end, "attempt to anchor to a dead scope")
+
+    -- a record that had dependents dies through the cascade, not through
+    -- exit's branch for an empty one; the other entry points refuse the
+    -- record inside the function and once it is dead alike, and a pin
+    -- value made from it names it a scope too
+    local log = {}
+    local with_deps, pinned
+    block(function(scope)
+        attach(new_logged(log, "x"), scope)
+        with_deps = scope
+        pinned = lifetime.pin(scope)
+        test.assert_error(function()
+            lifetime.of(scope)
+        end, "bad argument #1 to 'lifetime.of' (object expected, got scope)")
+        test.assert_error(function()
+            destroy(scope)
+        end, "bad argument #1 to 'destroy' (object expected, got scope)")
+        test.assert_true(alive(scope))
+    end)
+    test.assert_deep_eq(log, {"x (anchor)"})
+    test.assert_false(alive(with_deps))
+    test.assert_error(function()
+        attach({}, with_deps)
+    end, "attempt to anchor to a dead scope")
+    test.assert_error(function()
+        attach({}, pinned)
+    end, "attempt to anchor to a dead scope")
+    test.assert_error(function()
+        lifetime.of(with_deps)
+    end, "bad argument #1 to 'lifetime.of' (object expected, got scope)")
+    test.assert_error(function()
+        destroy(with_deps)
+    end, "bad argument #1 to 'destroy' (object expected, got scope)")
+    test.assert_error(function()
+        lifetime.discard(with_deps)
+    end, "bad argument #1 to 'discard' (object expected, got scope)")
+    test.assert_deep_eq(log, {"x (anchor)"}, "nothing else died")
 end)
 
 test.case("block accepts only a function, and the error names the caller", function()
