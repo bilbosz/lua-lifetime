@@ -883,6 +883,12 @@ of the syntax, and the syntax compiles to them
 - `<where>` in the tombstone of a dependent is the position of `fn`, its
   chunk and the line of its `function`, since no `end` of a block can be
   named ("Tombstones").
+- The other entry points treat the record as the marker: `lifetime.destroy`,
+  `lifetime.discard` and `lifetime.of` refuse it (`bad argument #1 to
+  'destroy' (object expected, got scope)`); `lifetime.dependents(scope)`
+  lists what is attached to it, `lifetime.format(scope)` is `scope`, and
+  `lifetime.alive(scope)` is `true` inside `fn` and `false` once it has
+  returned.
 - A block that attaches nothing costs the record and a closure call;
   `lifetime.block` makes no `pcall` and no table for the results
   ([03-runtime.md](03-runtime.md), "Performance").

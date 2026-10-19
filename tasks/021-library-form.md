@@ -40,6 +40,12 @@ self)` where a `.lt` file would write `@ self`.
 - `docs/04-transpiler.md`, "What `@` expands to": the new expansions,
   `__lt_named_hook` in the header.
 - `docs/05-decisions.md`, "The runtime is usable as a library".
+- `docs/05-decisions.md`, "A LÖVE host announces program end from
+  `love.quit`": settles the open question "How an embedding host
+  announces program end" (docs only: `lifetime.set_exiting` as it already
+  existed; `docs/02` "Program end" step 2 and `docs/03` "Program end"
+  amended), carried by this branch for the Treflove side, which calls it
+  from its `love.quit` callback.
 
 ## Acceptance criteria
 
@@ -100,6 +106,24 @@ baselines fold under the trace compiler, so the printed ratios of the
 sink"; the absolute numbers are the comparison. `scope/loop-one-object`
 and `scope/hook-on-scope` are within their previous range.
 
+`make bench BASE=master` cannot run the branch's `runtime/*`,
+`scope/loop-one-object`, `scope/hook-on-scope` and `sentinel/*` rows on
+the base: `attach` lost an argument, so master's runtime raises `bad
+argument #3 to 'lifetime.attach'` on the branch's files, and the compare
+prints `-` for them. Those rows were compared by alternating the branch's
+benchmark files on the branch against master's own files in `build/base`,
+two pairings per interpreter (the reviewer's method, round 1): every row
+within the noise band of `bench/README.md`; `runtime/attach-destroy-100`
+under LuaJIT 1.21/1.11 in one pairing, 0.93/0.98 in the next two,
+`runtime/attach-first` 0.88/1.08. `sentinel/anchor-100` (round 1, finding
+F1) attaches its pinned baseline through a `lifetime.pin(anchor)` value
+now, which takes `attach`'s general path, so its ratio reads the
+sentinel's cost over the general path's: BENCH_ANCHOR_100. The
+`scope/block-*` rows follow `scope/resume-yield` now, so a base without
+`lifetime.block` fails after the rows it can run (finding F4:
+`scope/pcall-empty` under LuaJIT had been marked in two invocations as an
+artifact of the base process raising early): BENCH_PCALL_EMPTY.
+
 ## Out of scope
 
 - Any change to the syntax or the transpiled semantics: `lifetime.scope`
@@ -118,11 +142,28 @@ and `scope/hook-on-scope` are within their previous range.
 2. An empty scope record was never marked dead at `lifetime.exit`, since
    generated code cannot reach it afterwards; the library form can. Fixed
    as part of this task (one store on that path).
+3. The open question "How an embedding host announces program end" (task
+   009 left it for Treflove) is settled on this branch by the Treflove
+   side's `love.quit` callback: `docs/05-decisions.md`, "A LÖVE host
+   announces program end from `love.quit`", with `docs/02` "Program end"
+   step 2 and `docs/03` "Program end" amended; no code changed. Cited in
+   the Spec list on the reviewer's finding F3.
 
 ## Review log
 
-Done by the human's session directly, outside the implement/review loop
-(the Treflove comparison branch needed it in one sitting). Self-checked:
-`make test` under `lua5.1` and `luajit`, `make lint`, `make
-luals-check`, the Treflove trial, and `make bench
-BENCH_FILES=bench/bench-scopes.lua`.
+Implemented by the human's session directly (the Treflove comparison
+branch needed it in one sitting), then reviewed by the reviewer agent.
+
+Round 1 (2026-10-19): REQUEST_CHANGES. F1 (blocking):
+`bench/bench-sentinel.lua` still passed the removed `pin` flag, so `make
+bench` failed on the branch; fixed, the pinned baseline goes through a
+`lifetime.pin(anchor)` value (README row and Performance updated). F2:
+a stale `pin: boolean` in docs/04's Teal declaration sentence; fixed.
+F3: the `love.quit` decision the branch carries was not cited; now in
+the Spec list and "Spec issues found" 3. F4: `scope/pcall-empty` marked
+`SLOWER` under LuaJIT in two invocations as an artifact of the base
+process raising on the `block-*` rows; those rows moved after
+`scope/resume-yield`. F5: how the signature-changed rows were compared
+is in Performance now. F6: this file's metadata (`branch`, `status`,
+this log). Questions: docs/03 names the dying record too; docs/02 "The
+library form" says what the other entry points do with the record.

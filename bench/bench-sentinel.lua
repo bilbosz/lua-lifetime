@@ -6,8 +6,12 @@
 --   sentinel/anchor-100   100 objects with a `__destroy` anchored with the
 --                         implicit `reachable` term (each needs a
 --                         sentinel), then lifetime.destroy(anchor); against the
---                         same 100 objects attached pinned (`attach`'s pin
---                         flag, as `@ lifetime.pin(a)` is: no proxy)
+--                         same 100 objects attached pinned, through a
+--                         `lifetime.pin(anchor)` value made once (no
+--                         proxy). A lifetime value takes `attach`'s general
+--                         path, not the one-anchor fast path, so the ratio
+--                         is the sentinel's cost over the general path's
+--                         (task 021: `attach` has no pin flag).
 --   sentinel/collect-100  100 objects with a `__destroy` registered with
 --                         `@ lifetime.reachable`, dropped, then one
 --                         collectgarbage("collect") that runs their 100
@@ -51,8 +55,9 @@ local MT = {__destroy = body}
 local function anchor_n(pin)
     local attach = lifetime.attach
     local anchor, objects = {}, {}
+    local a = pin and lifetime.pin(anchor) or anchor
     for i = 1, N do
-        objects[i] = attach(setmetatable({}, MT), pin, anchor)
+        objects[i] = attach(setmetatable({}, MT), a)
     end
     lifetime.destroy(anchor)
     return objects

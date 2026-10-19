@@ -282,7 +282,7 @@ measure).
   `global = 2`).
 - **The same shape, typed.** The table of "What `@` expands to" holds row
   for row, and so does "Blocks": `e @ a` is `__lt_attach(e, a)`,
-  whose declaration `attach<T>(obj: T, pin: boolean, ...: any): T` keeps
+  whose declaration `attach<T>(obj: T, ...: any): T` keeps
   the type of `e`, so `local conn: Conn = Conn.open(s) @ lifetime.scope`
   type-checks; `f !@ a` is `__lt_hook(f, a)` (`__lt_named_hook("h", f, a)` bound to a name); a block that anchors
   to `lifetime.scope` gets `__lt_enter` and `__lt_exit` with the same

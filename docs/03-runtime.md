@@ -305,9 +305,10 @@ function, read once per such cascade and never per entry (CLAUDE.md,
 "Technical decisions": no `debug.*` on a per-block path). Since the
 library form hands the record out as a value, `exit` marks a record
 dead even when nothing was attached to it (one store on that path),
-and `check_anchor` names a dead record a `scope`: `attempt to anchor to
-a dead scope`. The generated code never reaches a popped record, so
-nothing else changes for it.
+and `check_anchor` names a dead or dying record a `scope`: `attempt to
+anchor to a dead scope`, or `to a dying scope` from a destructor that
+runs during the block's exit. The generated code never reaches a popped
+record, so nothing else changes for it.
 
 **The scope stack and the error path.** Scope exit on an error is the
 runtime's, not generated code's ([05-decisions.md](05-decisions.md),

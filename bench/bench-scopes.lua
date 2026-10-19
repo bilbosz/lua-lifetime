@@ -142,79 +142,8 @@ end)(), {
     end
 })
 
--- scope/block-one-object: `lifetime.block(function(s) local x = {}
--- @ s … end)`, the body made once (docs/02-semantics.md, "The library
--- form"). A closure call stands on both sides.
-local block_body
-bench.add("scope/block-one-object", (function()
-    local block, attach = lifetime.block, lifetime.attach
-    block_body = function(s)
-        local x = attach(setmetatable({}, MT), s)
-        x.v = 1
-    end
-    return function()
-        for _ = 1, 10 do
-            block(block_body)
-        end
-    end
-end)(), {
-    baseline = (function()
-        local function plain_body()
-            local x = setmetatable({}, MT)
-            x.v = 1
-            body(x, "anchor")
-        end
-        return function()
-            for _ = 1, 10 do
-                plain_body()
-            end
-        end
-    end)()
-})
-
--- scope/block-closure: the function written inline, as a program writes
--- it, so each entry makes a closure that captures a local.
-bench.add("scope/block-closure", (function()
-    local block, attach = lifetime.block, lifetime.attach
-    return function()
-        for i = 1, 10 do
-            block(function(s)
-                local x = attach(setmetatable({}, MT), s)
-                x.v = i
-            end)
-        end
-    end
-end)(), {
-    baseline = function()
-        for i = 1, 10 do
-            local f = function()
-                local x = setmetatable({}, MT)
-                x.v = i
-                body(x, "anchor")
-            end
-            f()
-        end
-    end
-})
-
 local function empty()
 end
-
--- scope/block-empty
-bench.add("scope/block-empty", (function()
-    local block = lifetime.block
-    return function()
-        for _ = 1, 10 do
-            block(empty)
-        end
-    end
-end)(), {
-    baseline = function()
-        for _ = 1, 10 do
-            empty()
-        end
-    end
-})
 
 -- scope/pcall-empty
 local original_pcall = original(pcall, "pcall")
@@ -280,6 +209,77 @@ end, {
     baseline = function()
         for _ = 1, 10 do
             original_resume(co_original)
+        end
+    end
+})
+
+-- scope/block-one-object: `lifetime.block(function(s) local x = {}
+-- @ s … end)`, the body made once (docs/02-semantics.md, "The library
+-- form"). A closure call stands on both sides.
+local block_body
+bench.add("scope/block-one-object", (function()
+    local block, attach = lifetime.block, lifetime.attach
+    block_body = function(s)
+        local x = attach(setmetatable({}, MT), s)
+        x.v = 1
+    end
+    return function()
+        for _ = 1, 10 do
+            block(block_body)
+        end
+    end
+end)(), {
+    baseline = (function()
+        local function plain_body()
+            local x = setmetatable({}, MT)
+            x.v = 1
+            body(x, "anchor")
+        end
+        return function()
+            for _ = 1, 10 do
+                plain_body()
+            end
+        end
+    end)()
+})
+
+-- scope/block-closure: the function written inline, as a program writes
+-- it, so each entry makes a closure that captures a local.
+bench.add("scope/block-closure", (function()
+    local block, attach = lifetime.block, lifetime.attach
+    return function()
+        for i = 1, 10 do
+            block(function(s)
+                local x = attach(setmetatable({}, MT), s)
+                x.v = i
+            end)
+        end
+    end
+end)(), {
+    baseline = function()
+        for i = 1, 10 do
+            local f = function()
+                local x = setmetatable({}, MT)
+                x.v = i
+                body(x, "anchor")
+            end
+            f()
+        end
+    end
+})
+
+-- scope/block-empty
+bench.add("scope/block-empty", (function()
+    local block = lifetime.block
+    return function()
+        for _ = 1, 10 do
+            block(empty)
+        end
+    end
+end)(), {
+    baseline = function()
+        for _ = 1, 10 do
+            empty()
         end
     end
 })
