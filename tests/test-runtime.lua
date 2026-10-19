@@ -1243,7 +1243,7 @@ test.case("a metatable with __destroy and no __lifetime_destroy has no destructo
         log[#log + 1] = "b (" .. reason .. ")"
     end
     destroy(b)
-    test.assert_deep_eq(log, {"b (destroy)"})
+    test.assert_deep_eq(log, {"new (unreachable)", "b (destroy)"})
 end)
 
 test.case("a destructor error after the first of a cascade goes to lifetime_destroyerror, never to a global destroyerror", function()
