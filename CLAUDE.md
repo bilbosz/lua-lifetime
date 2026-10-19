@@ -23,6 +23,7 @@ documents are derived from `xd/docs/10-lua-lifetime-decisions.md` in the
 | `examples/*.lt` | Example programs. Each becomes a conformance test. `examples/teal/*.tlt` are the Teal ones, run where the `tl` module is installed. |
 | `tasks/` | Work items. See `tasks/README.md` for the format and lifecycle. |
 | `lifetime/` | The runtime (`init.lua`), the transpiler (`lexer.lua`, `parser.lua`, `emit.lua`, `cli.lua`), and the Teal front end (`teal.lua`, the dialect and the `tl` bridge; `init.d.tl`, the Teal declaration of the runtime), which `teal-lifetime-dev-1.rockspec` installs. |
+| `editor/` | Editor support: the LuaLS plugin that rewrites `.lt` files for the language server, and `luals/meta/lifetime.lua`, the LuaLS declaration of the runtime for programs that use it as a library. |
 | `bin/lifetime` | The command: `lifetime build FILE -o OUT`, `lifetime run FILE`; a `.tlt` FILE goes through the Teal front end and `tl`. |
 | `tests/` | The unit suite (`run.lua`, `lib/test.lua`) and the conformance runner (`conformance.lua`). |
 | `bench/` | The benchmark harness (`lib/bench.lua`, `run.lua`, `compare.lua`), the benchmarks (`bench-*.lua`) and `bench/README.md` with the threshold; `make bench [BASE=master]`. |
@@ -193,3 +194,10 @@ Skills, invoked with `/name`:
   field under a private table key; `pairs` and `next` show it, so a
   serializer or an emptiness check skips it with `lifetime.is_state(k)`.
 - `return x` from a block where `x @ lifetime.scope` hands the caller a tombstone.
+- `lifetime.block(function(scope) … end)` is the library form of a
+  block (`docs/02-semantics.md`, "The library form"), for a program that
+  is not transpiled: `lifetime.attach(obj, scope)` inside it is `obj @
+  lifetime.scope`. The record is a value only there; once the function
+  has returned it is dead, and anchoring to it raises `attempt to anchor
+  to a dead scope`. The syntax is unchanged: `lifetime.scope` is still
+  not a value.

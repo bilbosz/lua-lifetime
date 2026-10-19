@@ -202,8 +202,8 @@ test.case("the extension's statements stay on their source lines", function()
     starts = statement_lines(output)
     test.assert_true(starts[1] and starts[2] and starts[5], output)
     local compact = output:gsub("%s", "")
-    test.assert_true(compact:find("__lt_hook(__lt_attach(__lt_hook(function()end,nil,a),false,b,__s1),nil,c)", 1, true), output)
-    test.assert_true(compact:find("__lt_attach(__lt_attach(x,false,__s1),false,d)", 1, true), output)
+    test.assert_true(compact:find("__lt_hook(__lt_attach(__lt_hook(function()end,a),b,__s1),c)", 1, true), output)
+    test.assert_true(compact:find("__lt_attach(__lt_attach(x,__s1),d)", 1, true), output)
 end)
 
 test.case("LuaJIT's syntax round-trips; under LuaJIT, to the same bytecode", function()
@@ -265,6 +265,7 @@ end
 local LT = "local lifetime = require(\"lifetime\");"
 local ATTACH = LT .. " local __lt_attach = lifetime.attach;"
 local HOOK = LT .. " local __lt_hook = lifetime.hook;"
+local NAMED = LT .. " local __lt_named_hook = lifetime.named_hook;"
 local SCOPE = LT .. " local __lt_attach, __lt_enter, __lt_exit = lifetime.attach, lifetime.enter, lifetime.exit;"
 local SCOPE_HOOK = LT .. " local __lt_hook, __lt_enter, __lt_exit = lifetime.hook, lifetime.enter, lifetime.exit;"
 local PACK = " local __lt_unpack, __lt_select = unpack, select; local function __lt_pack(...) return {n = __lt_select(\"#\", ...), ...} end;"
@@ -355,38 +356,38 @@ end)
 test.case("a scoped chunk binds lifetime and the runtime entry points, no discard", function()
     -- Case 4 of task 016.
     local output = build("local x = {} @ lifetime.scope\nlifetime.discard(x)")
-    test.assert_eq(output, SCOPE .. " local __s1 = __lt_enter(\"c.lt:2\"); local x = __lt_attach({}, false, __s1)\nlifetime.discard(x) __lt_exit(__s1, \"c.lt:2\");")
+    test.assert_eq(output, SCOPE .. " local __s1 = __lt_enter(\"c.lt:2\"); local x = __lt_attach({}, __s1)\nlifetime.discard(x) __lt_exit(__s1, \"c.lt:2\");")
     test.assert_false(output:find("local discard", 1, true))
     test.assert_false(output:find("discard =", 1, true))
 end)
 
 test.case("each row of the expansion table", function()
     -- docs/04-transpiler.md, "What `@` expands to".
-    test.assert_eq(build("local x = e @ a"), ATTACH .. " local x = __lt_attach(e, false, a)")
-    test.assert_eq(build("x = e @ (a, b)"), ATTACH .. " x = __lt_attach(e, false, a, b)")
-    test.assert_eq(build("x = e @ lifetime.pin(a, b)"), ATTACH .. " x = __lt_attach(e, false, (lifetime.pin(a, b)))")
-    test.assert_eq(build("x @ a"), ATTACH .. " __lt_attach(x, false, a)")
-    test.assert_eq(build("t.x @ (a, b)"), ATTACH .. " __lt_attach(t.x, false, a, b)")
-    test.assert_eq(build("f !@ a"), HOOK .. " __lt_hook(f, nil, a)")
-    test.assert_eq(build("f !@ (a, b)"), HOOK .. " __lt_hook(f, nil, a, b)")
-    test.assert_eq(build("local p = lifetime.token(\"p\") @ self"), ATTACH .. " local p = __lt_attach(lifetime.token(\"p\"), false, self)")
-    test.assert_eq(build("do local x = e @ lifetime.scope end"), SCOPE .. " do local __s1 = __lt_enter(\"c.lt:1\"); local x = __lt_attach(e, false, __s1) __lt_exit(__s1, \"c.lt:1\"); end")
-    test.assert_eq(build("do f !@ lifetime.scope end"), SCOPE_HOOK .. " do local __s1 = __lt_enter(\"c.lt:1\"); __lt_hook(f, nil, __s1) __lt_exit(__s1, \"c.lt:1\"); end")
-    test.assert_eq(build("do x = e @ (a, lifetime.scope) end"), SCOPE .. " do local __s1 = __lt_enter(\"c.lt:1\"); x = __lt_attach(e, false, a, __s1) __lt_exit(__s1, \"c.lt:1\"); end")
+    test.assert_eq(build("local x = e @ a"), ATTACH .. " local x = __lt_attach(e, a)")
+    test.assert_eq(build("x = e @ (a, b)"), ATTACH .. " x = __lt_attach(e, a, b)")
+    test.assert_eq(build("x = e @ lifetime.pin(a, b)"), ATTACH .. " x = __lt_attach(e, (lifetime.pin(a, b)))")
+    test.assert_eq(build("x @ a"), ATTACH .. " __lt_attach(x, a)")
+    test.assert_eq(build("t.x @ (a, b)"), ATTACH .. " __lt_attach(t.x, a, b)")
+    test.assert_eq(build("f !@ a"), HOOK .. " __lt_hook(f, a)")
+    test.assert_eq(build("f !@ (a, b)"), HOOK .. " __lt_hook(f, a, b)")
+    test.assert_eq(build("local p = lifetime.token(\"p\") @ self"), ATTACH .. " local p = __lt_attach(lifetime.token(\"p\"), self)")
+    test.assert_eq(build("do local x = e @ lifetime.scope end"), SCOPE .. " do local __s1 = __lt_enter(\"c.lt:1\"); local x = __lt_attach(e, __s1) __lt_exit(__s1, \"c.lt:1\"); end")
+    test.assert_eq(build("do f !@ lifetime.scope end"), SCOPE_HOOK .. " do local __s1 = __lt_enter(\"c.lt:1\"); __lt_hook(f, __s1) __lt_exit(__s1, \"c.lt:1\"); end")
+    test.assert_eq(build("do x = e @ (a, lifetime.scope) end"), SCOPE .. " do local __s1 = __lt_enter(\"c.lt:1\"); x = __lt_attach(e, a, __s1) __lt_exit(__s1, \"c.lt:1\"); end")
 end)
 
 test.case("a hook bound to a name is created with the name", function()
     -- docs/02-semantics.md, "Named hooks": `local NAME =`, `NAME =` and
     -- `t.NAME =` name the hook, each target its own; `t[k] =`, an
     -- argument or a statement on its own leave it anonymous.
-    test.assert_eq(build("local h = f !@ a"), HOOK .. " local h = __lt_hook(f, \"h\", a)")
-    test.assert_eq(build("h = f !@ a"), HOOK .. " h = __lt_hook(f, \"h\", a)")
-    test.assert_eq(build("self.on_close = f !@ a"), HOOK .. " self.on_close = __lt_hook(f, \"on_close\", a)")
-    test.assert_eq(build("t[k] = f !@ a"), HOOK .. " t[k] = __lt_hook(f, nil, a)")
-    test.assert_eq(build("g(f !@ a)"), HOOK .. " g(__lt_hook(f, nil, a))")
-    test.assert_eq(build("local h1, h2 = f !@ a, g !@ (a, b)"), HOOK .. " local h1, h2 = __lt_hook(f, \"h1\", a), __lt_hook(g, \"h2\", a, b)")
-    test.assert_eq(build("local m = f !@ a @ b"), LT .. " local __lt_attach, __lt_hook = lifetime.attach, lifetime.hook; local m = __lt_attach(__lt_hook(f, \"m\", a), false, b)")
-    test.assert_eq(build("local m = (f !@ a)"), HOOK .. " local m = (__lt_hook(f, \"m\", a))")
+    test.assert_eq(build("local h = f !@ a"), NAMED .. " local h = __lt_named_hook(\"h\", f, a)")
+    test.assert_eq(build("h = f !@ a"), NAMED .. " h = __lt_named_hook(\"h\", f, a)")
+    test.assert_eq(build("self.on_close = f !@ a"), NAMED .. " self.on_close = __lt_named_hook(\"on_close\", f, a)")
+    test.assert_eq(build("t[k] = f !@ a"), HOOK .. " t[k] = __lt_hook(f, a)")
+    test.assert_eq(build("g(f !@ a)"), HOOK .. " g(__lt_hook(f, a))")
+    test.assert_eq(build("local h1, h2 = f !@ a, g !@ (a, b)"), NAMED .. " local h1, h2 = __lt_named_hook(\"h1\", f, a), __lt_named_hook(\"h2\", g, a, b)")
+    test.assert_eq(build("local m = f !@ a @ b"), LT .. " local __lt_attach, __lt_named_hook = lifetime.attach, lifetime.named_hook; local m = __lt_attach(__lt_named_hook(\"m\", f, a), b)")
+    test.assert_eq(build("local m = (f !@ a)"), NAMED .. " local m = (__lt_named_hook(\"m\", f, a))")
 end)
 
 test.case("a list of one is the plain form; an anchor item is one value", function()
@@ -396,14 +397,14 @@ test.case("a list of one is the plain form; an anchor item is one value", functi
     -- lifetime": "Evaluate each element").
     test.assert_eq(build("x @ (a)"), build("x @ a"))
     test.assert_eq(build("do x @ (lifetime.scope) end"), build("do x @ lifetime.scope end"))
-    test.assert_eq(build("x @ (a, f())"), ATTACH .. " __lt_attach(x, false, a, (f()))")
-    test.assert_eq(build("x @ g()"), ATTACH .. " __lt_attach(x, false, (g()))")
-    test.assert_eq(build("x @ t:owner()"), ATTACH .. " __lt_attach(x, false, (t:owner()))")
-    test.assert_eq(build("local function f(...) x @ (a, ...) end"), ATTACH .. " local function f(...) __lt_attach(x, false, a, (...)) end")
-    test.assert_eq(build("f() !@ g()"), HOOK .. " __lt_hook(f(), nil, (g()))")
+    test.assert_eq(build("x @ (a, f())"), ATTACH .. " __lt_attach(x, a, (f()))")
+    test.assert_eq(build("x @ g()"), ATTACH .. " __lt_attach(x, (g()))")
+    test.assert_eq(build("x @ t:owner()"), ATTACH .. " __lt_attach(x, (t:owner()))")
+    test.assert_eq(build("local function f(...) x @ (a, ...) end"), ATTACH .. " local function f(...) __lt_attach(x, a, (...)) end")
+    test.assert_eq(build("f() !@ g()"), HOOK .. " __lt_hook(f(), (g()))")
     -- The parenthesised prefixexp `(lifetime.scope).f` is the marker's
     -- field, not the scope anchor: no record.
-    test.assert_eq(build("x @ (lifetime.scope).f"), ATTACH .. " __lt_attach(x, false, (lifetime.scope).f)")
+    test.assert_eq(build("x @ (lifetime.scope).f"), ATTACH .. " __lt_attach(x, (lifetime.scope).f)")
     -- At run time each item is one value: a call returning two anchors
     -- anchors to the first only.
     local lifetime = require("lifetime")
@@ -420,21 +421,21 @@ test.case("a statement chain is nested calls whatever its first operator", funct
     -- operator is `@` (docs/05-decisions.md, "A statement chains `@` and
     -- `!@` like an expression").
     local both = LT .. " local __lt_attach, __lt_hook = lifetime.attach, lifetime.hook;"
-    test.assert_eq(build("f @ a !@ b"), both .. " __lt_hook(__lt_attach(f, false, a), nil, b)")
-    test.assert_eq(build("f !@ a @ b"), both .. " __lt_attach(__lt_hook(f, nil, a), false, b)")
-    test.assert_eq(build("function() end !@ a"), HOOK .. " __lt_hook(function() end, nil, a)")
-    test.assert_eq(build("(x) @ a"), ATTACH .. " __lt_attach((x), false, a)")
+    test.assert_eq(build("f @ a !@ b"), both .. " __lt_hook(__lt_attach(f, a), b)")
+    test.assert_eq(build("f !@ a @ b"), both .. " __lt_attach(__lt_hook(f, a), b)")
+    test.assert_eq(build("function() end !@ a"), HOOK .. " __lt_hook(function() end, a)")
+    test.assert_eq(build("(x) @ a"), ATTACH .. " __lt_attach((x), a)")
 end)
 
 test.case("a block that does not anchor to lifetime.scope is emitted verbatim", function()
     -- docs/04-transpiler.md, "Blocks": "Only such blocks get code; every
     -- other block is emitted verbatim." "Directly": an anchor in a nested
     -- block or a nested function belongs to that block.
-    test.assert_eq(build("do local x = {} @ a end"), ATTACH .. " do local x = __lt_attach({}, false, a) end")
+    test.assert_eq(build("do local x = {} @ a end"), ATTACH .. " do local x = __lt_attach({}, a) end")
     test.assert_eq(build("do\n    do\n        x @ lifetime.scope\n    end\nend"),
-        SCOPE .. " do\n    do local __s1 = __lt_enter(\"c.lt:4\");\n        __lt_attach(x, false, __s1)\n    __lt_exit(__s1, \"c.lt:4\"); end\nend")
+        SCOPE .. " do\n    do local __s1 = __lt_enter(\"c.lt:4\");\n        __lt_attach(x, __s1)\n    __lt_exit(__s1, \"c.lt:4\"); end\nend")
     test.assert_eq(build("do\n    local f = function()\n        g !@ lifetime.scope\n    end\nend"),
-        SCOPE_HOOK .. " do\n    local f = function() local __s1 = __lt_enter(\"c.lt:4\");\n        __lt_hook(g, nil, __s1)\n    __lt_exit(__s1, \"c.lt:4\"); end\nend")
+        SCOPE_HOOK .. " do\n    local f = function() local __s1 = __lt_enter(\"c.lt:4\");\n        __lt_hook(g, __s1)\n    __lt_exit(__s1, \"c.lt:4\"); end\nend")
 end)
 
 test.case("a function that does not anchor to lifetime.scope is emitted verbatim", function()
@@ -453,9 +454,9 @@ end)
 
 test.case("the main chunk is a block: its record ends at <eof>", function()
     test.assert_eq(build("local x = {} @ lifetime.scope\nprint(x)\n"),
-        SCOPE .. " local __s1 = __lt_enter(\"c.lt:3\"); local x = __lt_attach({}, false, __s1)\nprint(x)\n__lt_exit(__s1, \"c.lt:3\");")
+        SCOPE .. " local __s1 = __lt_enter(\"c.lt:3\"); local x = __lt_attach({}, __s1)\nprint(x)\n__lt_exit(__s1, \"c.lt:3\");")
     -- A first statement that starts with `(` stays a statement.
-    test.assert_eq(build("(f)()\nx @ lifetime.scope"), SCOPE .. " local __s1 = __lt_enter(\"c.lt:2\"); (f)()\n__lt_attach(x, false, __s1) __lt_exit(__s1, \"c.lt:2\");")
+    test.assert_eq(build("(f)()\nx @ lifetime.scope"), SCOPE .. " local __s1 = __lt_enter(\"c.lt:2\"); (f)()\n__lt_attach(x, __s1) __lt_exit(__s1, \"c.lt:2\");")
     local log = {}
     run(build("local res = ...\n(function() end)()\nlocal a = res(\"a\") @ lifetime.scope\n"), "c.lt", logger(log))
     test.assert_deep_eq(log, {"a anchor"})
@@ -497,11 +498,11 @@ end)
 test.case("return: values first, then every epilogue innermost first, trailing nils kept", function()
     -- docs/04-transpiler.md, "Blocks", **`return explist`**.
     test.assert_eq(build("local function f()\n    local a = {} @ lifetime.scope\n    return\nend"),
-        SCOPE .. " local function f() local __s1 = __lt_enter(\"c.lt:4\");\n    local a = __lt_attach({}, false, __s1)\n    __lt_exit(__s1, \"c.lt:3\"); return\nend")
+        SCOPE .. " local function f() local __s1 = __lt_enter(\"c.lt:4\");\n    local a = __lt_attach({}, __s1)\n    __lt_exit(__s1, \"c.lt:3\"); return\nend")
     test.assert_eq(build("local function f()\n    local a = {} @ lifetime.scope\n    return a.x, nil\nend"),
-        SCOPE .. " local function f() local __s1 = __lt_enter(\"c.lt:4\");\n    local a = __lt_attach({}, false, __s1)\n    local __r1, __r2 = a.x, nil; __lt_exit(__s1, \"c.lt:3\"); return __r1, __r2\nend")
+        SCOPE .. " local function f() local __s1 = __lt_enter(\"c.lt:4\");\n    local a = __lt_attach({}, __s1)\n    local __r1, __r2 = a.x, nil; __lt_exit(__s1, \"c.lt:3\"); return __r1, __r2\nend")
     test.assert_eq(build("local function f(...)\n    local a = {} @ lifetime.scope\n    return a, g(...)\nend"),
-        SCOPE .. PACK .. " local function f(...) local __s1 = __lt_enter(\"c.lt:4\");\n    local a = __lt_attach({}, false, __s1)\n    local __r = __lt_pack(a, g(...)); __lt_exit(__s1, \"c.lt:3\"); return __lt_unpack(__r, 1, __r.n)\nend")
+        SCOPE .. PACK .. " local function f(...) local __s1 = __lt_enter(\"c.lt:4\");\n    local a = __lt_attach({}, __s1)\n    local __r = __lt_pack(a, g(...)); __lt_exit(__s1, \"c.lt:3\"); return __lt_unpack(__r, 1, __r.n)\nend")
     -- Two blocks deep: the inner epilogue, then the function body's. A
     -- block without a record between them runs nothing.
     local source = table.concat({
@@ -536,7 +537,7 @@ test.case("return: values first, then every epilogue innermost first, trailing n
     test.assert_deep_eq(log, {"a anchor"})
     -- A `return` that leaves no block with a record is left alone.
     test.assert_eq(build("local function g() return 1 end\ndo x @ lifetime.scope end"),
-        SCOPE .. " local function g() return 1 end\ndo local __s1 = __lt_enter(\"c.lt:2\"); __lt_attach(x, false, __s1) __lt_exit(__s1, \"c.lt:2\"); end")
+        SCOPE .. " local function g() return 1 end\ndo local __s1 = __lt_enter(\"c.lt:2\"); __lt_attach(x, __s1) __lt_exit(__s1, \"c.lt:2\"); end")
 end)
 
 test.case("break: the epilogues up to the loop body, innermost first", function()
@@ -693,6 +694,6 @@ test.case("generated code never runs into a following statement that starts with
         test.assert_true(loadstring(output, "=c.lt"), output)
         test.assert_eq(count_lines(output), count_lines(source))
     end
-    test.assert_eq(build("local a = {}\nx = {} @ (a, a)\n(f)()"), ATTACH .. " local a = {}\nx = __lt_attach({}, false, a, a);\n(f)()")
-    test.assert_eq(build("local a = {}\nx = {} @ (a, a)\nf()"), ATTACH .. " local a = {}\nx = __lt_attach({}, false, a, a)\nf()")
+    test.assert_eq(build("local a = {}\nx = {} @ (a, a)\n(f)()"), ATTACH .. " local a = {}\nx = __lt_attach({}, a, a);\n(f)()")
+    test.assert_eq(build("local a = {}\nx = {} @ (a, a)\nf()"), ATTACH .. " local a = {}\nx = __lt_attach({}, a, a)\nf()")
 end)

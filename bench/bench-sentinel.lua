@@ -73,7 +73,7 @@ local function make_registered()
         error("no sentinel in this runtime")
     end
     for _ = 1, N do
-        attach(setmetatable({}, MT), false, reachable)
+        attach(setmetatable({}, MT), reachable)
     end
 end
 
@@ -97,7 +97,7 @@ end, {
 
 -- sentinel/alive-10. Each returns its count, so the checks are not dead
 -- code.
-local seen = lifetime.attach({}, false, lifetime.reachable)
+local seen = lifetime.attach({}, lifetime.reachable)
 bench.add("sentinel/alive-10", function()
     local alive = lifetime.alive
     local n = 0
@@ -126,19 +126,19 @@ local function tree(register)
     local function make()
         local obj = setmetatable({}, MT)
         if register then
-            attach(obj, false, reachable)
+            attach(obj, reachable)
         end
         return obj
     end
     local root = make()
     local held, n = {}, 0
     for _ = 1, 10 do
-        local child = attach(make(), false, root)
+        local child = attach(make(), root)
         n = n + 1
         held[n] = child
         for _ = 1, 10 do
             n = n + 1
-            held[n] = attach(make(), false, child)
+            held[n] = attach(make(), child)
         end
     end
     lifetime.destroy(root)

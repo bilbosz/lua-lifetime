@@ -19,6 +19,7 @@ local TEST_MODULES = {
     "tests.test-unwind",
     "tests.test-sentinel",
     "tests.test-functions",
+    "tests.test-library",
     "tests.test-lexer",
     "tests.test-parser",
     "tests.test-emit",

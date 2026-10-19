@@ -7,7 +7,10 @@
 --
 -- The generated Teal (lifetime/teal.lua, lifetime/emit.lua) begins with
 -- `local lifetime = require("lifetime")` and calls `attach`, `hook`,
--- `enter` and `exit` through locals; a program names the rest.
+-- `named_hook`, `enter` and `exit` through locals; a program names the
+-- rest, and one that is not transpiled writes `attach`, `hook`,
+-- `named_hook` and `block` itself (docs/02-semantics.md, "The library
+-- form").
 
 local record lifetime
    -- A lifetime value ("The `lifetime` table": "a table with the private
@@ -26,7 +29,8 @@ local record lifetime
    end
 
    -- A block's scope record, the value of `lifetime.enter`
-   -- (docs/03-runtime.md, "Scope records"); generated code only.
+   -- (docs/03-runtime.md, "Scope records") and what `lifetime.block`
+   -- hands its function ("The library form").
    record Scope
    end
 
@@ -85,15 +89,24 @@ local record lifetime
    -- The same, skipping `obj`'s own destructor (or a hook's function).
    discard: function(obj: any)
 
-   -- Generated code (docs/04-transpiler.md, "What `@` expands to"): `e @
-   -- a1, …, an` is `attach(e, false, a1, …, an)`, which returns `e`;
-   -- `pin` true attaches without the implicit `reachable` term.
-   attach: function<T>(obj: T, pin: boolean, ...: any): T
+   -- `e @ a1, …, an` is `attach(e, a1, …, an)`, which returns `e`
+   -- (docs/04-transpiler.md, "What `@` expands to"; the library form
+   -- writes the same call). The implicit `reachable` term applies unless
+   -- every anchor is a `lifetime.pin` value.
+   attach: function<T>(obj: T, ...: any): T
 
-   -- Generated code: `f !@ a1, …, an` is `hook(f, name, a1, …, an)`, `name`
-   -- the binding target's name or nil ("Named hooks"). The function is
-   -- called as `f(reason)`.
-   hook: function(fn: function(reason: Reason), name: string, ...: any): Hook
+   -- `f !@ a1, …, an` is `hook(f, a1, …, an)`; the function is called as
+   -- `f(reason)`.
+   hook: function(fn: function(reason: Reason), ...: any): Hook
+
+   -- `local name = f !@ a1, …, an` is `named_hook("name", f, a1, …, an)`:
+   -- the hook carries the name ("Named hooks").
+   named_hook: function(name: string, fn: function(reason: Reason), ...: any): Hook
+
+   -- The library form of a block ("The library form"): calls `fn(scope,
+   -- ...)` and returns what it returns; the objects attached to `scope`
+   -- die when `fn` returns, newest first, with reason "anchor".
+   block: function(fn: function(scope: Scope, ...: any): any..., ...: any): any...
 
    -- Generated code (docs/04-transpiler.md, "Blocks"): the prologue of a
    -- block that anchors to `lifetime.scope`, with the position of its

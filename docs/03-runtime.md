@@ -98,9 +98,10 @@ holding anchors and the term flag.
 
 ## Attachment: what `@` does
 
-`lifetime.attach(obj, pin, a1, …, an)` (the exact name is the emitter's,
-[04-transpiler.md](04-transpiler.md)) performs steps 1 to 4 of 02,
-"Acquiring a lifetime":
+`lifetime.attach(obj, a1, …, an)`, what `@` compiles to
+([04-transpiler.md](04-transpiler.md)) and what a program that is not
+transpiled writes itself (02, "The library form"), performs steps 1 to 4
+of 02, "Acquiring a lifetime":
 
 1. Validate `obj` (an object, not dying, not dead; during a destroy phase,
    on the default formula or created in this phase).
@@ -116,6 +117,10 @@ holding anchors and the term flag.
 Hooks and pinned dependents go into `strong` instead of `dependents`
 under the same sequence counter, so `lifetime.dependents` and the cascade can merge the two lists
 by sequence number into one attachment order (02, "Hooks: the `!@` operator").
+Pinning is a property of the anchors (`lifetime.pin` values) and of
+hooks (the general path pins a hook whatever its anchors); `attach`
+takes no flag for it, so the public signature is the library form's
+(task 021; before it the emitter passed a `pin` boolean it never set).
 
 ## The cascade
 
@@ -286,6 +291,24 @@ block ([05-decisions.md](05-decisions.md), "`caller` is removed"), so the
 runtime keeps no depth counter and gives generated functions no prologue
 or epilogue of their own.
 
+**The library form.** `lifetime.block(fn, …)` (02, "The library form")
+is `enter` and `exit` around a call: it makes the record itself, with
+`line = false` and the function in `fn` instead of the emitter's
+position, pushes it, calls `fn(record, …)` and passes the results
+through a vararg frame that runs `exit(record, false)` before returning
+them, so no table is made for them and no `pcall` stands between the
+block and its body: an error in `fn` is unwound by the handler of the
+catching `pcall` like any block's, and `fn` may yield. A record without
+a position gets one when a cascade of its dependents needs it for a
+tombstone, from `debug.getinfo(fn, "S")`: the chunk and the line of the
+function, read once per such cascade and never per entry (CLAUDE.md,
+"Technical decisions": no `debug.*` on a per-block path). Since the
+library form hands the record out as a value, `exit` marks a record
+dead even when nothing was attached to it (one store on that path),
+and `check_anchor` names a dead record a `scope`: `attempt to anchor to
+a dead scope`. The generated code never reaches a popped record, so
+nothing else changes for it.
+
 **The scope stack and the error path.** Scope exit on an error is the
 runtime's, not generated code's ([05-decisions.md](05-decisions.md),
 "Scopes unwind at the catch site", "Scopes unwind at the raise point").
@@ -388,13 +411,18 @@ pinned, and it gets a sentinel under the same rule as a table.
 
 ## Hooks
 
-`lifetime.hook(f, name, a1, …)` creates a hook: a table with a state
-record, the metatable `"hook"`, the function, and the name (a constant
-string the emitter passes for a named hook, `nil` otherwise). It is
+`lifetime.hook(f, a1, …)` creates a hook: a table with a state
+record, the metatable `"hook"`, the function, and no name;
+`lifetime.named_hook(name, f, a1, …)` the same with the name (a constant
+string the emitter passes for a hook bound to a name; a program that
+is not transpiled passes its own). It is
 attached pinned to its anchors and linked into each anchor's `strong`
 list, never into `dependents`, so the anchor holds it strongly; it never
 carries a sentinel. Its body calls `f(reason)`. Naming costs one string
-constant per creation site and nothing per call.
+constant per creation site and nothing per call. The two entry points
+share the record's construction and the one-anchor fast path, and call
+the general path without a tail call, so every error is raised at the
+caller (task 002, review finding F3).
 
 ## Program end
 
@@ -402,9 +430,9 @@ constant per creation site and nothing per call.
 scope epilogue has run, and after an uncaught error has been reported;
 from then on the sentinel finalizers that the closing state runs report
 `"exit"`. The entry point is `lifetime.set_exiting(flag)`; `lifetime run`
-calls it, and an embedding host calls it from its own quit path (how a
-host such as LÖVE reaches it is still open:
-[06-open-questions.md](06-open-questions.md)). A suspended coroutine's
+calls it, and an embedding host calls it from its own quit path: LÖVE's
+`love.quit` callback in Treflove ([05-decisions.md](05-decisions.md), "A
+LÖVE host announces program end from `love.quit`"). A suspended coroutine's
 scope record finalized at state close gives a dependent that has no
 sentinel of its own (a pinned object, a hook) the reason `"anchor"`, as the
 main scope's exit does; a dependent with its own, newer sentinel dies
@@ -437,6 +465,7 @@ same work by hand.
 | cascade over `n` objects | `O(n)` plus the holes in the walked ranges; no sort, no allocation except the tombstone's state |
 | `lifetime.dependents(a)` | one numeric loop over `a`'s range and the result array |
 | a block with a scope record | one record (a small table) per entry, one push and one pop; no closure, no `pcall` ("The scope stack and the error path") |
+| `lifetime.block(fn, …)` | the record, the call of `fn` and one vararg frame for its results; no `pcall`, no table; `debug.getinfo` only in a cascade that destroys something (`scope/block-*` in `bench/README.md`) |
 | `pcall`, `xpcall` | one wrapper frame and one field read before the original `xpcall`; the handler runs only on the error path; nothing after the call. On LuaJIT no allocation; on Lua 5.1 whatever carrying the arguments to `f` costs, within the bound below |
 | `coroutine.resume`, a `coroutine.wrap` function | one wrapper frame, one field read before and one compare after; no allocation |
 
