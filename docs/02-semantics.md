@@ -404,7 +404,11 @@ unsubscribe !@ (emitter, listener)                     -- runs when either dies
 - The function is called as `fn(reason)` with the reason of
   "`__destroy` and reasons". Whether it also learns which anchor died is
   open (proposal D of `xd/docs/09-lessons-from-treflove.md`;
-  [06-open-questions.md](06-open-questions.md)).
+  [06-open-questions.md](06-open-questions.md)). A hook on several
+  anchors can ask `lifetime.dying(a)` whether `a` is in the cascade that
+  runs it ("Tombstones and `lifetime.alive`"): a hook on `(form, input)`
+  that unlinks the input from the form skips the work when the form is
+  going too.
 - A hook on an object runs **after** that object's `__destroy`, interleaved
   with the object's other dependents by attachment order, most recently
   attached first (decision 10, reversing the sentence in
@@ -625,6 +629,19 @@ dead objects are still different, and `t[dead]` still finds the entry.
   to 'lifetime.alive' (object expected, got number)`.
   A lifetime value and the `lifetime.scope` marker are tables the
   runtime made and never kills, so `alive` is `true` for them.
+- `lifetime.dying(x)` is the complementary check: `true` from the moment
+  a cascade has decided `x`'s death until `x` is a tombstone, so inside
+  `x`'s own destructor, inside a hook on `x`, and inside the destructor
+  of anything else in the same cascade, before or after `x`'s body;
+  `false` for a live object, for a tombstone (`lifetime.alive` is the
+  check for that), for a block's record outside its exit, and for `nil`
+  or `false`; a value that is not an object is `bad argument #1 to
+  'lifetime.dying' (object expected, got number)`. A lifetime value and
+  the `lifetime.scope` marker are never dying. It tells a hook on
+  `(a, b)` whether `a` is in the cascade that runs it, where a flag set
+  by `a`'s destructor was kept by hand before
+  ([05-decisions.md](05-decisions.md), "`lifetime.dying` reads the dying
+  phase").
 - A dead function, coroutine or userdata cannot be emptied or given a
   per-instance metatable. The runtime remembers that it died so that
   `lifetime.alive` reads `false`, `lifetime.destroy` and `lifetime.discard` are no-ops, and
@@ -642,7 +659,7 @@ dead objects are still different, and `t[dead]` still finds the entry.
 A **dying** object is not dead: fields, methods and metamethods behave as
 for a live object, which is what lets a hook on `conn` still talk to
 `conn` and a dependent's destructor still read its anchor. Only `@` on it
-and anchoring to it are refused.
+and anchoring to it are refused. `lifetime.dying(x)` reads the phase.
 
 Weak tables keep their Lua meaning: a weak entry is cleared when its key or
 value is collected, which for a tombstone is once nothing else refers to it
@@ -795,10 +812,11 @@ not close the state, so step 2 does not run after it; LuaJIT's
 ## The `lifetime` table
 
 *From `xd/docs/04-syntax.md`, "The `lifetime` table", reduced by decisions
-5, 7 and 11 to the six names decision 11 lists, plus `lifetime.token`
-and `lifetime.is_state`
+5, 7 and 11 to the six names decision 11 lists, plus `lifetime.token`,
+`lifetime.is_state` and `lifetime.dying`
 ([05-decisions.md](05-decisions.md), "Tokens are created by
-`lifetime.token`"), plus the four entry points of "The library form"
+`lifetime.token`", "`lifetime.dying` reads the dying phase"), plus the
+four entry points of "The library form"
 below, which the generated code calls and a program that is not
 transpiled writes itself.*
 
@@ -810,6 +828,7 @@ transpiled writes itself.*
 | `lifetime.pin(a1, …, an)` | A lifetime value over the anchors without the implicit `reachable` term ("The implicit `reachable` term"). |
 | `lifetime.of(obj)` | `obj`'s current formula as a lifetime value, a snapshot: a later move of `obj` does not change it. Error on `nil`, a value, a dead object. |
 | `lifetime.alive(x)` | The liveness check ("Tombstones"). |
+| `lifetime.dying(x)` | `true` while `x` is dying: its death decided by a cascade, its tombstone not yet made ("Tombstones and `lifetime.alive`"). |
 | `lifetime.is_state(k)` | `true` when `k` is the key of the state record the runtime keeps inside every table it has seen ("`__destroy` and reasons", rule 7), `false` for anything else. `pairs` and `next` see that field as Lua shows it; a serializer or an emptiness check skips it with this test ([05-decisions.md](05-decisions.md), "The state record's key is a private table"). |
 | `lifetime.dependents(obj)` | A fresh array of the live objects and hooks whose formula mentions `obj`, in attachment order. |
 | `lifetime.format(v)` | A string rendering of a lifetime value, an object's formula, a token or a hook: `(conn, reachable)`, `conn` (pinned), `reachable`, `token period`, `scope`, `hook cleanup` for a named hook and `hook` for an anonymous one. Object anchors render through `tostring`, so a dead anchor in a snapshot renders as `dead <name>`. |

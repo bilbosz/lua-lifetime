@@ -11,7 +11,7 @@ calls into.
   runs on Lua 5.1 and LuaJIT comes out. See [04-transpiler.md](04-transpiler.md).
 - **Runtime.** `require("lifetime")` is the `lifetime` table of the
   language itself: `lifetime.token`, `lifetime.pin`, `lifetime.reachable`, `lifetime.of`,
-  `lifetime.alive`, `lifetime.dependents`, `lifetime.format`,
+  `lifetime.alive`, `lifetime.dying`, `lifetime.dependents`, `lifetime.format`,
   `lifetime.destroy` and `lifetime.discard`. It keeps every object's anchors and
   dependents, runs cascades in a defined order, and tombstones what died.
   See [03-runtime.md](03-runtime.md). A program that is not transpiled
