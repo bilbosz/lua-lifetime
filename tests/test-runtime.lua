@@ -1211,7 +1211,7 @@ end)
 
 test.suite("the names: __lifetime_destroy and lifetime_destroyerror")
 
-test.case("a metatable with __destroy and no __lifetime_destroy is a plain table to the runtime; the metamethod is read at the moment of death", function()
+test.case("a metatable with __destroy and no __lifetime_destroy has no destructor, on destroy and at collection; the metamethod is read at the moment of death", function()
     local log = {}
     local mt = {
         __destroy = function()
@@ -1221,7 +1221,20 @@ test.case("a metatable with __destroy and no __lifetime_destroy is a plain table
     local a = attach(setmetatable({}, mt), lifetime.reachable)
     destroy(a)
     test.assert_deep_eq(log, {}, "the old name is not a destructor")
-    test.assert_false(lifetime.alive(a))
+    test.assert_false(lifetime.alive(a), "seen by the runtime all the same: a tombstone")
+
+    -- the collector's leg: no sentinel is allocated for the old name, and
+    -- one is for the new, registered the same way
+    local new_mt = {
+        __lifetime_destroy = function(_, reason)
+            log[#log + 1] = "new (" .. reason .. ")"
+        end
+    }
+    attach(setmetatable({}, mt), lifetime.reachable)
+    attach(setmetatable({}, new_mt), lifetime.reachable)
+    collectgarbage("collect")
+    collectgarbage("collect")
+    test.assert_deep_eq(log, {"new (unreachable)"}, "the collector ran the new name's destructor and found nothing to run for the old")
 
     -- "looked up on the object's metatable at the moment of death"
     local late_mt = {}

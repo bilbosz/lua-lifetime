@@ -6,7 +6,7 @@ depends: [022]
 branch: task/023-rename-destroy
 pr:
 commits:
-review:
+review: APPROVE (round 1)
 ---
 
 ## Goal
@@ -75,3 +75,17 @@ None.
 
 ## Review log
 
+Round 1 (reviewer agent, 2026-10-19): APPROVE, no blocking finding.
+`make test` 430/430 under lua5.1 and luajit, conformance 77/77 (the
+Teal examples skipped: `tl` not installed, so the `.tlt` rename is
+verified by reading), the trial, luals-check; `make lint` clean; `make
+bench` on the branch and on a fresh worktree of master, each tree's own
+files on its own runtime (`BASE=master` would run the branch's files on
+a runtime that ignores the new name): every row with a destructor
+within the noise band, the free paths at 1.0. Traced: the metamethod
+read at the moment of death; a `__destroy`-only object silent on
+destroy, at collection and as a dependent; a destructor error to the
+default handler with its new prefix, a global `destroyerror` never
+called. F1 (non-blocking): the new case said "a plain table" where it
+meant "no destructor", and left the collector's leg untested; renamed
+and extended after the review.
