@@ -118,11 +118,19 @@ under LuaJIT 1.21/1.11 in one pairing, 0.93/0.98 in the next two,
 `runtime/attach-first` 0.88/1.08. `sentinel/anchor-100` (round 1, finding
 F1) attaches its pinned baseline through a `lifetime.pin(anchor)` value
 now, which takes `attach`'s general path, so its ratio reads the
-sentinel's cost over the general path's: BENCH_ANCHOR_100. The
+sentinel's cost over the general path's. On 2026-10-19 (`make bench
+BASE=master`, the two pairings of one invocation, ns per operation):
+333 467 / 327 800 under Lua 5.1 at 0.73 / 0.74 of that baseline, which
+says the general path costs more than the sentinel there, and 57 779 /
+55 686 under LuaJIT at 1.04 / 1.03; the base cannot run the row (`-`). The
 `scope/block-*` rows follow `scope/resume-yield` now, so a base without
 `lifetime.block` fails after the rows it can run (finding F4:
 `scope/pcall-empty` under LuaJIT had been marked in two invocations as an
-artifact of the base process raising early): BENCH_PCALL_EMPTY.
+artifact of the base process raising early). After the reorder, the
+same invocation reads `scope/pcall-empty` 0.924 / 0.956 under Lua 5.1
+and 1.340 / 0.852 under LuaJIT (median 1.095), not marked, and the whole
+`make bench BASE=master` exits 0 with no `SLOWER` mark under either
+interpreter.
 
 ## Out of scope
 
