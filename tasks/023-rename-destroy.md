@@ -4,7 +4,7 @@ title: Rename: the metamethod `__lifetime_destroy`, the handler `lifetime_destro
 status: review
 depends: [022]
 branch: task/023-rename-destroy
-pr:
+pr: https://github.com/bilbosz/lua-lifetime/pull/60
 commits:
 review: APPROVE (round 1)
 ---
