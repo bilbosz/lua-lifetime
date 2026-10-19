@@ -1,11 +1,11 @@
 ---
 id: 022
 title: Runtime: `lifetime.dying(x)`, the dying-phase query, for a hook on several anchors
-status: review
+status: done
 depends: [021]
 branch: task/022-dying
 pr: https://github.com/bilbosz/lua-lifetime/pull/58
-commits:
+commits: d3e0ecad4e03172403a873c51bcbfb5eb7f5f495
 review: APPROVE (round 1)
 ---
 
