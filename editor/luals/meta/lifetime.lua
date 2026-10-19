@@ -105,6 +105,16 @@ function lifetime.of(obj) end
 ---@return boolean
 function lifetime.alive(x) end
 
+---The complementary check: `true` while `x` is dying (its death decided
+---by a cascade, its tombstone not yet made: inside its destructor, inside
+---a hook on it, inside the destructor of anything in the same cascade),
+---`false` for a live object, a tombstone, `nil` or `false`. A hook on
+---`(a, b)` asks `lifetime.dying(a)` whether `a` is in the cascade that
+---runs it.
+---@param x any
+---@return boolean
+function lifetime.dying(x) end
+
 ---Is `k` the key of the state record the runtime keeps inside every table
 ---it has seen? `pairs` and `next` show that field; a serializer or an
 ---emptiness check skips it with this test.

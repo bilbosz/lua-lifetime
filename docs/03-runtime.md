@@ -58,7 +58,9 @@ holds:
   ([05-decisions.md](05-decisions.md), "Pinned dependents are held by
   their anchors").
 - `sentinel`: the `newproxy(true)` sentinel, or `nil` ("The sentinel").
-- `phase`: `nil`, `"dying"` or `"dead"`.
+- `phase`: `nil`, `"dying"` or `"dead"`; `lifetime.alive(x)` reads "not
+  `"dead"`" and `lifetime.dying(x)` reads `"dying"` (02, "Tombstones and
+  `lifetime.alive`"), one field read each.
 - `name`: `tostring(obj)` captured when the object starts dying, for the
   tombstone's message.
 

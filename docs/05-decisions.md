@@ -1010,3 +1010,25 @@ embedding host in general does the same from its own quit path; the
 runtime's entry point stays `lifetime.set_exiting(flag)`.
 → [02-semantics.md](02-semantics.md), "Program end";
 [03-runtime.md](03-runtime.md), "Program end"
+
+## `lifetime.dying` reads the dying phase
+
+This repository's decision (2026-10-19), at the human's request for the
+lua-lifetime branch of Treflove; `xd/docs/` is silent on a query of the
+phase, and decision 8 of file 10 (tombstones, `lifetime.alive`) is
+untouched. A hook on two anchors cannot tell from its `reason` which of
+them is dying, nor whether both are, so Treflove's input hook on
+`(form, input)` read a flag the form's destructor set to decide whether
+to unlink the input from a form that was going anyway: a hand-kept copy
+of the runtime's own phase. `lifetime.dying(x)` is that phase as a
+query: `true` from the moment a cascade has decided `x`'s death until
+`x` is a tombstone, `false` otherwise, with `lifetime.alive`'s argument
+rule. It changes nothing the runtime does: no order, no reason, no
+reference, one field read per call. The open question "Whether a hook or
+destructor learns which anchor died" stays open: an anchor argument
+would say which anchor reached the hook but not whether the other is
+dying too, and `dying` says both without a signature change. Task 022
+implemented it.
+→ [02-semantics.md](02-semantics.md), "Tombstones and `lifetime.alive`",
+"Hooks: the `!@` operator", "The `lifetime` table";
+[03-runtime.md](03-runtime.md), "The state of an object"

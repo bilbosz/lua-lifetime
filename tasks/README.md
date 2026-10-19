@@ -61,5 +61,6 @@ during implementation and review.
 | 017 | Runtime: keep each anchor's sentinel newer than its dependents' so a collected subtree dies in ownership order | |
 | 018 | teal-lifetime: the Teal front end, Teal output, the `lifetime` declaration file and the second rockspec | 007 |
 | 021 | The runtime as a library: `lifetime.attach(obj, a1, …)`, `lifetime.hook(f, a1, …)`, `lifetime.named_hook` and `lifetime.block` for programs that are not transpiled | 018 |
+| 022 | Runtime: `lifetime.dying(x)`, the dying-phase query, for a hook on several anchors | 021 |
 
 Keep this table in sync when adding tasks.

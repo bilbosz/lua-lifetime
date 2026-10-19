@@ -26,7 +26,11 @@ Proposal D of `xd/docs/09-lessons-from-treflove.md`. `remaining` is gone
 (decision 10), so the argument after `reason` is free. *Leaning:* pass the
 anchor whose death caused this one as a second argument to hook functions
 and a third to `__destroy`; `nil` for `"destroy"`, `"unreachable"` and
-`"exit"`.
+`"exit"`. Since `lifetime.dying(a)` ([05-decisions.md](05-decisions.md),
+"`lifetime.dying` reads the dying phase") a hook on `(a, b)` can ask
+whether `a` is in the cascade that runs it, including when both are,
+which an anchor argument alone would not say; the question stays open
+for the cases that need the anchor itself.
 
 ### An ordered collection that compacts when a member dies
 
