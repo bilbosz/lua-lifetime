@@ -43,7 +43,7 @@ The task file, the branch name, the implementer's handoff, and the diff
   `xd/docs/10-lua-lifetime-decisions.md`.
 
 **Ownership order** (`docs/02-semantics.md`, "Cascading death",
-"`__destroy` and reasons", "Tombstones")
+"`__lifetime_destroy` and reasons", "Tombstones")
 - Cascade is two-phase: all deaths decided before any destructor runs.
 - An object's body runs before its dependents; dependents and hooks share
   one order, most recently attached first; a scope's dependents go in

@@ -4,7 +4,7 @@
 -- `.lt` source; the baseline is plain Lua doing the same work by hand,
 -- loaded with `loadstring`. One operation is ten iterations or calls.
 --
---   emit/scoped-loop     a loop body owning one object with a `__destroy`
+--   emit/scoped-loop     a loop body owning one object with a `__lifetime_destroy`
 --                        (`local x = setmetatable({}, MT) @
 --                        lifetime.scope`): record, push, attach, pop and
 --                        epilogue per iteration; against calling the
@@ -37,7 +37,7 @@
 -- the allocation and folding the call away (task 007).
 --
 -- The baselines' `destroy(x, "anchor")` is a local bound to
--- `MT.__destroy`: the destructor called by hand with the reason a scope
+-- `MT.__lifetime_destroy`: the destructor called by hand with the reason a scope
 -- exit passes, in plain Lua that is never transpiled. It is not the
 -- runtime's `lifetime.destroy` (task 016 dropped the `destroy` builtin;
 -- the `.lt` sources never called it), which would add the cascade to the
@@ -52,7 +52,7 @@ local cli = require("lifetime.cli")
 
 local closed = 0
 local MT = {
-    __destroy = function(self, reason)
+    __lifetime_destroy = function(self, reason)
         closed = closed + 1
     end
 }
@@ -65,7 +65,7 @@ local MT = {
 -- upvalue increment, about 1 ns per iteration against which no runtime
 -- could be measured (task 006's review, F1; task 007).
 local PUBLISHED_MT = {}
-function PUBLISHED_MT.__destroy(self, reason)
+function PUBLISHED_MT.__lifetime_destroy(self, reason)
     PUBLISHED_MT.last = self
 end
 
@@ -106,7 +106,7 @@ return function()
 end
 ]], MT), direct("scoped-loop.lua", [[
 local MT = ...
-local destroy = MT.__destroy
+local destroy = MT.__lifetime_destroy
 return function()
     for _ = 1, 10 do
         local x = setmetatable({}, MT)
@@ -174,7 +174,7 @@ return function()
 end
 ]], PUBLISHED_MT), direct("return-fixed.lua", [[
 local MT = ...
-local destroy = MT.__destroy
+local destroy = MT.__lifetime_destroy
 local function f(a)
     local x = setmetatable({v = a}, MT)
     local r1, r2 = a, x.v
@@ -205,7 +205,7 @@ return function()
 end
 ]], PUBLISHED_MT), direct("return-call.lua", [[
 local MT = ...
-local destroy = MT.__destroy
+local destroy = MT.__lifetime_destroy
 local function g(a)
     return a, a + 1
 end

@@ -14,7 +14,7 @@ questions move to [05-decisions.md](05-decisions.md).
 
 Decision 10. C++ runs the derived body, then the base bodies. *Leaning
 (file 10):* the runtime walks the metatable `__index` chain while it is a
-table, collects every distinct `__destroy`, and calls them most-derived
+table, collects every distinct `__lifetime_destroy`, and calls them most-derived
 first. A merged-index class library, as Treflove's, cannot be walked and
 chains its own; lesson 3 of `xd/docs/09-lessons-from-treflove.md` (one
 destructor per metatable) stays for it unless the library exposes its base
@@ -25,7 +25,7 @@ list.
 Proposal D of `xd/docs/09-lessons-from-treflove.md`. `remaining` is gone
 (decision 10), so the argument after `reason` is free. *Leaning:* pass the
 anchor whose death caused this one as a second argument to hook functions
-and a third to `__destroy`; `nil` for `"destroy"`, `"unreachable"` and
+and a third to `__lifetime_destroy`; `nil` for `"destroy"`, `"unreachable"` and
 `"exit"`. Since `lifetime.dying(a)` ([05-decisions.md](05-decisions.md),
 "`lifetime.dying` reads the dying phase") a hook on `(a, b)` can ask
 whether `a` is in the cascade that runs it, including when both are,

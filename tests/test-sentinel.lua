@@ -37,7 +37,7 @@ local function run_dropped(make)
     end
 end
 
--- A logging object: `__tostring` gives `name`, `__destroy` appends
+-- A logging object: `__tostring` gives `name`, `__lifetime_destroy` appends
 -- `name (reason)` to `log`, and `extra(self, reason)` runs inside the body
 -- when given.
 local function new_logged(log, name, extra)
@@ -45,7 +45,7 @@ local function new_logged(log, name, extra)
     mt.__tostring = function()
         return name
     end
-    mt.__destroy = function(self, reason)
+    mt.__lifetime_destroy = function(self, reason)
         log[#log + 1] = name .. " (" .. reason .. ")"
         if extra then
             extra(self, reason)
@@ -108,10 +108,10 @@ local function depth()
     return d
 end
 
--- Run `fn` with `_G.destroyerror` set to `handler` and `io.stderr`
+-- Run `fn` with `_G.lifetime_destroyerror` set to `handler` and `io.stderr`
 -- replaced by a buffer; returns what was written.
 local function with_handler(handler, fn)
-    local saved_handler, saved_stderr = rawget(_G, "destroyerror"), io.stderr
+    local saved_handler, saved_stderr = rawget(_G, "lifetime_destroyerror"), io.stderr
     local written = {}
     rawset(io, "stderr", {
         write = function(self, ...)
@@ -121,9 +121,9 @@ local function with_handler(handler, fn)
             return self
         end
     })
-    rawset(_G, "destroyerror", handler)
+    rawset(_G, "lifetime_destroyerror", handler)
     local ok, err = pcall(fn)
-    rawset(_G, "destroyerror", saved_handler)
+    rawset(_G, "lifetime_destroyerror", saved_handler)
     rawset(io, "stderr", saved_stderr)
     if not ok then
         error(err, 0)
@@ -275,10 +275,10 @@ end)
 ------------------------------------------------------------------------
 test.suite("sentinel: which objects carry one")
 
-test.case("a table with the term and a __destroy carries a sentinel; without either it does not", function()
+test.case("a table with the term and a __lifetime_destroy carries a sentinel; without either it does not", function()
     local a = {}
     local x = attach(new_logged({}, "x"), a)
-    test.assert_true(sentinel_of(x) ~= nil, "term and __destroy")
+    test.assert_true(sentinel_of(x) ~= nil, "term and __lifetime_destroy")
     local plain = attach({}, a)
     test.assert_eq(sentinel_of(plain), nil, "term, nothing to run at collection")
     local pinned = attach(new_logged({}, "p"), pin(a))
@@ -325,7 +325,7 @@ test.case("a token carries one under the same rule as a table", function()
     local tok = token("t")
     test.assert_eq(sentinel_of(tok), nil, "a fresh token has nothing to run")
     attach(tok, owner)
-    test.assert_eq(sentinel_of(tok), nil, "no __destroy, no dependents")
+    test.assert_eq(sentinel_of(tok), nil, "no __lifetime_destroy, no dependents")
     local dep = attach({}, tok)
     test.assert_true(sentinel_of(tok) ~= nil, "a token with the term and a dependent")
     local pinned = attach(token("p"), pin(owner))
@@ -334,7 +334,7 @@ test.case("a token carries one under the same rule as a table", function()
     test.assert_true(dep ~= nil)
 end)
 
-test.case("x @ lifetime.reachable and lifetime.of register a table with a __destroy", function()
+test.case("x @ lifetime.reachable and lifetime.of register a table with a __lifetime_destroy", function()
     local x = attach(new_logged({}, "x"), lifetime.reachable)
     test.assert_true(sentinel_of(x) ~= nil)
     local y = new_logged({}, "y")
@@ -523,7 +523,7 @@ test.case("the walk of a newer anchor takes an older dependent; its own finalize
     test.assert_deep_eq(log, {"anchor (unreachable)", "older (anchor)"})
 end)
 
-test.case("registration: x @ lifetime.reachable runs __destroy at collection; never seen, the table goes silently", function()
+test.case("registration: x @ lifetime.reachable runs __lifetime_destroy at collection; never seen, the table goes silently", function()
     local log = {}
     local function make()
         attach(new_logged(log, "registered"), lifetime.reachable)
@@ -574,7 +574,7 @@ test.case("case 8: a metatable made in the same statement as its instance still 
     local log = {}
     local function make()
         attach(setmetatable({}, {
-            __destroy = function(_, reason)
+            __lifetime_destroy = function(_, reason)
                 log[#log + 1] = "inline (" .. reason .. ")"
             end
         }), lifetime.reachable)
@@ -836,7 +836,7 @@ test.case("an unreferenced token's cascade kills its dependents with reason anch
     test.assert_eq(getmetatable(saved), "dead")
 end)
 
-test.case("errors of a finalizer-run cascade all go to destroyerror, the first included", function()
+test.case("errors of a finalizer-run cascade all go to lifetime_destroyerror, the first included", function()
     local log, routed = {}, {}
     local ok
     local function make()
@@ -994,7 +994,7 @@ test.case("the exit flag turns the reason of the finalizers at state close into 
     local stdout, stderr = run_program([[
 local lifetime = require("lifetime")
 local function logged(name)
-    return setmetatable({}, {__destroy = function(_, reason) print(name .. " (" .. reason .. ")") end})
+    return setmetatable({}, {__lifetime_destroy = function(_, reason) print(name .. " (" .. reason .. ")") end})
 end
 g = lifetime.attach(logged("g"), lifetime.reachable)
 local function make() lifetime.attach(logged("tmp"), lifetime.reachable) end
@@ -1010,7 +1010,7 @@ end)
 test.case("without the flag a finalizer at state close reports unreachable", function()
     local stdout, stderr = run_program([[
 local lifetime = require("lifetime")
-g = lifetime.attach(setmetatable({}, {__destroy = function(_, reason) print("g (" .. reason .. ")") end}), lifetime.reachable)
+g = lifetime.attach(setmetatable({}, {__lifetime_destroy = function(_, reason) print("g (" .. reason .. ")") end}), lifetime.reachable)
 ]])
     test.assert_eq(stderr, "")
     test.assert_eq(stdout, "g (unreachable)\n")
@@ -1117,10 +1117,10 @@ end)
 ------------------------------------------------------------------------
 test.suite("sentinel: lifetime.alive")
 
-test.case("case 7: alive is true before, true inside __destroy, false after", function()
+test.case("case 7: alive is true before, true inside __lifetime_destroy, false after", function()
     local inside
     local x = setmetatable({}, {
-        __destroy = function(self)
+        __lifetime_destroy = function(self)
             inside = alive(self)
         end
     })
@@ -1612,7 +1612,7 @@ test.case("a token with the term and a list form are ordered like tables; a sent
 end)
 
 test.case("an anchor armed lazily while it has anchors of its own climbs past them", function()
-    -- c has no `__destroy` and no dependents, so `c @ p` gives it no
+    -- c has no `__lifetime_destroy` and no dependents, so `c @ p` gives it no
     -- proxy; g's link gives c its first dependent and a proxy, the newest,
     -- which must not stay newer than p's.
     local log, seen = {}, {}
@@ -2005,7 +2005,7 @@ test.case("random graphs in random order, with moves, pins and lists: the order 
             for step = 1, 3 * N do
                 local i = #nodes
                 if i < N and (i < 2 or rand(3) > 1) then
-                    -- A new object: registered with a `__destroy`, or a
+                    -- A new object: registered with a `__lifetime_destroy`, or a
                     -- plain table seen by no one.
                     i = i + 1
                     if rand(4) == 1 then

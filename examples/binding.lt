@@ -9,7 +9,7 @@
 --   - decision 7: the binding's formula is the token, `(token binding,
 --     reachable)`, and it does not change when `widget` dies; there is no
 --     formula pruning to print;
---   - decision 10: `__destroy` has no `remaining`; and `app`'s destructor
+--   - decision 10: `__lifetime_destroy` has no `remaining`; and `app`'s destructor
 --     runs before the binding dies, since the binding dies when `app`'s
 --     counting hook, one of `app`'s dependents, destroys the token;
 --   - decision 8: the dead binding is a tombstone, so the check is
@@ -23,7 +23,7 @@ local Node = {}
 Node.__index = Node
 Node.__tostring = function(self) return self.id end          -- names in lifetime.format
 function Node.new(id) return setmetatable({ id = id }, Node) end
-function Node.__destroy(self, reason)
+function Node.__lifetime_destroy(self, reason)
   print("destroyed " .. self.id .. " (" .. reason .. ")")
 end
 

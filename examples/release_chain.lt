@@ -24,7 +24,7 @@ local function class(name)
   local c = {}
   c.__index = c
   c.__tostring = function(self) return self.name or name end
-  c.__destroy = function(self, reason)
+  c.__lifetime_destroy = function(self, reason)
     print("release " .. tostring(self) .. " (" .. reason .. ")")
     if self.release then self:release() end
   end

@@ -96,7 +96,7 @@ syntax and does not name `lifetime` gets no header and is its input
 unchanged. There are no builtins: `destroy` and `discard` are ordinary
 names, and a program that defines its own is not shadowed
 ([05-decisions.md](05-decisions.md), "`destroy` and `discard` are spelled
-`lifetime.destroy` and `lifetime.discard`"). `destroyerror` is not bound:
+`lifetime.destroy` and `lifetime.discard`"). `lifetime_destroyerror` is not bound:
 the runtime reads it raw from `_G` (02, "Errors in destructors"). A
 source file that shadows `lifetime` gets what it wrote. An assignment to
 the global `lifetime` in a transpiled chunk assigns the header's local (an
@@ -310,7 +310,7 @@ measure).
   next to the runtime through the `?/init.lua` entry of the path
   (`lifetime/init.d.tl`), from a checkout and from the installed layout.
   A destructor is written on the metatable, which `metatable<T>` does not
-  know as a field: `{__index = R, __destroy = function(self: R, reason:
+  know as a field: `{__index = R, __lifetime_destroy = function(self: R, reason:
   lifetime.Reason) … end} as metatable<R>`.
 - **The command.** `lifetime build FILE.tlt -o OUT` writes the Teal; with
   an OUT ending in `.lua` it compiles the Teal with `tl` first. `lifetime

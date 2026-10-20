@@ -49,8 +49,8 @@ function class(name, ...)
         __index = index,
         class = class,
         -- lua-lifetime: every release() becomes the destructor
-        -- (docs/02-semantics.md, "`__destroy` and reasons").
-        __destroy = function(obj, reason)
+        -- (docs/02-semantics.md, "`__lifetime_destroy` and reasons").
+        __lifetime_destroy = function(obj, reason)
             if obj.release then
                 obj:release(reason)
             end

@@ -253,7 +253,7 @@ of `xd` replaced by syntax through decision 5. `xd`'s "The caller's scope"
   runtime did not see, not of a block. One error keeps no order: a stack
   overflow. The host runs the unwinding with little stack; a destructor
   that overflows again is caught like any destructor error during
-  unwinding ("Errors in destructors and `destroyerror`") and the
+  unwinding ("Errors in destructors and `lifetime_destroyerror`") and the
   unwinding goes on, but when the unwinding itself overflows the host
   ends it and the protected call returns `false` with the host's message
   (`error in error handling` on Lua 5.1, `stack overflow` on LuaJIT);
@@ -345,7 +345,7 @@ end
   `lifetime.token("period") @ lifetime.pin(self)`.
 - It has no fields: indexing or assigning a field raises `attempt to index
   a token value`. `getmetatable(tok)` is the string `"token"`. A token has
-  no `__destroy`; attach a hook for cleanup that belongs to the span
+  no `__lifetime_destroy`; attach a hook for cleanup that belongs to the span
   itself.
 
 ## Hooks: the `!@` operator
@@ -354,7 +354,7 @@ end
 respelled as an infix operator at the human's request
 ([05-decisions.md](05-decisions.md), "Hooks are made with the operator
 `!@`"); named hooks are this repository's ("A hook bound to a name
-carries the name"); the order relative to `__destroy` by decision 10;
+carries the name"); the order relative to `__lifetime_destroy` by decision 10;
 pinning by decision 4.*
 
 ```ebnf
@@ -402,14 +402,14 @@ unsubscribe !@ (emitter, listener)                     -- runs when either dies
   move keeps it pinned: `hook @ other` never adds the `reachable` term to
   a hook.
 - The function is called as `fn(reason)` with the reason of
-  "`__destroy` and reasons". Whether it also learns which anchor died is
+  "`__lifetime_destroy` and reasons". Whether it also learns which anchor died is
   open (proposal D of `xd/docs/09-lessons-from-treflove.md`;
   [06-open-questions.md](06-open-questions.md)). A hook on several
   anchors can ask `lifetime.dying(a)` whether `a` is in the cascade that
   runs it ("Tombstones and `lifetime.alive`"): a hook on `(form, input)`
   that unlinks the input from the form skips the work when the form is
   going too.
-- A hook on an object runs **after** that object's `__destroy`, interleaved
+- A hook on an object runs **after** that object's `__lifetime_destroy`, interleaved
   with the object's other dependents by attachment order, most recently
   attached first (decision 10, reversing the sentence in
   `xd/docs/06-hooks.md`). Among hooks on one scope this is still
@@ -484,7 +484,7 @@ Errors raised by the function follow the destructor error rule below.
   ([05-decisions.md](05-decisions.md), "`destroy` and `discard` are
   spelled `lifetime.destroy` and `lifetime.discard`").
 - `lifetime.discard(obj)` does the same but skips `obj`'s own destructor (its
-  `__destroy`, or for a hook its function). Dependents are still destroyed
+  `__lifetime_destroy`, or for a hook its function). Dependents are still destroyed
   normally. On a hook this is "cancel".
 - Destroying an object does not affect its anchors.
 
@@ -506,7 +506,7 @@ decided. When an anchor `A` dies:
    closed: nothing a destructor does can add to it or remove from it. With
    conjunction only, every dependent of a dying anchor dies.
 2. **Destroy.** For each dying object, in C++ order:
-   1. its own destructor body runs (`__destroy`, or a hook's function),
+   1. its own destructor body runs (`__lifetime_destroy`, or a hook's function),
       with every dependent still alive and usable;
    2. its dependents and hooks are destroyed, **most recently attached
       first**, each recursively by this same rule; a dependent already
@@ -549,19 +549,19 @@ it owns, flushes the buffer it owns, or tells its children to detach can do
 so. It may also see dependents it destroyed by hand already torn down;
 that is the author's choice, as in C++.
 
-## `__destroy` and reasons
+## `__lifetime_destroy` and reasons
 
-*From `xd/docs/03-destruction.md`, "The `__destroy` metamethod", rules 1
+*From `xd/docs/03-destruction.md`, "The `__lifetime_destroy` metamethod", rules 1
 to 4 and 6; signature by decision 10.*
 
 ```lua
-function Connection.__destroy(self, reason)
+function Connection.__lifetime_destroy(self, reason)
   self.socket:shutdown()
   log("closed connection to " .. self.peer .. " (" .. reason .. ")")
 end
 ```
 
-1. `__destroy` is looked up on the object's metatable at the moment of
+1. `__lifetime_destroy` is looked up on the object's metatable at the moment of
    death. For functions, coroutines and userdata that means the shared
    per-type metatable read by `debug.getmetatable`, as in Lua.
 2. During the call `self` is fully functional: fields, metatable and
@@ -569,7 +569,7 @@ end
    is alive unless it is dying in the same cascade.
 3. When the cascade reaches step 2.3 the object is dead no matter what the
    method did. There is no resurrection.
-4. `__destroy` may create new objects and anchor them to anything alive. It
+4. `__lifetime_destroy` may create new objects and anchor them to anything alive. It
    may not anchor to `self`, to any other dying object, or move anything
    that predates the destroy phase ("No moves during destruction").
 5. `reason` is `"anchor"` when an anchor's death made the formula false
@@ -580,12 +580,12 @@ end
    place
    is open ([06-open-questions.md](06-open-questions.md)).
 6. Base-class destructors: open. File 10 leans towards walking the
-   `__index` chain of metatables and calling every distinct `__destroy`
+   `__index` chain of metatables and calling every distinct `__lifetime_destroy`
    most-derived first; a merged-index class library must chain its own.
 7. Which objects the runtime can notify: those it has seen. An object is
    seen once it has been anchored with `@` (`@ lifetime.reachable`
    included), used as an anchor, given a hook, created by `lifetime.token`,
-   or passed to `lifetime.destroy`, `lifetime.discard` or `lifetime.of`. A plain Lua table with a `__destroy` that
+   or passed to `lifetime.destroy`, `lifetime.discard` or `lifetime.of`. A plain Lua table with a `__lifetime_destroy` that
    the runtime never saw is collected silently, as Lua collects it; `x @
    lifetime.reachable` is the way to register an object on the default
    lifetime so that its destructor runs when the collector finds it. This
@@ -614,7 +614,7 @@ dead objects are still different, and `t[dead]` still finds the entry.
   `__tostring` gives it a name; `<where>` is the source position of the
   statement that caused the cascade (the `lifetime.destroy` call, the block exit,
   or `collector` for a death the collector found); `<reason>` is the reason
-  of "`__destroy` and reasons".
+  of "`__lifetime_destroy` and reasons".
 - `rawget`, `rawset`, `next`, `pairs`, `#` and `==` do not raise: they see
   a table that holds nothing but the reduced state record under the
   private key (`next(dead)` returns that key; `lifetime.is_state(k)`
@@ -668,12 +668,12 @@ still held in an array stays as a tombstone until something removes it by
 identity, usually a hook that runs while the object is dying and still
 findable.
 
-## Errors in destructors and `destroyerror`
+## Errors in destructors and `lifetime_destroyerror`
 
-*From `xd/docs/03-destruction.md`, rule 5 and "`destroyerror`"; kept by
+*From `xd/docs/03-destruction.md`, rule 5 and "`lifetime_destroyerror`"; kept by
 decision 10.*
 
-Errors raised inside `__destroy` and inside hook functions follow the C++
+Errors raised inside `__lifetime_destroy` and inside hook functions follow the C++
 rule, whatever caused the death:
 
 - If no error is already propagating, the **first** error of the cascade is
@@ -683,7 +683,7 @@ rule, whatever caused the death:
   then on it counts as propagating for the rest of its cascade.
 - Every error raised while an error is already propagating (a later
   destructor of the same cascade, or any destructor running because a
-  scope is unwinding) goes to `destroyerror` and the original error
+  scope is unwinding) goes to `lifetime_destroyerror` and the original error
   continues.
 - One cascade is one `lifetime.destroy()` or `lifetime.discard()` call, one scope exit, one
   finalizer run, or the whole program-end sweep; a `lifetime.destroy()` inside a
@@ -691,15 +691,15 @@ rule, whatever caused the death:
 - A destructor run by the collector (reason `"unreachable"`, or `"exit"`
   at program end) has no statement to raise at: the sentinel's finalizer
   runs the cascade in protected mode and every error of it goes to
-  `destroyerror`, the first included ([05-decisions.md](05-decisions.md),
-  "Errors in finalizer-run destructors go to `destroyerror`").
+  `lifetime_destroyerror`, the first included ([05-decisions.md](05-decisions.md),
+  "Errors in finalizer-run destructors go to `lifetime_destroyerror`").
 
-`destroyerror(obj, err)` is a global function, looked up raw in `_G` at the
+`lifetime_destroyerror(obj, err)` is a global function, looked up raw in `_G` at the
 moment an error is routed, called with the dying object (still usable) and
-the error value. The default writes `destroyerror: <message>` and a
+the error value. The default writes `lifetime_destroyerror: <message>` and a
 traceback to `stderr`. Programs may replace it. If the handler itself
 raises, or the global is not callable, the runtime writes both errors to
-`stderr` (the second as `destroyerror: error in destroyerror (<message>)`)
+`stderr` (the second as `lifetime_destroyerror: error in lifetime_destroyerror (<message>)`)
 and continues.
 
 ## Reachability is the collector's
@@ -760,7 +760,7 @@ when that is, except:
   inside the object, and the hosts give no way to have it without a leak
   ([05-decisions.md](05-decisions.md), "Non-table dependents: remembered
   after death, weak anchors"). Such a dependent carries no sentinel
-  either: one the collector finds dies silently, its type's `__destroy`
+  either: one the collector finds dies silently, its type's `__lifetime_destroy`
   not run, as an unseen table does.
 - `collectgarbage` keeps all of its Lua 5.1 options; nothing is removed.
 
@@ -805,7 +805,7 @@ error.
    announces program end from `love.quit`"), else `"unreachable"`.
 
 Newest first means an instance dies before the metatable it was created
-with, so `__destroy` can still be found. `os.exit` on plain Lua 5.1 does
+with, so `__lifetime_destroy` can still be found. `os.exit` on plain Lua 5.1 does
 not close the state, so step 2 does not run after it; LuaJIT's
 `os.exit(code, true)` does. There is no `os.exit` of our own.
 
@@ -829,7 +829,7 @@ transpiled writes itself.*
 | `lifetime.of(obj)` | `obj`'s current formula as a lifetime value, a snapshot: a later move of `obj` does not change it. Error on `nil`, a value, a dead object. |
 | `lifetime.alive(x)` | The liveness check ("Tombstones"). |
 | `lifetime.dying(x)` | `true` while `x` is dying: its death decided by a cascade, its tombstone not yet made ("Tombstones and `lifetime.alive`"). |
-| `lifetime.is_state(k)` | `true` when `k` is the key of the state record the runtime keeps inside every table it has seen ("`__destroy` and reasons", rule 7), `false` for anything else. `pairs` and `next` see that field as Lua shows it; a serializer or an emptiness check skips it with this test ([05-decisions.md](05-decisions.md), "The state record's key is a private table"). |
+| `lifetime.is_state(k)` | `true` when `k` is the key of the state record the runtime keeps inside every table it has seen ("`__lifetime_destroy` and reasons", rule 7), `false` for anything else. `pairs` and `next` see that field as Lua shows it; a serializer or an emptiness check skips it with this test ([05-decisions.md](05-decisions.md), "The state record's key is a private table"). |
 | `lifetime.dependents(obj)` | A fresh array of the live objects and hooks whose formula mentions `obj`, in attachment order. |
 | `lifetime.format(v)` | A string rendering of a lifetime value, an object's formula, a token or a hook: `(conn, reachable)`, `conn` (pinned), `reachable`, `token period`, `scope`, `hook cleanup` for a named hook and `hook` for an anonymous one. Object anchors render through `tostring`, so a dead anchor in a snapshot renders as `dead <name>`. |
 | `lifetime.attach(obj, a1, …, an)` | `obj @ (a1, …, an)` as a call; returns `obj` ("The library form"). |
@@ -937,7 +937,7 @@ reduced to what a transpiler can honour.*
   anchor position ([05-decisions.md](05-decisions.md), "The scope anchor
   is spelled `lifetime.scope`").
 - `__gc` is not removed; the runtime uses it. A `__gc` of your own on a
-  userdata still runs, as in Lua. Tables get `__destroy` through the
+  userdata still runs, as in Lua. Tables get `__lifetime_destroy` through the
   runtime, not `__gc`.
 - Nothing is removed from `collectgarbage`, `os.exit` or `coroutine`.
 

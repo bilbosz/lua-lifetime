@@ -14,7 +14,7 @@ documents are derived from `xd/docs/10-lua-lifetime-decisions.md` in the
 | Path | What |
 | --- | --- |
 | `docs/01-overview.md` | What lua-lifetime is, the one-screen taste, where the semantics come from, the relation to `xd` and `teal-lifetime`. Read once. |
-| `docs/02-semantics.md` | **The spec** of the language extension: `@` and the list form, the implicit `reachable` term and `lifetime.pin`, `lifetime.scope`, hooks and the `!@` operator, tokens, `lifetime.destroy`, the cascade order, `__destroy`, tombstones, errors, reachability, program end. |
+| `docs/02-semantics.md` | **The spec** of the language extension: `@` and the list form, the implicit `reachable` term and `lifetime.pin`, `lifetime.scope`, hooks and the `!@` operator, tokens, `lifetime.destroy`, the cascade order, `__lifetime_destroy`, tombstones, errors, reachability, program end. |
 | `docs/03-runtime.md` | The design of the `lifetime` module: state records inside the anchor, the sentinel, the cascade, scope records, tokens. |
 | `docs/04-transpiler.md` | The grammar and the code generation: what `@` expands to, block epilogues on every exit path, the error path at the raise point, the command. |
 | `docs/05-decisions.md` | Decision log of this repository. Check here before proposing a change. |
@@ -157,8 +157,8 @@ Skills, invoked with `/name`:
 ## Things that look like bugs but are the spec
 
 - The owner's destructor runs **before** its dependents' (`docs/02-semantics.md`,
-  "Cascading death"): `__destroy` sees every dependent alive.
-- A hook on an object runs **after** that object's `__destroy`, in its
+  "Cascading death"): `__lifetime_destroy` sees every dependent alive.
+- A hook on an object runs **after** that object's `__lifetime_destroy`, in its
   place among the object's other dependents by attachment order.
 - `@ x` dies early if nothing refers to the dependent: `@ x` implies the
   `reachable` term, and the collector may take an unreferenced dependent
@@ -188,7 +188,7 @@ Skills, invoked with `/name`:
   value and no loop-iteration trap.
 - There is no `caller`: a function returns an object on the default
   lifetime and the receiver anchors it (`local x = f() @ lifetime.scope`).
-- A plain table the runtime never saw is collected silently, `__destroy`
+- A plain table the runtime never saw is collected silently, `__lifetime_destroy`
   or not; `x @ lifetime.reachable` registers it.
 - A table the runtime has seen carries its state record in one extra
   field under a private table key; `pairs` and `next` show it, so a

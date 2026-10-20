@@ -18,7 +18,7 @@
 
 local Node = {}
 Node.__index = Node
-function Node.__destroy(self, reason) print("node " .. self.id .. " destroyed (" .. reason .. ")") end
+function Node.__lifetime_destroy(self, reason) print("node " .. self.id .. " destroyed (" .. reason .. ")") end
 
 local kept
 

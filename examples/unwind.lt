@@ -8,7 +8,7 @@
 -- unwind at the raise point"). A scoped block may yield on both hosts.
 
 local Res = {}
-function Res.__destroy(self, reason)
+function Res.__lifetime_destroy(self, reason)
     print("destroy " .. self.name .. " (" .. reason .. ")")
 end
 function Res.__tostring(self)

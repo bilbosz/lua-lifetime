@@ -3,7 +3,7 @@
 -- xd/docs/10-lua-lifetime-decisions.md that cause it:
 --   - decision 10: destructors run in C++ order, each object's own body
 --     before its dependents, most recently attached first; `xd` ran
---     dependents first. `__destroy` has no `remaining`;
+--     dependents first. `__lifetime_destroy` has no `remaining`;
 --   - decision 7: there is no `lifetime.any`. `e @ any(a, c)` becomes the
 --     decision's idiom, a token destroyed by a counting hook on each
 --     operand (`last_of` below), and `e2`, which must stay alive while
@@ -25,7 +25,7 @@ local Node = {}
 Node.__index = Node
 Node.__tostring = function(self) return self.id end          -- names in lifetime.format
 function Node.new(id) return setmetatable({ id = id }, Node) end
-function Node.__destroy(self, reason)
+function Node.__lifetime_destroy(self, reason)
   print("destroyed " .. self.id .. " (" .. reason .. ")")
 end
 

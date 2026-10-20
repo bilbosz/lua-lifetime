@@ -34,7 +34,7 @@ local record lifetime
    record Scope
    end
 
-   -- The `reason` a destructor or a hook is called with ("`__destroy` and
+   -- The `reason` a destructor or a hook is called with ("`__lifetime_destroy` and
    -- reasons", rule 5): "anchor" when an anchor's death made the formula
    -- false (a scope exit included), "destroy" for `lifetime.destroy(obj)`,
    -- "unreachable" when the collector found the object, "exit" for the

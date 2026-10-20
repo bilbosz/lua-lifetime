@@ -24,7 +24,7 @@ local Node = {}
 Node.__index = Node
 Node.__tostring = function(self) return self.id end
 function Node.new(id) return setmetatable({ id = id }, Node) end
-function Node.__destroy(self, reason) print("destroyed " .. self.id .. " (" .. reason .. ")") end
+function Node.__lifetime_destroy(self, reason) print("destroyed " .. self.id .. " (" .. reason .. ")") end
 
 local registry = Node.new("registry")
 

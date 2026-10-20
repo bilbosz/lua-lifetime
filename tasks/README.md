@@ -43,7 +43,7 @@ during implementation and review.
 | Id | Title | Depends |
 | --- | --- | --- |
 | 001 | Skeleton, `make test`, conformance runner, pass-through transpiler for plain Lua | |
-| 002 | Runtime: anchors, dependents inside the anchor, `destroy`, cascade order, tombstones, `destroyerror` | 001, 010 |
+| 002 | Runtime: anchors, dependents inside the anchor, `destroy`, cascade order, tombstones, `lifetime_destroyerror` | 001, 010 |
 | 003 | Runtime: scope records, hooks | 002 |
 | 004 | Runtime: `lifetime.token`, `lifetime.pin`, `lifetime.alive`, reachable-only destructors via `newproxy`, `collectgarbage` | 002 |
 | 005 | Lexer and parser: Lua 5.1 plus `@`, the list form, the hook operator `!@`, `lifetime.scope` | 001, 010 |
@@ -62,5 +62,6 @@ during implementation and review.
 | 018 | teal-lifetime: the Teal front end, Teal output, the `lifetime` declaration file and the second rockspec | 007 |
 | 021 | The runtime as a library: `lifetime.attach(obj, a1, …)`, `lifetime.hook(f, a1, …)`, `lifetime.named_hook` and `lifetime.block` for programs that are not transpiled | 018 |
 | 022 | Runtime: `lifetime.dying(x)`, the dying-phase query, for a hook on several anchors | 021 |
+| 023 | Rename: the metamethod `__lifetime_destroy`, the handler `lifetime_destroyerror` | 022 |
 
 Keep this table in sync when adding tasks.

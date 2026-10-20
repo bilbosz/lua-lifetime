@@ -8,7 +8,7 @@
 
 local Log = {}
 Log.__index = Log
-function Log.__destroy(self, reason)
+function Log.__lifetime_destroy(self, reason)
     print("close " .. self.name .. " (" .. reason .. ")")
 end
 function Log.__tostring(self)

@@ -22,7 +22,7 @@
 -- logged method is indented by two spaces per level, which shows the
 -- nested release() of Login:release and each remote procedure's stop()
 -- reaching its connection. `Connection:unregister_request_handler` and
--- `FormScreen:remove_input` are logged the same way. `destroyerror` logs
+-- `FormScreen:remove_input` are logged the same way. `lifetime_destroyerror` logs
 -- the errors the runtime routes to it.
 --
 -- Test case 3 runs twice: with utils/class.lt, which registers every
@@ -111,10 +111,10 @@ end
 local env, scenario = instrumented(nil)
 local unregistered_env, unregistered_scenario = instrumented("unregistered")
 
--- docs/02-semantics.md, "Errors in destructors and `destroyerror`": read
+-- docs/02-semantics.md, "Errors in destructors and `lifetime_destroyerror`": read
 -- raw from _G when an error is routed.
-rawset(_G, "destroyerror", function(_, err)
-    log("destroyerror: " .. tostring(err))
+rawset(_G, "lifetime_destroyerror", function(_, err)
+    log("lifetime_destroyerror: " .. tostring(err))
 end)
 
 -- The remote procedures' stop() on one connection, as Login's nested
@@ -191,7 +191,7 @@ local SCENARIOS = {
         -- and its finalizer takes the whole subtree as one cascade in
         -- ownership order: the connection "unreachable", everything below
         -- it "anchor", Login's nested release() among live procedures, no
-        -- destroyerror. The later finalizers find their objects dead. The
+        -- lifetime_destroyerror. The later finalizers find their objects dead. The
         -- same log as the unregistered run below (task 017).
         name = "collected",
         expected = concat("sessions: 1, per-session upload entries: 1", "> the server drops the session from its table and forgets the connection, without destroy", "> collectgarbage(\"collect\")", "Connection:release(unreachable)", "Session destroyed (anchor)", session_procedures("anchor"), "> collectgarbage(\"collect\")", "per-session entries left: 0, in channel released: true", END)

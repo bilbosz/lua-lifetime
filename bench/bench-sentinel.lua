@@ -3,7 +3,7 @@
 -- `newproxy(true)` per table that has the `reachable` term and something
 -- to run at collection"), and `lifetime.alive`.
 --
---   sentinel/anchor-100   100 objects with a `__destroy` anchored with the
+--   sentinel/anchor-100   100 objects with a `__lifetime_destroy` anchored with the
 --                         implicit `reachable` term (each needs a
 --                         sentinel), then lifetime.destroy(anchor); against the
 --                         same 100 objects attached pinned, through a
@@ -12,7 +12,7 @@
 --                         path, not the one-anchor fast path, so the ratio
 --                         is the sentinel's cost over the general path's
 --                         (task 021: `attach` has no pin flag).
---   sentinel/collect-100  100 objects with a `__destroy` registered with
+--   sentinel/collect-100  100 objects with a `__lifetime_destroy` registered with
 --                         `@ lifetime.reachable`, dropped, then one
 --                         collectgarbage("collect") that runs their 100
 --                         cascades from the sentinels' finalizers; against
@@ -21,7 +21,7 @@
 --   sentinel/alive-10     10 `lifetime.alive` checks of a live object the
 --                         runtime has seen; against 10 `x ~= nil` checks
 --   sentinel/register-tree  a tree of three levels, 10 children per node
---                         (1 + 10 + 100 objects with a `__destroy`), every
+--                         (1 + 10 + 100 objects with a `__lifetime_destroy`), every
 --                         object registered with `@ lifetime.reachable` at
 --                         construction and then linked `child @ parent`,
 --                         top down, then lifetime.destroy(root); against
@@ -49,7 +49,7 @@ local closed = 0
 local function body(self, reason)
     closed = closed + 1
 end
-local MT = {__destroy = body}
+local MT = {__lifetime_destroy = body}
 
 -- sentinel/anchor-100
 local function anchor_n(pin)

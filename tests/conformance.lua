@@ -154,8 +154,8 @@ local COMMAND = "bin/lifetime"
 
 -- The message of the uncaught-error report in `stderr`: the rest of its
 -- first line that starts with `lifetime: ` (docs/04-transpiler.md, "The
--- command"). A destructor error routed to `destroyerror` while the scopes
--- unwind is written before it, as `destroyerror: ...`.
+-- command"). A destructor error routed to `lifetime_destroyerror` while the scopes
+-- unwind is written before it, as `lifetime_destroyerror: ...`.
 function conformance.reported_error(stderr)
     return ("\n" .. stderr):match("\nlifetime: ([^\n]*)")
 end

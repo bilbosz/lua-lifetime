@@ -505,7 +505,7 @@ for _, interpreter in ipairs(TL_INTERPRETERS) do
             "local record R",
             "    name: string",
             "end",
-            "local R_mt = {__destroy = function(self: R, reason: lifetime.Reason) print(\"destroy \" .. self.name .. \" (\" .. reason .. \")\") end} as metatable<R>",
+            "local R_mt = {__lifetime_destroy = function(self: R, reason: lifetime.Reason) print(\"destroy \" .. self.name .. \" (\" .. reason .. \")\") end} as metatable<R>",
             "global kept: R = setmetatable({name = \"global\"} as R, R_mt) @ lifetime.reachable",
             "local main = setmetatable({name = \"main\"} as R, R_mt) @ lifetime.scope",
             "print(arg[0], arg[1], arg[2], select(\"#\", ...), main.name)",

@@ -13,7 +13,7 @@
 local Res = {}
 Res.__index = Res
 function Res.new(name) return setmetatable({ name = name }, Res) end
-function Res.__destroy(self, reason) print("close " .. self.name .. " (" .. reason .. ")") end
+function Res.__lifetime_destroy(self, reason) print("close " .. self.name .. " (" .. reason .. ")") end
 
 -- 1. Every iteration's scope ends with the iteration; `break` ends it too.
 for i = 1, 3 do

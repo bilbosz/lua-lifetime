@@ -13,7 +13,7 @@ end
 local function class(name)
     local C = {}
     C.__index = C
-    C.__destroy = function(self, reason)
+    C.__lifetime_destroy = function(self, reason)
         local child = self.child
         print(name .. " destroyed (" .. reason .. ")" ..
             (child and (", child alive: " .. tostring(lifetime.alive(child))) or ""))

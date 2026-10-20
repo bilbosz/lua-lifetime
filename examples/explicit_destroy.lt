@@ -16,7 +16,7 @@ function Lock.acquire(name)
   return setmetatable({ name = name }, Lock)
 end
 
-function Lock.__destroy(self)
+function Lock.__lifetime_destroy(self)
   print("release " .. self.name)
 end
 

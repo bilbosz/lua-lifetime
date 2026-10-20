@@ -28,7 +28,7 @@
 local Res = {}
 Res.__index = Res
 function Res.new(name) return setmetatable({ name = name }, Res) end
-function Res.__destroy(self, reason) print("close " .. self.name .. " (" .. reason .. ")") end
+function Res.__lifetime_destroy(self, reason) print("close " .. self.name .. " (" .. reason .. ")") end
 
 local function worker(name)
   local outer = Res.new(name .. " outer") @ lifetime.scope

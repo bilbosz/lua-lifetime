@@ -20,7 +20,7 @@ page is corrected.
 
 ## The state of an object
 
-An object the runtime has seen (02, "`__destroy` and reasons", rule 7)
+An object the runtime has seen (02, "`__lifetime_destroy` and reasons", rule 7)
 carries a **state record** in a hidden field of the table itself, created
 on first contact. The field's key is one table the runtime creates when
 it is loaded and never hands out, so no user field can collide with it
@@ -134,7 +134,7 @@ death":
   marking `phase = "dying"`. With conjunction only there is no formula to
   re-evaluate: every dependent of a dying anchor dies. The dying set is
   closed when the walk returns.
-- **Destroy.** Post-body order per object: run the body (`__destroy` with
+- **Destroy.** Post-body order per object: run the body (`__lifetime_destroy` with
   `(obj, reason)`, or a hook's function with `(reason)`), then walk the
   merged lists newest sequence number first, recursing into each entry
   still `"dying"` with reason `"anchor"`, then tombstone the object:
@@ -142,7 +142,7 @@ death":
   metatable, `phase = "dead"`, and record `reason` and `where` for the
   tombstone's message.
 - **Errors.** The first error of the cascade is held in a local and
-  re-raised after the walk; later ones go to `destroyerror`, looked up raw
+  re-raised after the walk; later ones go to `lifetime_destroyerror`, looked up raw
   in `_G`. A nested `destroy` inside a body is a cascade of its own (02,
   "Errors in destructors").
 - **Phase guard.** A counter of running destroy phases tells `attach`
@@ -181,7 +181,7 @@ reaches the table through `getmetatable(proxy).owner`. No side table is
 needed, which is what decision 3 requires.
 
 The finalizer runs `cascade(obj, "unreachable", "collector")` in
-protected mode, routing every error of the cascade to `destroyerror` (02,
+protected mode, routing every error of the cascade to `lifetime_destroyerror` (02,
 "Errors in destructors": a finalizer has no statement to raise at, and
 Lua 5.1 would surface the error at an unrelated allocation), if the
 object is still `"dying"`-eligible (not already dead through an earlier
@@ -191,7 +191,7 @@ rule for every dependent of a collected subtree), with the exit flag of
 sentinel:
 
 - a table whose formula has the `reachable` term and that has a
-  `__destroy`, dependents or hooks, because its collection must run a
+  `__lifetime_destroy`, dependents or hooks, because its collection must run a
   cascade;
 - a scope record, so that the records of a collected suspended coroutine
   are destroyed (decision 2);
@@ -340,7 +340,7 @@ raise: the user's `h`, when there is one, runs first and its result
 replaces the error value; then the runtime unwinds every record above
 the depth it read, innermost first, with the error counted as
 propagating (02, "Errors in destructors": destructor errors go to
-`destroyerror`); then it returns the error value, which the original
+`lifetime_destroyerror`); then it returns the error value, which the original
 `xpcall` hands back as the second result. The locals of the raising
 frames, where the dependents of those records usually live, are
 reachable throughout, so the collector cannot finalize a dependent

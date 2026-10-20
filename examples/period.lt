@@ -21,7 +21,7 @@
 
 local Screen = {}
 Screen.__index = Screen
-function Screen.__destroy(self, reason) print("close " .. self.name .. " (" .. reason .. ")") end
+function Screen.__lifetime_destroy(self, reason) print("close " .. self.name .. " (" .. reason .. ")") end
 local function screen(name) return setmetatable({ name = name }, Screen) end
 
 local backstack = {}
@@ -52,7 +52,7 @@ end
 
 local Session = {}
 Session.__index = Session
-function Session.__destroy(self, reason) print("session ends (" .. reason .. ")") end
+function Session.__lifetime_destroy(self, reason) print("session ends (" .. reason .. ")") end
 
 function Session:login(user)
   print("login " .. user)

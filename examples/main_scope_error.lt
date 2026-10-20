@@ -7,7 +7,7 @@
 -- raise point"; docs/02-semantics.md, "Program end").
 
 local Res = {}
-function Res.__destroy(self, reason)
+function Res.__lifetime_destroy(self, reason)
     print("destroy " .. self.name .. " (" .. reason .. ")")
 end
 local function res(name)

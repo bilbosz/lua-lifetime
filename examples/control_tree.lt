@@ -21,7 +21,7 @@
 
 local Control = {}
 Control.__index = Control
-function Control.__destroy(self, reason)
+function Control.__lifetime_destroy(self, reason)
   print("destroy " .. self.name .. " (" .. reason .. ")")
   if self.on_destroy then self:on_destroy() end
   if self.parent then self.parent:remove_child(self) end   -- dying, not dead: identity intact

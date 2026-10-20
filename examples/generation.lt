@@ -24,7 +24,7 @@
 local Token = {}
 Token.__index = Token
 Token.__tostring = function(self) return "token " .. self.name end
-Token.__destroy = function(self, reason) print("despawn " .. self.name .. " (" .. reason .. ")") end
+Token.__lifetime_destroy = function(self, reason) print("despawn " .. self.name .. " (" .. reason .. ")") end
 
 local Timer = {}
 Timer.__index = Timer

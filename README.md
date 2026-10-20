@@ -19,7 +19,7 @@ local function serve(socket)
   function() metrics.connections = metrics.connections - 1 end !@ conn
   handle(header)
 end
--- at the end of serve: conn.__destroy runs first, then its dependents,
+-- at the end of serve: conn.__lifetime_destroy runs first, then its dependents,
 -- most recently attached first: the hook, then header, then buf.
 ```
 
@@ -83,7 +83,7 @@ local record Connection
 end
 local Connection_mt = {
   __index = Connection,
-  __destroy = function(self: Connection, reason: lifetime.Reason) self.sock:close() end
+  __lifetime_destroy = function(self: Connection, reason: lifetime.Reason) self.sock:close() end
 } as metatable<Connection>
 
 local function serve(sock: Socket)

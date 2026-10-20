@@ -3,7 +3,7 @@
 -- where `xd` pinned a reachable death to the statement that dropped the
 -- last reference (decision 2 of xd/docs/10-lua-lifetime-decisions.md).
 -- What else differs, and the decisions that cause it:
---   - decision 10: `__destroy` has no `remaining`, so the entries print
+--   - decision 10: `__lifetime_destroy` has no `remaining`, so the entries print
 --     the reason only;
 --   - decision 10: at the session's death the session's destructor runs
 --     first and its entry `c` dies after it; `xd` had `c` first;
@@ -22,13 +22,13 @@
 local Session = {}
 Session.__index = Session
 Session.__tostring = function(self) return self.user end      -- names in lifetime.format
-function Session.__destroy(self, reason)
+function Session.__lifetime_destroy(self, reason)
   print("session " .. self.user .. " closed (" .. reason .. ")")
 end
 
 local Entry = {}
 Entry.__index = Entry
-function Entry.__destroy(self, reason)
+function Entry.__lifetime_destroy(self, reason)
   print("entry " .. self.key .. " destroyed (" .. reason .. ")")
 end
 

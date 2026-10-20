@@ -27,7 +27,7 @@
 
 local Node = {}
 Node.__index = Node
-Node.__destroy = function(self, reason) print(self.name .. " destroyed (" .. reason .. ")") end
+Node.__lifetime_destroy = function(self, reason) print(self.name .. " destroyed (" .. reason .. ")") end
 local function node(name) return setmetatable({ name = name }, Node) end
 
 -- 1. child @ parent, with the back-reference every tree has.
